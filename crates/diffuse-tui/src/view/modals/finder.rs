@@ -8,18 +8,12 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::{
-    geometry::{ansi_to_ratatui_line, standard_modal_area},
-    path::format_path_matches_spans,
-};
+use super::{geometry::standard_modal_area, path::format_path_matches_spans};
 use crate::{
     core::wire::{OutputHunk, PipelineOutput},
     finder::FileFinderState,
-    render::{Badge, DiffuseTheme, render_row_segment, styled_prefix, width::display_width},
-    view::{
-        diff_grid::hunk_divider_line,
-        header::{clamp_or_pad_ansi, format_counts_plain},
-    },
+    render::{Badge, DiffuseTheme, row_segment_spans, styled_prefix_spans, width::display_width},
+    view::{diff_grid::hunk_divider_line, header::format_counts_plain, span::fit_line},
 };
 
 /// Render the File Finder directly as a Ratatui widget popup dialog with top
@@ -254,11 +248,12 @@ pub fn render_finder_modal_widget(
                     if preview_lines.len() >= max_preview_rows {
                         break 'outer;
                     }
-                    let pfx = styled_prefix(
-                        r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
+                    let prefix = styled_prefix_spans(
+                        r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, None,
+                        theme,
                     );
                     let text = r.text();
-                    let rendered_row = render_row_segment(
+                    let row = row_segment_spans(
                         &text,
                         r.is_aux(),
                         r.kind,
@@ -266,7 +261,7 @@ pub fn render_finder_modal_widget(
                         &r.runs,
                         0,
                         text_cols,
-                        &pfx,
+                        prefix,
                         false,
                         false,
                         0,
@@ -274,8 +269,7 @@ pub fn render_finder_modal_widget(
                         true,
                         theme,
                     );
-                    let padded = clamp_or_pad_ansi(&rendered_row, inner_w);
-                    preview_lines.push(ansi_to_ratatui_line(&padded));
+                    preview_lines.push(fit_line(row.spans, inner_w, row.line_bg));
                 }
             }
         }

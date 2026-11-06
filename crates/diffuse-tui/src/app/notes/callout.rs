@@ -3,87 +3,32 @@
 
 use std::collections::HashMap;
 
+use ratatui::text::Line;
+
 use crate::{
     app::AppState,
     core::notes::{ReviewNote, query_notes_for_file},
-    render::{
-        Color, ColorExt, Cursor, DiffKind, DiffuseTheme, FG_RESET, render_note_callout_lines,
-    },
+    render::{NoteCalloutFocus, render_note_callout_lines, render_note_callout_spans},
+    view::span::line_from_spans,
 };
 
-/// Apply cursor focus highlight to a rendered note callout line: switches the
-/// left-edge stripe from the status color to active cyan, and if
-/// `is_current_line` is true, highlights the line background with the
-/// row-tier ctx cursor background.
-pub(crate) fn style_focused_note_line(
-    nline: &str,
-    is_current_line: bool,
-    theme: &DiffuseTheme,
-) -> String {
-    let gutter_fg = Color::Rgb(220, 220, 20).fg_code();
-    let glyph_fg = Color::Fixed(255).fg_code();
-    let cyan_fg = "\x1b[38;5;81m";
-    let note_bg = Color::Fixed(234).bg_code();
-    let cursor_bg = theme.palette[Cursor::Row][DiffKind::Ctx]
-        .surface
-        .bg
-        .bg_code();
-    let active_bg = if is_current_line {
-        cursor_bg.as_str()
-    } else {
-        note_bg.as_str()
-    };
-    let fg_reset = FG_RESET;
-    const STRIPE_LEFT: &str = "\u{258C}";
-    const BAND_BLOCK: &str = "\u{2588}";
-
-    const STATUS_PAIRS: [(Color, &str); 3] = [
-        (Color::Rgb(250, 75, 40), "💬"),
-        (Color::Rgb(60, 180, 240), "🔄"),
-        (Color::Rgb(40, 140, 60), "✅"),
-    ];
-
-    for (stripe_color, glyph) in STATUS_PAIRS {
-        let stripe_fg = stripe_color.fg_code();
-        let first_prefix = format!(
-            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
-        );
-        let line_prefix = format!(
-            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-        );
-        let final_prefix = format!(
-            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-        );
-
-        let focused_first = format!(
-            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
-        );
-        let focused_line = format!(
-            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-        );
-        let focused_final = format!(
-            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-        );
-
-        if let Some(rest) = nline.strip_prefix(&first_prefix) {
-            return format!("{focused_first}{rest}");
-        } else if let Some(rest) = nline.strip_prefix(&line_prefix) {
-            return format!("{focused_line}{rest}");
-        } else if let Some(rest) = nline.strip_prefix(&final_prefix) {
-            return format!("{focused_final}{rest}");
-        }
-    }
-
-    nline.to_string()
+/// Focus highlight for one row's note block: the cursor sits on the
+/// `note_idx`-th attached note at its `line_idx`-th line.
+pub(crate) struct NoteRowFocus {
+    /// Index of the focused note among the row's attached notes.
+    pub(crate) note_idx: usize,
+    /// Cursor line within the focused note's full lines.
+    pub(crate) line_idx: usize,
 }
 
 impl AppState {
     /// Map of flat-row index → pre-rendered note callout lines (`💬
     /// <markdown>`). Notes that anchor cleanly to their target line display
     /// inline on the last row in their coordinate range. Notes that do not
-    /// anchor cleanly display attached to the file banner.
-    pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<String>> {
-        let mut out: HashMap<usize, Vec<String>> = HashMap::new();
+    /// anchor cleanly display attached to the file banner. Lines render
+    /// directly from spans: no ANSI round-trip.
+    pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<Line<'static>>> {
+        let mut out: HashMap<usize, Vec<Line<'static>>> = HashMap::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in query_notes_for_file(
@@ -98,7 +43,7 @@ impl AppState {
                 let target_row = self.note_target_row(file_idx, n);
                 let is_unanchored = target_row == banner_idx;
                 let show_source = self.show_note_source && is_unanchored;
-                let rendered_lines = render_note_callout_lines(
+                let rendered_lines = render_note_callout_spans(
                     n.status,
                     &n.text,
                     &n.original_source_rows,
@@ -106,8 +51,66 @@ impl AppState {
                     self.syntax_on,
                     &self.theme,
                     content_width,
+                    None,
                 );
-                out.entry(target_row).or_default().extend(rendered_lines);
+                out.entry(target_row)
+                    .or_default()
+                    .extend(rendered_lines.into_iter().map(line_from_spans));
+            }
+        }
+        out
+    }
+
+    /// Re-render the note block attached to `row_idx` as styled lines,
+    /// highlighting the focused note (cursor stripe plus cursor-background
+    /// cursor line) when `focus` is set. Unfocused rows use the cached
+    /// [`Self::note_callouts`] lines instead.
+    pub(crate) fn note_block_lines(
+        &self,
+        row_idx: usize,
+        content_width: usize,
+        focus: Option<NoteRowFocus>,
+    ) -> Vec<Line<'static>> {
+        let mut out = Vec::new();
+        let mut note_idx = 0usize;
+        for (file_idx, f) in self.output.files.iter().enumerate() {
+            let banner_idx = self.first_row_of_file(file_idx);
+            for n in query_notes_for_file(
+                &self.notes,
+                self.repo_key.as_deref(),
+                self.rev_key.as_deref(),
+                &f.path,
+            ) {
+                if !self.show_resolved_notes && n.status.is_resolved() {
+                    continue;
+                }
+                let target_row = self.note_target_row(file_idx, n);
+                if target_row != row_idx {
+                    continue;
+                }
+                let is_unanchored = target_row == banner_idx;
+                let show_source = self.show_note_source && is_unanchored;
+                // The whole focused note keeps the active stripe; only the
+                // cursor line takes the cursor background.
+                let note_focus = focus.as_ref().and_then(|focus| {
+                    (focus.note_idx == note_idx).then_some(NoteCalloutFocus {
+                        start: 0,
+                        len: usize::MAX,
+                        cursor: Some(focus.line_idx),
+                    })
+                });
+                let rendered_lines = render_note_callout_spans(
+                    n.status,
+                    &n.text,
+                    &n.original_source_rows,
+                    show_source,
+                    self.syntax_on,
+                    &self.theme,
+                    content_width,
+                    note_focus,
+                );
+                out.extend(rendered_lines.into_iter().map(line_from_spans));
+                note_idx += 1;
             }
         }
         out

@@ -9,7 +9,7 @@ use crate::{
     finder::FileFinderState,
     render::DiffuseTheme,
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
 #[test]
 fn test_ratatui_help_modal_widget() {
@@ -780,34 +780,6 @@ fn test_wrap_words() {
 }
 
 #[test]
-fn test_ansi_to_ratatui_line_strikethrough_reset() {
-    let ansi = "prefix \x1b[9mstruck text\x1b[29m normal text";
-    let line = ansi_to_ratatui_line(ansi);
-    assert_eq!(line.spans.len(), 3);
-    assert_eq!(line.spans[0].content, "prefix ");
-    assert!(
-        !line.spans[0]
-            .style
-            .add_modifier
-            .contains(Modifier::CROSSED_OUT)
-    );
-    assert_eq!(line.spans[1].content, "struck text");
-    assert!(
-        line.spans[1]
-            .style
-            .add_modifier
-            .contains(Modifier::CROSSED_OUT)
-    );
-    assert_eq!(line.spans[2].content, " normal text");
-    assert!(
-        !line.spans[2]
-            .style
-            .add_modifier
-            .contains(Modifier::CROSSED_OUT)
-    );
-}
-
-#[test]
 fn test_finder_modal_proportional_height_scaling() {
     let output = PipelineOutput {
         files: (0..30)
@@ -1063,26 +1035,6 @@ fn test_ratatui_note_modal_equal_margins_on_small_screens() {
         " ",
         "Col 49 must be 1 char right margin (symmetric!)"
     );
-}
-
-#[test]
-fn test_optimized_ansi_parses_identically() {
-    // The SGR optimizer must preserve terminal effect exactly: parsing the
-    // optimized line must yield the same ratatui spans as the original.
-    let lines = [
-        "\x1b[48;2;38;38;38m    assert_eq\x1b[48;2;38;38;38m\x1b[38;5;147mlet\x1b[39m\x1b[48;2;38;38;38m rest\x1b[0m",
-        "\x1b[1mBold\x1b[22m plain \x1b[9mstruck\x1b[29m done\x1b[0m",
-        "\x1b[3;38;5;203mgutter\x1b[23m\x1b[39m plain",
-        "\x1b[38;5;120m\x1b[38;5;120mdouble set\x1b[0m",
-    ];
-    for line in lines {
-        let optimized = crate::render::ansi::optimize_ansi_line(line);
-        assert_eq!(
-            ansi_to_ratatui_line(optimized.as_ref()),
-            ansi_to_ratatui_line(line),
-            "optimized parse must match for {line:?}"
-        );
-    }
 }
 
 #[test]

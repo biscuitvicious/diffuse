@@ -5057,7 +5057,7 @@ fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
     // At scroll = 0, row 0 is a.rs header.
     let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_0[0].contains("a.rs"),
+        lines_0[0].to_string().contains("a.rs"),
         "row 0 must show a.rs banner at scroll 0"
     );
 
@@ -5065,16 +5065,16 @@ fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
     state.scroll_to_visual(5);
     let (lines_5, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_5[0].contains("a.rs"),
+        lines_5[0].to_string().contains("a.rs"),
         "row 0 must stick to a.rs banner when scrolled down into content"
     );
     assert!(
-        lines_5[1].contains("Hunk 1/1"),
+        lines_5[1].to_string().contains("Hunk 1/1"),
         "screen row 1 must show sticky hunk divider beneath file banner, got: {:?}",
         lines_5[1]
     );
     assert!(
-        crate::render::strip_ansi(&lines_5[2]).contains("line 6"),
+        lines_5[2].to_string().contains("line 6"),
         "screen row 2 must show visual line 7 (line 6) beneath the sticky headers, got: {:?}",
         lines_5[2]
     );
@@ -5118,11 +5118,11 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     state.scroll_to_visual(b_vis.saturating_sub(1));
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_meet[0].contains("a.rs"),
+        lines_meet[0].to_string().contains("a.rs"),
         "screen row 0 must show a.rs banner"
     );
     assert!(
-        lines_meet[1].contains("b.rs"),
+        lines_meet[1].to_string().contains("b.rs"),
         "screen row 1 must show b.rs banner meeting it"
     );
 
@@ -5131,7 +5131,7 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     state.scroll_to_visual(b_vis);
     let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_pushed[0].contains("b.rs"),
+        lines_pushed[0].to_string().contains("b.rs"),
         "b.rs banner must now be at screen row 0"
     );
 
@@ -5140,16 +5140,16 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     state.scroll_to_visual(b_vis + 1);
     let (lines_b_sticky, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_b_sticky[0].contains("b.rs"),
+        lines_b_sticky[0].to_string().contains("b.rs"),
         "b.rs banner must now stick to row 0"
     );
     assert!(
-        lines_b_sticky[1].contains("Hunk 1/1"),
+        lines_b_sticky[1].to_string().contains("Hunk 1/1"),
         "screen row 1 must show sticky hunk divider beneath b.rs banner, got: {:?}",
         lines_b_sticky[1]
     );
     assert!(
-        crate::render::strip_ansi(&lines_b_sticky[2]).contains("b line 2"),
+        lines_b_sticky[2].to_string().contains("b line 2"),
         "b.rs content must scroll beneath it"
     );
 }
@@ -5222,23 +5222,23 @@ fn test_sticky_hunk_header_sticks_below_file_header() {
 
     // At scroll = 0: row 0 is a.rs header, row 1 is H1 divider.
     let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_0[0].contains("a.rs"));
-    assert!(lines_0[1].contains("Hunk 1/1"));
+    assert!(lines_0[0].to_string().contains("a.rs"));
+    assert!(lines_0[1].to_string().contains("Hunk 1/1"));
 
     // Scroll down inside a.rs (scroll = 5).
     state.scroll_to_visual(5);
     let (lines_5, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
-        lines_5[0].contains("a.rs"),
+        lines_5[0].to_string().contains("a.rs"),
         "row 0 must stick to a.rs banner"
     );
     assert!(
-        lines_5[1].contains("Hunk 1/1"),
+        lines_5[1].to_string().contains("Hunk 1/1"),
         "row 1 must stick to hunk divider Hunk 1/1 immediately below file banner, got: {:?}",
         lines_5[1]
     );
     assert!(
-        crate::render::strip_ansi(&lines_5[2]).contains("line 6"),
+        lines_5[2].to_string().contains("line 6"),
         "screen row 2 must show content beneath the sticky hunk divider, got: {:?}",
         lines_5[2]
     );
@@ -5292,13 +5292,13 @@ fn test_sticky_hunk_header_pushed_by_next_hunk() {
     state.scroll_to_visual(h2_vis.saturating_sub(2));
     state.row_idx = h2_row; // Cursor on H2 so keep_cursor_visible doesn't clamp scroll up
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_meet[0].contains("a.rs"));
+    assert!(lines_meet[0].to_string().contains("a.rs"));
     assert!(
-        lines_meet[1].contains("Hunk 1/2"),
+        lines_meet[1].to_string().contains("Hunk 1/2"),
         "Hunk 1/2 still sticky at row 1"
     );
     assert!(
-        lines_meet[2].contains("Hunk 2/2"),
+        lines_meet[2].to_string().contains("Hunk 2/2"),
         "Hunk 2/2 meeting at row 2"
     );
 
@@ -5306,12 +5306,12 @@ fn test_sticky_hunk_header_pushed_by_next_hunk() {
     state.scroll_to_visual(h2_vis.saturating_sub(1));
     state.row_idx = h2_row;
     let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_pushed[0].contains("a.rs"));
+    assert!(lines_pushed[0].to_string().contains("a.rs"));
     assert!(
-        lines_pushed[1].contains("Hunk 2/2"),
+        lines_pushed[1].to_string().contains("Hunk 2/2"),
         "Hunk 2/2 now sticky at row 1"
     );
-    assert!(crate::render::strip_ansi(&lines_pushed[6]).contains("h2 line 1"));
+    assert!(lines_pushed[6].to_string().contains("h2 line 1"));
 }
 
 #[test]
@@ -5343,23 +5343,23 @@ fn test_sticky_hunk_header_pushed_by_next_file() {
     state.scroll_to_visual(b_vis.saturating_sub(2));
     state.row_idx = b_banner_row;
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_meet[0].contains("a.rs"));
-    assert!(lines_meet[1].contains("Hunk 1/1"));
-    assert!(lines_meet[2].contains("b.rs"));
+    assert!(lines_meet[0].to_string().contains("a.rs"));
+    assert!(lines_meet[1].to_string().contains("Hunk 1/1"));
+    assert!(lines_meet[2].to_string().contains("b.rs"));
 
     // Scroll 1 line further: b.rs reaches row 1, pushing H1 off!
     state.scroll_to_visual(b_vis.saturating_sub(1));
     state.row_idx = b_banner_row;
     let (lines_hunk_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_hunk_pushed[0].contains("a.rs"));
-    assert!(lines_hunk_pushed[1].contains("b.rs"));
+    assert!(lines_hunk_pushed[0].to_string().contains("a.rs"));
+    assert!(lines_hunk_pushed[1].to_string().contains("b.rs"));
 
     // Scroll 1 line further: b.rs reaches row 0, pushing a.rs off!
     state.scroll_to_visual(b_vis);
     state.row_idx = b_banner_row;
     let (lines_file_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_file_pushed[0].contains("b.rs"));
-    assert!(lines_file_pushed[1].contains("Hunk 1/1")); // b.rs's Hunk 1/1!
+    assert!(lines_file_pushed[0].to_string().contains("b.rs"));
+    assert!(lines_file_pushed[1].to_string().contains("Hunk 1/1")); // b.rs's Hunk 1/1!
 }
 
 #[test]

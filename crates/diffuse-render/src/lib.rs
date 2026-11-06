@@ -13,6 +13,7 @@ pub mod diff;
 pub mod markdown;
 pub mod notes;
 pub mod row;
+pub mod span;
 pub mod theme;
 pub mod width;
 
@@ -23,5 +24,6 @@ pub use diff::*;
 pub use markdown::*;
 pub use notes::*;
 pub use row::*;
+pub use span::*;
 pub use theme::*;
 pub use width::*;

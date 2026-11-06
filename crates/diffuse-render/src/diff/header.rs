@@ -7,6 +7,7 @@
 
 use std::fmt::{self, Write};
 
+use unicode_segmentation::UnicodeSegmentation;
 use yansi::Color;
 
 use crate::{
@@ -14,8 +15,9 @@ use crate::{
     ansi::{ColorExt, SGR_RESET, strip_ansi},
     core::wire::OutputFile,
     counts::{count_cells, format_counts_plain},
+    span::{StyledSpan, slice_spans},
     theme::{Cursor, DiffuseTheme, SurfaceColors, UiPalette},
-    width::display_width,
+    width::{display_width, grapheme_width},
 };
 
 /// Which banner a caller draws: its position badge (absent while streaming),
@@ -242,4 +244,78 @@ pub fn write_file_header_bar_with_width<W: Write>(
 
     writeln!(bar, "{SGR_RESET}")?;
     out.write_str(&bar)
+}
+
+/// Project a canonical [`FileHeaderBanner`] onto ordered [`StyledSpan`]s:
+/// the span-native twin of the ANSI banner serializer in
+/// [`write_file_header_bar_with_width`]. Base runs render bold in the
+/// surface foreground, path runs in the path color without bold, and count
+/// runs bold in their bucket color; every span rides on the banner surface
+/// background. `rename` is an optional visual-column range (the shared
+/// directory prefix) overlaid with the desaturated-purple underline the
+/// ANSI path emits, preserving each overlapped span's other flags exactly
+/// as the ANSI open sequence (which never touches bold state) does.
+#[must_use]
+pub fn banner_spans(banner: &FileHeaderBanner, rename: Option<(usize, usize)>) -> Vec<StyledSpan> {
+    let bg = Some(banner.surface.bg);
+    let mut spans = Vec::with_capacity(banner.spans.len());
+    for span in &banner.spans {
+        let styled = match span.role {
+            HeaderRole::Base => {
+                StyledSpan::styled(span.text.clone(), Some(banner.surface.fg), bg).with_bold(true)
+            }
+            HeaderRole::Path => {
+                StyledSpan::styled(span.text.clone(), Some(banner.surface.fg_or_path()), bg)
+            }
+            HeaderRole::Count(color) => {
+                StyledSpan::styled(span.text.clone(), Some(color), bg).with_bold(true)
+            }
+        };
+        spans.push(styled);
+    }
+    if let Some((start, end)) = rename {
+        spans = underline_range(spans, start, end, Color::Fixed(139));
+    }
+    spans
+}
+
+/// Overlay a visual-column range with an underline in `color`, splitting
+/// overlapped spans and preserving their other flags.
+fn underline_range(
+    spans: Vec<StyledSpan>,
+    start: usize,
+    end: usize,
+    color: Color,
+) -> Vec<StyledSpan> {
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    let mut col = 0usize;
+    for span in spans {
+        let span_width: usize = span.text.graphemes(true).map(grapheme_width).sum();
+        let span_start = col;
+        col += span_width;
+        if col <= start || span_start >= end || span.text.is_empty() {
+            out.push(span);
+            continue;
+        }
+        let low = start.max(span_start);
+        let high = end.min(col);
+        for (from, to, over) in [
+            (span_start, low, false),
+            (low, high, true),
+            (high, col, false),
+        ] {
+            if to <= from {
+                continue;
+            }
+            let mut pieces = slice_spans(std::slice::from_ref(&span), from - span_start, to - from);
+            if over {
+                for piece in &mut pieces {
+                    piece.fg = Some(color);
+                    piece.underline = true;
+                }
+            }
+            out.extend(pieces);
+        }
+    }
+    out
 }

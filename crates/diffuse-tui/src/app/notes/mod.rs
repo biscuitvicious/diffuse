@@ -9,7 +9,7 @@ pub mod target;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use callout::style_focused_note_line;
+pub(crate) use callout::NoteRowFocus;
 #[allow(unused_imports)]
 pub use sync::NotesChangeSummary;
 pub use target::VisualTarget;

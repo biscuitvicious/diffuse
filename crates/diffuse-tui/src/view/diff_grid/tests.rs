@@ -4,7 +4,7 @@ use crate::{
         counts::FileCounts,
         wire::{OutputFile, OutputHunk},
     },
-    render::{Badge, ColorExt, DiffuseTheme, width::display_width},
+    render::{Badge, DiffuseTheme, width::display_width},
 };
 
 fn dummy_file() -> OutputFile {
@@ -139,8 +139,10 @@ fn test_binary_file_header_has_no_expand_caret() {
 
 #[test]
 fn test_hunk_divider_is_orange() {
+    use ratatui::style::Color;
+
     let h = dummy_hunk();
-    let regular = render_hunk_divider(
+    let regular = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -151,12 +153,13 @@ fn test_hunk_divider_is_orange() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(
-        regular.contains("38;5;213m"),
+    assert_eq!(
+        regular.spans[0].style.fg,
+        Some(Color::Indexed(213)),
         "regular hunk divider must use yellow-orange 213 foreground"
     );
 
-    let current = render_hunk_divider(
+    let current = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -167,17 +170,19 @@ fn test_hunk_divider_is_orange() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(
-        current.contains("38;5;213m"),
+    assert_eq!(
+        current.spans[0].style.fg,
+        Some(Color::Indexed(213)),
         "current hunk divider must have brighter yellow-orange foreground 213"
     );
-    assert!(
-        current.contains("48;5;235m"),
+    assert_eq!(
+        current.spans[0].style.bg,
+        Some(Color::Indexed(235)),
         "current hunk divider must have default hunk_divider_bg_current (235)"
     );
 
     let theme = DiffuseTheme::dark();
-    let selected = render_hunk_divider_segment(
+    let selected = hunk_divider_segment_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -190,12 +195,14 @@ fn test_hunk_divider_is_orange() {
         80,
         &theme,
     );
-    assert!(
-        selected.contains("38;2;255;155;255m"),
+    assert_eq!(
+        selected.spans[0].style.fg,
+        Some(Color::Rgb(255, 155, 255)),
         "selected hunk divider must have brighter purple foreground"
     );
-    assert!(
-        selected.contains("48;5;238m"),
+    assert_eq!(
+        selected.spans[0].style.bg,
+        Some(Color::Indexed(238)),
         "selected hunk divider must have hunk_divider_bg_selected 238"
     );
 }
@@ -203,7 +210,7 @@ fn test_hunk_divider_is_orange() {
 #[test]
 fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     let h = dummy_hunk();
-    let rendered = render_hunk_divider(
+    let rendered = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -214,7 +221,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         80,
         &DiffuseTheme::dark(),
     );
-    let plain = crate::render::strip_ansi(&rendered);
+    let plain = rendered.to_string();
     assert_eq!(
         plain.chars().count(),
         80,
@@ -230,7 +237,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     );
 
     // Segment beyond text width fills with horizontal rule dashes
-    let beyond = render_hunk_divider_segment(
+    let beyond = hunk_divider_segment_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -243,7 +250,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         20,
         &DiffuseTheme::dark(),
     );
-    let plain_beyond = crate::render::strip_ansi(&beyond);
+    let plain_beyond = beyond.to_string();
     assert_eq!(plain_beyond, "─".repeat(20));
 
     // Ratatui Line renderer: text shorter than width fills with rule
@@ -277,8 +284,8 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     // Bottom gap segment beyond text width fills with horizontal rule dashes
     let bottom_beyond =
-        render_bottom_gap_divider_segment(10, true, false, 200, 20, &DiffuseTheme::dark());
-    let plain_bottom_beyond = crate::render::strip_ansi(&bottom_beyond);
+        bottom_gap_divider_segment_line(10, true, false, 200, 20, &DiffuseTheme::dark());
+    let plain_bottom_beyond = bottom_beyond.to_string();
     assert_eq!(plain_bottom_beyond, "─".repeat(20));
 
     // Bottom gap Ratatui Line renderer
@@ -290,15 +297,17 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     assert_eq!(b_line_narrow.to_string().chars().count(), 10);
 
     let theme = DiffuseTheme::dark();
-    let selected_bottom = render_bottom_gap_divider_segment(10, true, true, 0, 80, &theme);
+    let selected_bottom = bottom_gap_divider_segment_line(10, true, true, 0, 80, &theme);
     let divider = theme.palette[crate::render::Cursor::Row].hunk_divider;
     let (sel_bg, sel_fg) = (divider.bg, divider.fg);
-    assert!(
-        selected_bottom.contains(&sel_bg.bg_code()),
+    assert_eq!(
+        selected_bottom.spans[0].style.bg,
+        Some(crate::view::to_color(sel_bg)),
         "selected bottom gap divider must contain selected background color"
     );
-    assert!(
-        selected_bottom.contains(&sel_fg.fg_code()),
+    assert_eq!(
+        selected_bottom.spans[0].style.fg,
+        Some(crate::view::to_color(sel_fg)),
         "selected bottom gap divider must contain selected foreground color"
     );
 
@@ -326,7 +335,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         rows: vec![],
     };
     // Zero gap (e.g. contiguous diff)
-    let contiguous = render_hunk_divider(
+    let contiguous = hunk_divider_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -337,9 +346,9 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(contiguous.contains("Hunk 2/2 ────"));
-    assert!(!contiguous.contains("0 lines"));
-    assert!(!contiguous.contains("hidden"));
+    assert!(contiguous.to_string().contains("Hunk 2/2 ────"));
+    assert!(!contiguous.to_string().contains("0 lines"));
+    assert!(!contiguous.to_string().contains("hidden"));
 
     // With content: 2 ctx, 1 del, 4 adds, 1 mod → 6 modified lines (2 context
     // lines excluded)
@@ -353,7 +362,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         mk(RowKind::Add),
         mk(RowKind::Mod),
     ];
-    let with_rows = render_hunk_divider(
+    let with_rows = hunk_divider_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -364,10 +373,14 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(with_rows.contains("Hunk 2/2 · 6 lines: −1 +4 ~1 ────"));
+    assert!(
+        with_rows
+            .to_string()
+            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 ────")
+    );
 
     // Normal 8 lines hidden gap
-    let expanded = render_hunk_divider(
+    let expanded = hunk_divider_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -378,7 +391,11 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(expanded.contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
+    assert!(
+        expanded
+            .to_string()
+            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────")
+    );
 
     // Zero-change hunk (e.g. synthetic note hunk) -> count badge is omitted
     let zero_hunk = OutputHunk {
@@ -388,7 +405,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         new_count: 5,
         rows: vec![mk(RowKind::Ctx)],
     };
-    let zero_div = render_hunk_divider(
+    let zero_div = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -399,11 +416,11 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(zero_div.contains("Hunk 1/1 ────"));
-    assert!(!zero_div.contains("0 lines"));
+    assert!(zero_div.to_string().contains("Hunk 1/1 ────"));
+    assert!(!zero_div.to_string().contains("0 lines"));
 
     // Zero-change hunk with hidden gap -> shows gap without count badge
-    let zero_gap_div = render_hunk_divider(
+    let zero_gap_div = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -414,12 +431,16 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(zero_gap_div.contains("Hunk 1/1 · 30 more lines: ▼ ────"));
-    assert!(!zero_gap_div.contains("0 lines"));
+    assert!(
+        zero_gap_div
+            .to_string()
+            .contains("Hunk 1/1 · 30 more lines: ▼ ────")
+    );
+    assert!(!zero_gap_div.to_string().contains("0 lines"));
 
     // With movs (both source and target count towards modified lines)
     h.rows.push(mk(RowKind::Mov));
-    let with_movs = render_hunk_divider(
+    let with_movs = hunk_divider_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -430,10 +451,14 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(with_movs.contains("Hunk 2/2 · 7 lines: −1 +4 ~1 ≈1 ────"));
+    assert!(
+        with_movs
+            .to_string()
+            .contains("Hunk 2/2 · 7 lines: −1 +4 ~1 ≈1 ────")
+    );
 
     // Single line hidden
-    let single = render_hunk_divider(
+    let single = hunk_divider_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -444,10 +469,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(single.contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
+    assert!(single.to_string().contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
 
     // Top gap divider (50 lines hidden at top of file, only down arrow)
-    let top_gap = render_hunk_divider(
+    let top_gap = hunk_divider_line(
         Badge {
             idx: 0,
             total: Some(1),
@@ -458,8 +483,8 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(top_gap.contains("· 50 more lines: ▼ ────"));
-    assert!(!top_gap.contains("▲"));
+    assert!(top_gap.to_string().contains("· 50 more lines: ▼ ────"));
+    assert!(!top_gap.to_string().contains("▲"));
 
     // Bottom gap divider (only up arrow) — 4-dash prefix and post
     let bottom = bottom_gap_divider_text(80);
@@ -536,7 +561,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
     );
 
     // Segment 0 contains the first 30 visual columns
-    let seg0 = render_hunk_divider_segment(
+    let seg0 = hunk_divider_segment_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -549,10 +574,10 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         30,
         &DiffuseTheme::dark(),
     );
-    assert!(seg0.contains("──── Hunk 2/2 ·"));
+    assert!(seg0.to_string().contains("──── Hunk 2/2 ·"));
 
     // Segment 1 contains the wrapped continuation
-    let seg1 = render_hunk_divider_segment(
+    let seg1 = hunk_divider_segment_line(
         Badge {
             idx: 1,
             total: Some(2),
@@ -565,7 +590,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         30,
         &DiffuseTheme::dark(),
     );
-    assert!(!seg1.is_empty());
+    assert!(seg1.width() > 0);
 }
 
 #[test]
@@ -659,7 +684,7 @@ fn test_render_file_header_segment_narrow_width() {
         raw_source: None,
     };
 
-    let rendered_seg0 = render_file_header_segment(
+    let rendered_seg0 = file_header_segment_line(
         &file,
         Badge {
             idx: 0,
@@ -674,18 +699,20 @@ fn test_render_file_header_segment_narrow_width() {
         &DiffuseTheme::dark(),
         None,
     );
-    let vw0 = crate::view::header::visible_width(&rendered_seg0);
+    let vw0 = rendered_seg0.width();
     assert_eq!(
         vw0, 55,
         "file header segment 0 visual width must be exactly 55 on 55-col viewport"
     );
     assert!(
-        rendered_seg0.contains("crates/diffuse-tui/src/view/")
-            && rendered_seg0.contains("modals.rs"),
+        rendered_seg0
+            .to_string()
+            .contains("crates/diffuse-tui/src/view/")
+            && rendered_seg0.to_string().contains("modals.rs"),
         "rendered banner segment 0 must preserve the un-truncated directory prefix and from path"
     );
 
-    let rendered_seg1 = render_file_header_segment(
+    let rendered_seg1 = file_header_segment_line(
         &file,
         Badge {
             idx: 0,
@@ -700,13 +727,13 @@ fn test_render_file_header_segment_narrow_width() {
         &DiffuseTheme::dark(),
         None,
     );
-    let vw1 = crate::view::header::visible_width(&rendered_seg1);
+    let vw1 = rendered_seg1.width();
     assert_eq!(
         vw1, 55,
         "file header segment 1 visual width must be exactly 55 on 55-col viewport"
     );
     assert!(
-        rendered_seg1.contains("mod.rs"),
+        rendered_seg1.to_string().contains("mod.rs"),
         "rendered banner segment 1 must contain the wrapped rename target"
     );
 }
@@ -759,7 +786,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     );
 
     // Render segment 0 at width 45
-    let seg0 = render_file_header_segment(
+    let seg0 = file_header_segment_line(
         &file,
         Badge {
             idx: 0,
@@ -774,19 +801,28 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         &theme,
         common_prefix,
     );
-    assert_eq!(
-        crate::view::header::visible_width(&seg0),
-        45,
-        "segment 0 must be 45 visual columns"
-    );
-    // Underlined common prefix on segment 0 with desaturated purple 139m:
+    assert_eq!(seg0.width(), 45, "segment 0 must be 45 visual columns");
+    // Underlined common prefix on segment 0 with desaturated purple 139:
+    let underlined = seg0
+        .spans
+        .iter()
+        .find(|s| s.content.contains("diffuse-core/src/"))
+        .expect("underlined common prefix span");
     assert!(
-        seg0.contains("\x1b[4m\x1b[38;5;139mdiffuse-core/src/\x1b[24m"),
+        underlined
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
         "segment 0 must preserve underlined common prefix without initial ellipsis or shortening: {seg0:?}"
+    );
+    assert_eq!(
+        underlined.style.fg,
+        Some(ratatui::style::Color::Indexed(139)),
+        "underlined common prefix keeps desaturated purple 139"
     );
 
     // Render segment 1 at width 45
-    let seg1 = render_file_header_segment(
+    let seg1 = file_header_segment_line(
         &file,
         Badge {
             idx: 0,
@@ -801,13 +837,9 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         &theme,
         common_prefix,
     );
-    assert_eq!(
-        crate::view::header::visible_width(&seg1),
-        45,
-        "segment 1 must be 45 visual columns"
-    );
+    assert_eq!(seg1.width(), 45, "segment 1 must be 45 visual columns");
     assert!(
-        seg1.contains("(renamed, 100B)"),
+        seg1.to_string().contains("(renamed, 100B)"),
         "segment 1 must contain the wrapped suffix: {seg1:?}"
     );
 }
@@ -987,7 +1019,7 @@ fn test_file_header_counts_colored_like_status_bar() {
     f.counts.adds = 5;
     f.counts.mods = 1;
     let theme = DiffuseTheme::dark();
-    let seg = render_file_header_segment(
+    let seg = file_header_segment_line(
         &f,
         Badge {
             idx: 0,
@@ -1003,25 +1035,30 @@ fn test_file_header_counts_colored_like_status_bar() {
         None,
     );
     // Same red/green/orange count colors as the status bar counts.
+    let has_colored = |text: &str, fg: ratatui::style::Color| {
+        seg.spans
+            .iter()
+            .any(|s| s.content.contains(text) && s.style.fg == Some(fg))
+    };
     assert!(
-        seg.contains("\x1b[38;5;203m−2"),
+        has_colored("−2", ratatui::style::Color::Indexed(203)),
         "deletion count must be red: {seg:?}"
     );
     assert!(
-        seg.contains("\x1b[38;5;120m+5"),
+        has_colored("+5", ratatui::style::Color::Indexed(120)),
         "addition count must be green: {seg:?}"
     );
     assert!(
-        seg.contains("\x1b[38;5;214m~1"),
+        has_colored("~1", ratatui::style::Color::Indexed(214)),
         "mod count must be orange: {seg:?}"
     );
     // Filename renders in status-bar white.
     assert!(
-        seg.contains("\x1b[22m\x1b[38;5;251msrc/main.rs"),
+        has_colored("src/main.rs", ratatui::style::Color::Indexed(251)),
         "rest-state filename must be muted: {seg:?}"
     );
     // Cursor states brighten the path: selected brightest, current middle.
-    let seg_cur = render_file_header_segment(
+    let seg_cur = file_header_segment_line(
         &f,
         Badge {
             idx: 0,
@@ -1037,10 +1074,14 @@ fn test_file_header_counts_colored_like_status_bar() {
         None,
     );
     assert!(
-        seg_cur.contains("\x1b[22m\x1b[38;5;254msrc/main.rs"),
+        seg_cur
+            .spans
+            .iter()
+            .any(|s| s.content.contains("src/main.rs")
+                && s.style.fg == Some(ratatui::style::Color::Indexed(254))),
         "current-state filename must keep mid white: {seg_cur:?}"
     );
-    let seg_sel = render_file_header_segment(
+    let seg_sel = file_header_segment_line(
         &f,
         Badge {
             idx: 0,
@@ -1056,11 +1097,15 @@ fn test_file_header_counts_colored_like_status_bar() {
         None,
     );
     assert!(
-        seg_sel.contains("\x1b[22m\x1b[38;5;255msrc/main.rs"),
+        seg_sel
+            .spans
+            .iter()
+            .any(|s| s.content.contains("src/main.rs")
+                && s.style.fg == Some(ratatui::style::Color::Indexed(255))),
         "selected-state filename must be brightest: {seg_sel:?}"
     );
     // Counts follow the path, before the status parens.
-    let plain = crate::render::strip_ansi(&seg);
+    let plain = seg.to_string();
     let counts_at = plain.find('−').expect("counts present");
     let path_at = plain.find("src/main.rs").expect("path present");
     assert!(path_at < counts_at, "counts must follow path: {plain:?}");

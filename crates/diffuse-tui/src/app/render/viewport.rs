@@ -3,19 +3,22 @@
 
 use std::{collections::HashMap, time::Instant};
 
+use ratatui::text::Line;
+
 use super::buffer::escape_ansi_for_diagnostic;
 use crate::{
-    app::AppState,
+    app::{AppState, notes::NoteRowFocus},
     core::parse::RowKind,
-    render::{render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix},
+    render::{
+        continuation_prefix_spans, raw_row_spans, row_segment_spans, slice_by_visual_width,
+        styled_prefix_spans,
+    },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
-        clamp_or_pad_ansi,
         diff_grid::{
-            render_bottom_gap_divider_segment, render_file_header_segment,
-            render_hunk_divider_segment,
+            bottom_gap_divider_segment_line, file_header_segment_line, hunk_divider_segment_line,
         },
-        visible_width,
+        span::fit_line,
     },
 };
 
@@ -168,17 +171,18 @@ impl AppState {
         }
     }
 
-    /// Render the diff rows for the current viewport slice.
+    /// Render the diff rows for the current viewport slice as Ratatui
+    /// lines: no ANSI round-trip.
     #[allow(clippy::type_complexity)]
     pub fn render_diff_viewport_lines(
         &mut self,
         width: usize,
         vh: usize,
         track_h: usize,
-    ) -> (Vec<String>, bool, usize, usize, usize) {
+    ) -> (Vec<Line<'static>>, bool, usize, usize, usize) {
         let frame_start = Instant::now();
         let max_rows = vh.max(4);
-        let mut lines = Vec::new();
+        let mut lines: Vec<Line<'static>> = Vec::new();
         // Flat-row origin of each pushed grid line for width-invariant
         // diagnostics (None for viewport padding).
         let mut line_src: Vec<Option<usize>> = Vec::new();
@@ -271,7 +275,6 @@ impl AppState {
         let sticky_count = sticky.map_or(0, |s| s.total_sticky_lines());
         let content_start_vis = self.scroll + sticky_count;
         let content_end_vis = self.scroll + max_rows;
-
         if let Some(s) = sticky {
             let file_obj = &self.output.files[s.file_idx];
             let is_collapsed = self.collapsed_files.contains(&s.file_idx);
@@ -283,7 +286,7 @@ impl AppState {
                 let is_selected = s.banner_row == self.row_idx && self.vis_line == s_idx;
                 let seg_start = s_idx * text_cols;
                 line_src.push(Some(s.banner_row));
-                lines.push(render_file_header_segment(
+                lines.push(file_header_segment_line(
                     file_obj,
                     crate::render::Badge {
                         idx: s.file_idx,
@@ -307,7 +310,7 @@ impl AppState {
                     let is_selected = h.flat_row == self.row_idx && self.vis_line == s_idx;
                     let seg_start = s_idx * text_cols;
                     line_src.push(Some(h.flat_row));
-                    lines.push(render_hunk_divider_segment(
+                    lines.push(hunk_divider_segment_line(
                         crate::render::Badge {
                             idx: h.hunk_idx,
                             total: Some(self.output.files[h.file_idx].hunks.len()),
@@ -363,7 +366,7 @@ impl AppState {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
-                        lines.push(render_hunk_divider_segment(
+                        lines.push(hunk_divider_segment_line(
                             crate::render::Badge {
                                 idx: div_hi,
                                 total: Some(self.output.files[div_fi].hunks.len()),
@@ -398,7 +401,7 @@ impl AppState {
                             let text_cols = content_width.max(1);
                             let seg_start = s_idx * text_cols;
                             line_src.push(Some(idx));
-                            lines.push(render_file_header_segment(
+                            lines.push(file_header_segment_line(
                                 file_obj,
                                 crate::render::Badge {
                                     idx: item.file_idx,
@@ -433,19 +436,20 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                             let text_cols = content_width.max(1);
-                            let start_col = s_idx * text_cols;
-                            let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
+                            let piece =
+                                slice_by_visual_width(&sep_text, s_idx * text_cols, text_cols);
                             let is_last_seg = s_idx + 1 == seg_count;
                             line_src.push(Some(idx));
-                            lines.push(render_raw_row(
+                            let raw = raw_row_spans(
                                 RowKind::Ctx,
-                                "",
+                                Vec::new(),
                                 &piece,
                                 is_selected,
                                 in_band && !is_selected,
                                 is_last_seg,
                                 &self.theme,
-                            ));
+                            );
+                            lines.push(fit_line(raw.spans, content_width, raw.line_bg));
                         }
                         vis_i += 1;
                     }
@@ -459,16 +463,15 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                             let seg_start = s_idx * text_cols;
-                            let bottom_div = render_bottom_gap_divider_segment(
+                            line_src.push(Some(idx));
+                            lines.push(bottom_gap_divider_segment_line(
                                 gap,
                                 is_cur,
                                 is_selected,
                                 seg_start,
                                 content_width,
                                 &self.theme,
-                            );
-                            line_src.push(Some(idx));
-                            lines.push(bottom_div);
+                            ));
                         }
                         vis_i += 1;
                     }
@@ -482,8 +485,8 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected =
                                 idx == self.row_idx && self.vis_line == div_segs + s_idx;
-                            let pfx = if s_idx == 0 {
-                                styled_prefix(
+                            let prefix = if s_idx == 0 {
+                                styled_prefix_spans(
                                     r.kind,
                                     r.mov_side,
                                     r.group,
@@ -491,32 +494,33 @@ impl AppState {
                                     r.old_line,
                                     &r.runs,
                                     in_hunk_extent,
+                                    None,
                                     &self.theme,
                                 )
                             } else {
-                                "\x1b[38;5;242m      \x1b[39m".to_string()
+                                continuation_prefix_spans(None)
                             };
                             let row_text = r.text();
                             let rendered_row = if self.raw_diff {
-                                let prefix_str = pfx.as_str();
                                 let text_cols = content_width.saturating_sub(6).max(1);
-                                let start_col = s_idx * text_cols;
-                                let piece = slice_by_visual_width(&row_text, start_col, text_cols);
+                                let piece =
+                                    slice_by_visual_width(&row_text, s_idx * text_cols, text_cols);
                                 let is_last_seg = s_idx + 1 == seg_count;
-                                render_raw_row(
+                                let raw = raw_row_spans(
                                     r.kind,
-                                    prefix_str,
+                                    prefix,
                                     &piece,
                                     is_selected,
                                     in_band && !is_selected,
                                     is_last_seg,
                                     &self.theme,
-                                )
+                                );
+                                fit_line(raw.spans, content_width, raw.line_bg)
                             } else {
                                 let text_cols = content_width.saturating_sub(6).max(1);
                                 let seg_start = s_idx * text_cols;
                                 let seg_end = seg_start + text_cols;
-                                render_row_segment(
+                                let row = row_segment_spans(
                                     &row_text,
                                     r.is_aux(),
                                     r.kind,
@@ -524,14 +528,15 @@ impl AppState {
                                     &r.runs,
                                     seg_start,
                                     seg_end,
-                                    &pfx,
+                                    prefix,
                                     is_selected,
                                     in_band && !is_selected,
                                     self.col_offset,
                                     self.word_diff,
                                     self.syntax_on,
                                     &self.theme,
-                                )
+                                );
+                                fit_line(row.spans, content_width, row.line_bg)
                             };
                             line_src.push(Some(idx));
                             lines.push(rendered_row);
@@ -541,46 +546,34 @@ impl AppState {
                 }
             }
 
-            if let Some(note_lines) = callouts.get(&idx) {
-                let focused_note_range = if idx == self.row_idx {
+            if callouts.contains_key(&idx) {
+                // Focused rows re-render their note block with the cursor
+                // note highlighted; other rows use the cached lines.
+                let focus = if idx == self.row_idx {
                     match self.visual_target_at(self.row_idx, self.vis_line) {
                         Some(super::super::notes::VisualTarget::Note {
+                            note_idx,
                             line_idx,
-                            total_note_lines,
                             ..
                         }) => {
                             let note_start = div_segs + seg_counts[idx];
-                            if self.vis_line >= note_start {
-                                let start = (self.vis_line - note_start).saturating_sub(line_idx);
-                                Some(start..start + total_note_lines)
-                            } else {
-                                None
-                            }
+                            (self.vis_line >= note_start)
+                                .then_some(NoteRowFocus { note_idx, line_idx })
                         }
                         _ => None,
                     }
                 } else {
                     None
                 };
-
-                for (nl_idx, nline) in note_lines.iter().enumerate() {
+                let block = if focus.is_some() {
+                    self.note_block_lines(idx, content_width, focus)
+                } else {
+                    callouts.get(&idx).cloned().unwrap_or_default()
+                };
+                for nline in block {
                     if vis_i >= content_start_vis && vis_i < content_end_vis {
-                        let is_focused = focused_note_range
-                            .as_ref()
-                            .is_some_and(|r| r.contains(&nl_idx));
-                        let is_current_line = idx == self.row_idx
-                            && self.vis_line == div_segs + seg_counts[idx] + nl_idx;
                         line_src.push(Some(idx));
-                        let line_str = if is_focused {
-                            super::super::notes::style_focused_note_line(
-                                nline,
-                                is_current_line,
-                                &self.theme,
-                            )
-                        } else {
-                            nline.clone()
-                        };
-                        lines.push(clamp_or_pad_ansi(&line_str, content_width));
+                        lines.push(nline);
                     }
                     vis_i += 1;
                 }
@@ -589,17 +582,17 @@ impl AppState {
 
         while lines.len() < vh {
             line_src.push(None);
-            lines.push(String::new());
+            lines.push(Line::default());
         }
 
         if cfg!(debug_assertions) {
             for (idx, line) in lines.iter().enumerate() {
-                let vw = visible_width(line);
+                let vw = line.width();
                 debug_assert!(
                     vw <= content_width,
                     "render_diff_viewport_lines produced grid line {idx} ({}) with visual width ({vw}) > content_width ({content_width}):\n\n{}",
                     self.viewport_line_origin(line_src.get(idx).copied().flatten()),
-                    escape_ansi_for_diagnostic(line),
+                    escape_ansi_for_diagnostic(&line.to_string()),
                 );
             }
         }

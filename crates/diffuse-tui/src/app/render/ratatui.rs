@@ -9,12 +9,12 @@ use ratatui::{
 
 use crate::{
     app::AppState,
-    render::{UiPalette, ansi::optimize_ansi},
+    render::UiPalette,
     view::{
-        bottom_ribbon_lines, clamp_or_pad_ansi,
+        bottom_ribbon_lines,
         header::status_bar_line,
         modals::{render_finder_modal_widget, render_help_modal_widget, render_note_modal_widget},
-        to_color, visible_width,
+        to_color,
     },
 };
 
@@ -206,27 +206,23 @@ impl AppState {
         // owns its own full-height column). Pass the full width: the
         // viewport fn deducts the bar column itself, so passing main_width
         // would subtract it twice and desync hit column from drawn column.
-        let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
+        let (grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
             self.render_diff_viewport_lines(width, diff_area.height as usize, track_h);
 
-        for gline in grid_lines.iter_mut() {
-            debug_assert!(
-                visible_width(gline) <= content_width,
-                "grid line visual width ({}) exceeds content_width ({})",
-                visible_width(gline),
-                content_width
-            );
-            *gline = clamp_or_pad_ansi(gline, content_width);
+        if cfg!(debug_assertions) {
+            for gline in grid_lines.iter() {
+                debug_assert!(
+                    gline.width() <= content_width,
+                    "grid line visual width ({}) exceeds content_width ({})",
+                    gline.width(),
+                    content_width
+                );
+            }
         }
-
-        let paragraph_lines: Vec<ratatui::text::Line> = grid_lines
-            .into_iter()
-            .map(|l| crate::view::ansi_to_ratatui_line(optimize_ansi(&l).as_ref()))
-            .collect();
         let diff_bg = to_color(self.theme.palette.ui.bg_base);
         let diff_fg = to_color(self.theme.palette.ui.text);
         f.render_widget(
-            Paragraph::new(paragraph_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
+            Paragraph::new(grid_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
             diff_area,
         );
 

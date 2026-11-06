@@ -12,7 +12,7 @@ use ratatui::{
 use super::buffer::Editor;
 use crate::{
     render::DiffuseTheme,
-    view::{ansi_to_ratatui_line, to_color},
+    view::{span::span_style, to_color},
 };
 
 pub type HighlightingCallback = Arc<dyn Fn(&[String]) -> Vec<Vec<Span<'static>>> + Send + Sync>;
@@ -96,19 +96,29 @@ impl Editor {
 
 /// Creates a pluggable syntax highlighting callback that formats Markdown text
 /// using diffuse's standard Markdown classifier and theme across the full
-/// document.
+/// document. Tokens convert straight to Ratatui spans: no ANSI round-trip.
 pub fn markdown_highlighter(theme: DiffuseTheme) -> HighlightingCallback {
     Arc::new(move |lines: &[String]| {
         let doc = lines.join("\n");
         let doc_tokens = diffuse_syntax::classifier::markdown_document_tokens(&doc);
         let mut out = Vec::with_capacity(lines.len());
         for line_tokens in doc_tokens {
-            let mut ansi_buf = String::new();
+            let mut spans = Vec::with_capacity(line_tokens.len());
             for tok in line_tokens {
-                theme.write_token(tok.color, tok.text, "ctx", None, tok.sgr, &mut ansi_buf);
+                let styled = theme.token_span(
+                    tok.color,
+                    tok.text,
+                    crate::core::parse::RowKind::Ctx,
+                    crate::core::merge::RunKind::Ctx,
+                    tok.sgr,
+                );
+                let style = span_style(&styled);
+                spans.push(Span {
+                    content: styled.text.into(),
+                    style,
+                });
             }
-            let ratatui_line = ansi_to_ratatui_line(&ansi_buf);
-            out.push(ratatui_line.spans);
+            out.push(spans);
         }
         while out.len() < lines.len() {
             out.push(vec![Span::styled(

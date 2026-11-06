@@ -15,7 +15,9 @@ pub use highlight::{
     render_markdown_text_with_width, write_markdown_line_highlighted,
 };
 pub use options::MarkdownOptions;
-pub use terminal::{MarkdownLine, markdown_lines, render_markdown_line, write_markdown_line};
+pub use terminal::{
+    MarkdownLine, MarkdownRun, markdown_lines, render_markdown_line, write_markdown_line,
+};
 
 #[cfg(test)]
 mod tests;

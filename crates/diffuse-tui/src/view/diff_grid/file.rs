@@ -1,15 +1,14 @@
-use ratatui::{
-    style::{Modifier, Style},
-    text::{Line, Span},
-};
+use ratatui::text::Line;
 
-use super::super::header::truncate_pad;
 use crate::{
     core::wire::OutputFile,
     render::{
-        Badge, ColorExt, Cursor, DiffuseTheme, FileHeaderBanner, FileHeaderSpec, HeaderRole,
-        file_header_banner, file_header_text as canonical_file_header_text, width::display_width,
+        Badge, Cursor, DiffuseTheme, FileHeaderSpec, banner_spans, file_header_banner,
+        file_header_text as canonical_file_header_text,
+        span::{StyledSpan, slice_spans, spans_width},
+        width::display_width,
     },
+    view::span::line_from_spans,
 };
 
 fn rename_prefix_visual_span(
@@ -69,105 +68,6 @@ fn rename_prefix_visual_span(
 /// Char column of the collapse/expand triangle in the file banner.
 pub const FILE_HEADER_INDICATOR_COL: usize = 5;
 
-/// A styled column range over plain banner text: emitted with `open`
-/// before the overlapped slice and `close` after it.
-struct BannerStyleRun {
-    start: usize,
-    end: usize,
-    open: String,
-    close: String,
-}
-
-/// Build the styled column ranges of a canonical banner, one per non-base
-/// run, so the renderer only chooses escape syntax.
-fn banner_runs(banner: &FileHeaderBanner) -> Vec<BannerStyleRun> {
-    let base_fg = banner.surface.fg.fg_code();
-    let path_fg = banner.surface.fg_or_path().fg_code();
-    let mut runs = Vec::with_capacity(banner.spans.len());
-    let mut col = 0usize;
-    for span in &banner.spans {
-        let width = display_width(&span.text);
-        let escapes = match span.role {
-            HeaderRole::Base => None,
-            HeaderRole::Path => Some((
-                format!("\x1b[22m{path_fg}"),
-                format!("\x1b[39m\x1b[1m{base_fg}"),
-            )),
-            HeaderRole::Count(color) => Some((
-                format!("\x1b[1m{}", color.fg_code()),
-                format!("\x1b[39m{base_fg}"),
-            )),
-        };
-        if let Some((open, close)) = escapes {
-            runs.push(BannerStyleRun {
-                start: col,
-                end: col + width,
-                open,
-                close,
-            });
-        }
-        col += width;
-    }
-    runs
-}
-
-/// Render a visual slice of plain banner text, applying the styled column
-/// ranges overlapping the window. Returns the styled piece and its visible
-/// width (measured before styling, so ANSI never pollutes layout math).
-fn render_banner_piece(
-    plain: &str,
-    runs: &[BannerStyleRun],
-    seg_start: usize,
-    width: usize,
-) -> (String, usize) {
-    use unicode_segmentation::UnicodeSegmentation;
-
-    use crate::render::width::grapheme_width;
-
-    let mut out = String::new();
-    let mut visible = 0usize;
-    let mut col = 0usize;
-    let mut open: Option<usize> = None;
-    let mut open_emitted = false;
-    for g in plain.graphemes(true) {
-        let gw = grapheme_width(g);
-        let gs = col;
-        col += gw;
-        // Latest-starting match wins, so nested ranges (rename underline
-        // inside the white path) resolve innermost.
-        let active = runs.iter().rposition(|r| gs >= r.start && gs < r.end);
-        if active != open {
-            if open_emitted {
-                if let Some(idx) = open {
-                    out.push_str(&runs[idx].close);
-                }
-                open_emitted = false;
-            }
-            open = active;
-        }
-        // A grapheme belongs to this segment when it starts inside it and
-        // fully fits, OR when it straddles the segment's left edge (i.e. it
-        // did not fit at the tail of the previous segment and wraps here).
-        let in_segment = (gs >= seg_start && gs + gw <= seg_start + width)
-            || (gs < seg_start && gs + gw > seg_start);
-        if !in_segment {
-            continue;
-        }
-        if let Some(idx) = open
-            && !open_emitted
-        {
-            out.push_str(&runs[idx].open);
-            open_emitted = true;
-        }
-        out.push_str(g);
-        visible += gw;
-    }
-    if open_emitted && let Some(idx) = open {
-        out.push_str(&runs[idx].close);
-    }
-    (out, visible)
-}
-
 /// Canonical plain text of a file banner row with the shared directory prefix
 /// stripped.
 pub fn file_header_text_with_prefix(
@@ -191,9 +91,12 @@ pub fn file_header_text(file: &OutputFile, badge: Badge, is_collapsed: bool) -> 
     file_header_text_with_prefix(file, badge, is_collapsed, None)
 }
 
-/// Render a specific visual segment of a file banner row with theme support.
+/// Render a specific visual segment of a file banner row as a styled
+/// Ratatui [`Line`]: role-styled banner text sliced at `seg_start`, padded
+/// with the ruler (or spaces mid-banner) to `content_width`. The direct
+/// grid path: no ANSI round-trip.
 #[allow(clippy::too_many_arguments)]
-pub fn render_file_header_segment(
+pub fn file_header_segment_line(
     file: &OutputFile,
     badge: Badge,
     is_collapsed: bool,
@@ -204,7 +107,7 @@ pub fn render_file_header_segment(
     content_width: usize,
     theme: &DiffuseTheme,
     common_prefix: Option<&str>,
-) -> String {
+) -> Line<'static> {
     // Selected banners lift to the row tier; current / in-band banners sit
     // at the file tier; everything else rests.
     let tier = Cursor::from_banner_state(is_selected, is_current || in_band);
@@ -218,43 +121,35 @@ pub fn render_file_header_segment(
         theme,
         tier,
     );
-    let bg_code = banner.surface.bg.bg_code();
-    let fg_code = banner.surface.fg.fg_code();
-
-    let total_prefix_w = display_width(&banner.text);
-    if seg_start >= total_prefix_w {
-        let bar_str = "═".repeat(content_width);
-        return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
-    }
-
-    let mut runs = banner_runs(&banner);
-    if let Some((start, end)) = rename_prefix_visual_span(file, badge, common_prefix) {
-        runs.push(BannerStyleRun {
-            start,
-            end,
-            open: "\x1b[4m\x1b[38;5;139m".to_string(),
-            close: format!("\x1b[24m{fg_code}"),
-        });
-    }
-    runs.sort_by_key(|r| r.start);
-
-    let (styled_piece, piece_w) =
-        render_banner_piece(&banner.text, &runs, seg_start, content_width);
-
-    let bar_str = if piece_w < content_width {
-        let ruler_len = content_width - piece_w;
-        let fills_with_ruler = seg_start + content_width >= total_prefix_w;
-        let pad = if fills_with_ruler {
-            "═".repeat(ruler_len)
-        } else {
-            " ".repeat(ruler_len)
-        };
-        format!("{styled_piece}{pad}")
-    } else {
-        styled_piece
+    let ruler = || {
+        StyledSpan::styled(
+            "═".repeat(content_width),
+            Some(banner.surface.fg),
+            Some(banner.surface.bg),
+        )
+        .with_bold(true)
     };
-
-    format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
+    let total_w = display_width(&banner.text);
+    if seg_start >= total_w {
+        return line_from_spans(vec![ruler()]);
+    }
+    let rename = rename_prefix_visual_span(file, badge, common_prefix);
+    let mut sliced = slice_spans(&banner_spans(&banner, rename), seg_start, content_width);
+    let piece_w = spans_width(&sliced);
+    if piece_w < content_width {
+        let ruler_len = content_width - piece_w;
+        let fills_with_ruler = seg_start + content_width >= total_w;
+        let pad_char = if fills_with_ruler { "═" } else { " " };
+        sliced.push(
+            StyledSpan::styled(
+                pad_char.repeat(ruler_len),
+                Some(banner.surface.fg),
+                Some(banner.surface.bg),
+            )
+            .with_bold(true),
+        );
+    }
+    line_from_spans(sliced)
 }
 
 /// Render a file banner row as a styled Ratatui [`Line`] with theme support.
@@ -269,20 +164,16 @@ pub fn file_header_line(
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
-    let banner = file_header_banner(
+    file_header_segment_line(
         file,
-        &FileHeaderSpec {
-            badge: Some(badge),
-            is_collapsed,
-            common_prefix: None,
-        },
+        badge,
+        is_collapsed,
+        is_selected,
+        is_current,
+        in_band,
+        0,
+        content_width,
         theme,
-        Cursor::from_banner_state(is_selected, is_current || in_band),
-    );
-    let bar_str = truncate_pad(&banner.text, content_width);
-    let style = Style::default()
-        .bg(crate::view::to_color(banner.surface.bg))
-        .fg(crate::view::to_color(banner.surface.fg))
-        .add_modifier(Modifier::BOLD);
-    Line::from(Span::styled(bar_str, style))
+        None,
+    )
 }

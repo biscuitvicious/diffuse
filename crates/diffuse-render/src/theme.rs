@@ -5,6 +5,7 @@
 
 use std::{env, fmt::Write, sync::OnceLock};
 
+use diffuse_core::{merge::RunKind, parse::RowKind};
 use diffuse_syntax::color::TokenColor;
 
 pub mod palette;
@@ -44,6 +45,7 @@ pub use toml::model::Mode;
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
+use crate::span::StyledSpan;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowStyle {
@@ -250,18 +252,18 @@ impl DiffuseTheme {
         sgr: Option<u32>,
         out: &mut W,
     ) {
-        use diffuse_core::parse::RowKind;
-        let rk = if row_kind == "add" || tok_kind == Some("add") {
-            RowKind::Add
-        } else if row_kind == "del" || tok_kind == Some("del") {
-            RowKind::Del
-        } else if row_kind == "mod" {
-            RowKind::Mod
-        } else {
-            RowKind::Ctx
+        let kind = match row_kind {
+            "add" => RowKind::Add,
+            "del" => RowKind::Del,
+            "mod" => RowKind::Mod,
+            _ => RowKind::Ctx,
         };
-
-        let ansi_color = self.token_color(color, rk);
+        let tok = match tok_kind {
+            Some("add") => RunKind::Add,
+            Some("del") => RunKind::Del,
+            _ => RunKind::Ctx,
+        };
+        let ansi_color = self.token_color(color, token_channel(kind, tok));
 
         if let Some(s) = sgr {
             if let Some(on) = sgr_on_str(s) {
@@ -288,6 +290,30 @@ impl DiffuseTheme {
     /// (`\x1b[1;4m`), with per-modifier resets in reverse order. Styles
     /// like heading titles combine bold and underline, which a single SGR
     /// slot cannot express.
+    /// Render a syntax/markdown token as a renderer-agnostic
+    /// [`StyledSpan`]: the span-native twin of [`Self::write_token`].
+    /// Colors resolve through the same [`token_channel`], so both paths
+    /// render identical foregrounds.
+    #[must_use]
+    pub fn token_span(
+        &self,
+        color: TokenColor,
+        text: &str,
+        kind: RowKind,
+        tok_kind: RunKind,
+        sgr: Option<u32>,
+    ) -> StyledSpan {
+        let mut span = StyledSpan::styled(
+            text,
+            self.token_color(color, token_channel(kind, tok_kind)),
+            None,
+        );
+        if let Some(sgr) = sgr {
+            span = span.with_sgr(sgr);
+        }
+        span
+    }
+
     pub fn write_token_stacked<W: Write>(
         &self,
         color: TokenColor,
@@ -297,18 +323,18 @@ impl DiffuseTheme {
         sgrs: &[u32],
         out: &mut W,
     ) {
-        use diffuse_core::parse::RowKind;
-        let rk = if row_kind == "add" || tok_kind == Some("add") {
-            RowKind::Add
-        } else if row_kind == "del" || tok_kind == Some("del") {
-            RowKind::Del
-        } else if row_kind == "mod" {
-            RowKind::Mod
-        } else {
-            RowKind::Ctx
+        let kind = match row_kind {
+            "add" => RowKind::Add,
+            "del" => RowKind::Del,
+            "mod" => RowKind::Mod,
+            _ => RowKind::Ctx,
         };
-
-        let ansi_color = self.token_color(color, rk);
+        let tok = match tok_kind {
+            Some("add") => RunKind::Add,
+            Some("del") => RunKind::Del,
+            _ => RunKind::Ctx,
+        };
+        let ansi_color = self.token_color(color, token_channel(kind, tok));
 
         if !sgrs.is_empty() {
             let _ = out.write_str("\x1b[");
@@ -454,6 +480,23 @@ impl DiffuseTheme {
 
 pub fn default_theme() -> DiffuseTheme {
     DiffuseTheme::dark()
+}
+
+/// Resolve the token syntax channel for a run: add and del runs keep their
+/// own channel inside any row; other runs follow the row kind, with mod
+/// rows on their own channel and everything else on ctx. Shared by the ANSI
+/// ([`DiffuseTheme::write_token`]) and span ([`DiffuseTheme::token_span`])
+/// paths so both render identical colors.
+fn token_channel(kind: RowKind, tok_kind: RunKind) -> RowKind {
+    if kind == RowKind::Add || tok_kind == RunKind::Add {
+        RowKind::Add
+    } else if kind == RowKind::Del || tok_kind == RunKind::Del {
+        RowKind::Del
+    } else if kind == RowKind::Mod {
+        RowKind::Mod
+    } else {
+        RowKind::Ctx
+    }
 }
 
 #[cfg(test)]

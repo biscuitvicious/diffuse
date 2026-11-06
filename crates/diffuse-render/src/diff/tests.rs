@@ -861,3 +861,115 @@ fn test_render_source_rows_mirrors_grid_rendering() {
     let plain0 = strip_ansi(&plain[0]);
     assert!(plain0.starts_with("  10 "), "plain ctx gutter: {plain0:?}");
 }
+
+fn banner_test_file() -> OutputFile {
+    OutputFile {
+        path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: diffuse_core::FileStatus::Modified,
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts {
+            adds: 5,
+            dels: 2,
+            ..Default::default()
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    }
+}
+
+#[test]
+fn test_banner_spans_carry_banner_text_and_roles() {
+    use crate::{FileHeaderSpec, span::spans_width, theme::Cursor};
+
+    let theme = DiffuseTheme::dark();
+    let file = banner_test_file();
+    let banner = file_header_banner(
+        &file,
+        &FileHeaderSpec {
+            badge: Some(Badge {
+                idx: 0,
+                total: Some(1),
+            }),
+            is_collapsed: false,
+            common_prefix: None,
+        },
+        &theme,
+        Cursor::Rest,
+    );
+    let spans = banner_spans(&banner, None);
+    let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+    assert_eq!(
+        text, banner.text,
+        "spans must concatenate to the banner text"
+    );
+    // The path run is not bold; the base and count runs are.
+    let path = spans
+        .iter()
+        .find(|span| span.text == "src/main.rs")
+        .expect("path span");
+    assert!(!path.bold, "path span must not be bold");
+    assert_eq!(path.fg, Some(banner.surface.fg_or_path()));
+    let base = spans.first().expect("indicator span");
+    assert!(base.bold, "indicator span must be bold");
+    let count = spans
+        .iter()
+        .find(|span| span.text == "+5")
+        .expect("count span");
+    assert!(count.bold, "count span must be bold");
+    assert_eq!(count.fg, Some(theme.palette.ui.count_adds));
+    // Every span rides on the banner surface background.
+    assert!(spans.iter().all(|span| span.bg == Some(banner.surface.bg)));
+    assert_eq!(
+        spans_width(&spans),
+        crate::width::display_width(&banner.text)
+    );
+}
+
+#[test]
+fn test_banner_spans_underline_rename_range() {
+    use crate::{FileHeaderSpec, theme::Cursor};
+
+    let theme = DiffuseTheme::dark();
+    let mut file = banner_test_file();
+    file.old_path = Some("src/old.rs".to_string());
+    let banner = file_header_banner(
+        &file,
+        &FileHeaderSpec {
+            badge: None,
+            is_collapsed: false,
+            common_prefix: None,
+        },
+        &theme,
+        Cursor::Rest,
+    );
+    // Overlay ranges are visual columns, not byte indices: the banner
+    // indicator holds multibyte rules.
+    let byte_idx = banner.text.find("src/").expect("prefix in banner");
+    let start = crate::width::display_width(&banner.text[..byte_idx]);
+    let end = start + "src/".len();
+    let spans = banner_spans(&banner, Some((start, end)));
+    let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+    assert_eq!(text, banner.text, "overlay must not change banner text");
+    let underlined: Vec<_> = spans.iter().filter(|span| span.underline).collect();
+    assert_eq!(
+        underlined.len(),
+        1,
+        "exactly the prefix range is underlined"
+    );
+    assert_eq!(underlined[0].text, "src/");
+    assert_eq!(underlined[0].fg, Some(yansi::Color::Fixed(139)));
+}

@@ -582,7 +582,7 @@ fn test_wrapped_line_never_overflows_scrollbar_gutter() {
 
     for (i, line) in grid_lines.iter().enumerate() {
         assert!(
-            !line.contains('\t'),
+            !line.to_string().contains('\t'),
             "grid line {i} must never contain raw tab characters"
         );
     }

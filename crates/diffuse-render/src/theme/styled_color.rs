@@ -6,7 +6,7 @@
 
 use yansi::{Color, Style};
 
-use crate::ansi::ColorExt as _;
+use crate::{ansi::ColorExt as _, span::StyledSpan};
 
 /// A color combined with text attribute modifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +146,24 @@ impl StyledColor {
             return format!("\x1b[{attrs}{params}m");
         }
         fg
+    }
+
+    /// Project this gutter color onto a renderer-agnostic [`StyledSpan`]
+    /// riding on `bg`, preserving the bold, italic, dim, and underline
+    /// flags the ANSI [`Self::fg_code`] path fuses into its escape.
+    #[inline]
+    #[must_use]
+    pub fn span(&self, text: impl Into<String>, bg: Option<Color>) -> StyledSpan {
+        StyledSpan {
+            text: text.into(),
+            fg: Some(self.color),
+            bg,
+            bold: self.bold,
+            dim: self.dim,
+            italic: self.italic,
+            underline: self.underline,
+            strikethrough: false,
+        }
     }
 
     /// Build a [`yansi::Style`] combining the color and enabled modifiers.

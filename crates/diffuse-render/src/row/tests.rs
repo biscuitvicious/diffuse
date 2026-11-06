@@ -1151,6 +1151,330 @@ fn test_display_text_skips_moved_source_runs() {
     assert_eq!(disp, "    assert_eq!( ");
 }
 
+fn span_run(kind: RunKind, color: TokenColor, sgr: Option<u32>, text: &str) -> OutputRun {
+    OutputRun {
+        kind,
+        color,
+        sgr,
+        text: text.to_string().into(),
+    }
+}
+
+fn span_text(spans: &[crate::span::StyledSpan]) -> String {
+    spans.iter().map(|span| span.text.as_str()).collect()
+}
+
+#[test]
+fn test_styled_prefix_spans_match_ansi_prefix_text() {
+    let theme = DiffuseTheme::dark();
+    let bg = Some(theme.palette[Cursor::Row][DiffKind::Ctx].surface.bg);
+    let cases = [
+        (RowKind::Ctx, None, None, Some(7), Some(7)),
+        (RowKind::Add, None, None, Some(42), None),
+        (RowKind::Del, None, None, None, Some(10)),
+        (RowKind::Mod, None, None, Some(55), Some(54)),
+        (
+            RowKind::Mod,
+            None,
+            Some(RowGroup::Anchor),
+            Some(141),
+            Some(140),
+        ),
+        (
+            RowKind::Add,
+            None,
+            Some(RowGroup::Aux { anchor: 141 }),
+            Some(140),
+            None,
+        ),
+        (
+            RowKind::Del,
+            None,
+            Some(RowGroup::Aux { anchor: 141 }),
+            None,
+            Some(140),
+        ),
+        (RowKind::Mov, Some(MovSide::Src), None, None, Some(9)),
+        (RowKind::Mov, Some(MovSide::Tgt), None, Some(11), None),
+    ];
+    for (kind, mov_side, group, new_line, old_line) in cases {
+        let ansi = styled_prefix(kind, mov_side, group, new_line, old_line, &[], true, &theme);
+        let spans = styled_prefix_spans(
+            kind,
+            mov_side,
+            group,
+            new_line,
+            old_line,
+            &[],
+            true,
+            bg,
+            &theme,
+        );
+        assert_eq!(
+            span_text(&spans),
+            crate::ansi::strip_ansi(&ansi),
+            "prefix spans must carry the ANSI prefix text for {kind:?}"
+        );
+        assert!(
+            spans.iter().all(|span| span.bg == bg),
+            "every prefix span must ride on the line background for {kind:?}"
+        );
+    }
+}
+
+#[test]
+fn test_styled_prefix_spans_carry_gutter_colors() {
+    let theme = DiffuseTheme::dark();
+    let gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+    let spans = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        None,
+        Some(55),
+        Some(54),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    let num = spans
+        .iter()
+        .find(|span| span.text.contains("55"))
+        .expect("number span");
+    assert_eq!(num.fg, Some(gutter.num.color));
+    let icon = spans
+        .iter()
+        .find(|span| span.text == "~")
+        .expect("icon span");
+    assert_eq!(icon.fg, Some(gutter.icon.color));
+}
+
+#[test]
+fn test_continuation_prefix_spans_match_ansi_continuation() {
+    let theme = DiffuseTheme::dark();
+    let bg = Some(theme.palette[Cursor::Rest][DiffKind::Mod].surface.bg);
+    let spans = continuation_prefix_spans(bg);
+    assert_eq!(span_text(&spans), "      ");
+    assert!(spans.iter().all(|span| span.bg == bg));
+}
+
+#[test]
+fn test_row_segment_spans_match_ansi_text_across_matrix() {
+    let theme = DiffuseTheme::dark();
+    let runs = vec![
+        span_run(RunKind::Ctx, TokenColor::Keyword, None, "pub fn "),
+        span_run(RunKind::Del, TokenColor::Default, None, "old_"),
+        span_run(RunKind::Add, TokenColor::Function, Some(1), "new"),
+    ];
+    let text = "pub fn old_new";
+    for kind in [RowKind::Ctx, RowKind::Add, RowKind::Del, RowKind::Mod] {
+        for (selected, band) in [(false, false), (true, false), (false, true)] {
+            for syntax_on in [false, true] {
+                for (seg_start, seg_end) in [(0, usize::MAX), (0, 6), (4, 10)] {
+                    let prefix = styled_prefix_spans(
+                        kind,
+                        None,
+                        None,
+                        Some(3),
+                        Some(2),
+                        &runs,
+                        true,
+                        None,
+                        &theme,
+                    );
+                    let ansi_prefix =
+                        styled_prefix(kind, None, None, Some(3), Some(2), &runs, true, &theme);
+                    let ansi = render_row_segment(
+                        text,
+                        false,
+                        kind,
+                        None,
+                        &runs,
+                        seg_start,
+                        seg_end,
+                        &ansi_prefix,
+                        selected,
+                        band,
+                        0,
+                        true,
+                        syntax_on,
+                        &theme,
+                    );
+                    let line = row_segment_spans(
+                        text, false, kind, None, &runs, seg_start, seg_end, prefix, selected, band,
+                        0, true, syntax_on, &theme,
+                    );
+                    assert_eq!(
+                        span_text(&line.spans),
+                        crate::ansi::strip_ansi(&ansi),
+                        "span text must match ANSI text for {kind:?} sel={selected} band={band} syn={syntax_on} seg={seg_start}..{seg_end}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_row_segment_spans_carry_del_strike_and_fill() {
+    let theme = DiffuseTheme::dark();
+    let s_del = theme.row_style(RowKind::Del);
+    let s_mod = theme.row_style(RowKind::Mod);
+    let runs = vec![
+        span_run(RunKind::Ctx, TokenColor::Default, None, "foo "),
+        span_run(RunKind::Del, TokenColor::Default, None, "bar"),
+    ];
+    let prefix = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        None,
+        Some(15),
+        Some(14),
+        &runs,
+        true,
+        None,
+        &theme,
+    );
+    let line = row_segment_spans(
+        "foo bar",
+        false,
+        RowKind::Mod,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    let struck = line
+        .spans
+        .iter()
+        .find(|span| span.text == "bar")
+        .expect("del span");
+    assert!(struck.strikethrough, "del run span must be struck");
+    assert_eq!(
+        struck.bg, s_del.fill_bg,
+        "del run span must sit on the del fill"
+    );
+    assert_eq!(
+        struck.fg,
+        Some(s_del.fg),
+        "del run span must use the del foreground"
+    );
+    assert_eq!(
+        line.line_bg,
+        Some(s_mod.tint_bg),
+        "unselected mod line background must be the mod tint"
+    );
+}
+
+#[test]
+fn test_row_segment_spans_carry_word_fill_and_cursor() {
+    let theme = DiffuseTheme::dark();
+    let s_mod = theme.row_style(RowKind::Mod);
+    let s_add = theme.row_style(RowKind::Add);
+    let runs = vec![
+        span_run(RunKind::Ctx, TokenColor::Keyword, None, "let "),
+        span_run(RunKind::Add, TokenColor::Function, None, "x"),
+    ];
+    let prefix = styled_prefix_spans(
+        RowKind::Add,
+        None,
+        None,
+        Some(8),
+        None,
+        &runs,
+        true,
+        None,
+        &theme,
+    );
+    let line = row_segment_spans(
+        "let x",
+        false,
+        RowKind::Add,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        true,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert_eq!(
+        line.line_bg,
+        Some(s_add.cursor_bg),
+        "selected add line background must be the add cursor background"
+    );
+    let added = line
+        .spans
+        .iter()
+        .find(|span| span.text == "x")
+        .expect("add span");
+    assert_eq!(
+        added.bg, s_mod.fill_cursor_bg,
+        "selected add run must sit on the fill-cursor background"
+    );
+}
+
+#[test]
+fn test_raw_row_spans_match_ansi_text_and_trailing_fill() {
+    let theme = DiffuseTheme::dark();
+    let prefix = styled_prefix_spans(
+        RowKind::Add,
+        None,
+        None,
+        Some(8),
+        None,
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    let ansi_prefix = styled_prefix(RowKind::Add, None, None, Some(8), None, &[], true, &theme);
+    let ansi = render_raw_row(
+        RowKind::Add,
+        &ansi_prefix,
+        "let x = 1;  ",
+        false,
+        false,
+        true,
+        &theme,
+    );
+    let line = raw_row_spans(
+        RowKind::Add,
+        prefix,
+        "let x = 1;  ",
+        false,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(
+        span_text(&line.spans),
+        crate::ansi::strip_ansi(&ansi),
+        "raw span text must match ANSI raw text"
+    );
+    let trailing = line.spans.last().expect("trailing span");
+    assert_eq!(
+        trailing.text, "  ",
+        "trailing whitespace must be its own span"
+    );
+    assert_eq!(
+        trailing.bg,
+        theme.palette[Cursor::Rest][DiffKind::Add].surface.fill,
+        "trailing whitespace must sit on the add fill"
+    );
+}
+
 #[test]
 fn test_aux_add_row_use_merged_display_text() {
     let runs = vec![

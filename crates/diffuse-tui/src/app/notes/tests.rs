@@ -8,7 +8,6 @@ use crate::{
         pipeline::run_pipeline_full,
         wire::PipelineOutput,
     },
-    render::ColorExt,
 };
 
 /// The output row at a new-side line number in the given file.
@@ -478,7 +477,11 @@ fn test_note_callouts_render_across_all_files_and_banners() {
         "note on second.rs must be attached to second.rs file banner (index {banner_1}), even when cursor is on file 0"
     );
     assert_eq!(callouts.get(&banner_1).unwrap().len(), 1);
-    assert!(callouts.get(&banner_1).unwrap()[0].contains("second file banner note"));
+    assert!(
+        callouts.get(&banner_1).unwrap()[0]
+            .to_string()
+            .contains("second file banner note")
+    );
 
     // Rendering a frame that includes second.rs file banner must show the
     // callout
@@ -592,7 +595,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
     );
 
     // First line must start with the 💬 icon, markers rendered away.
-    let clean_first = crate::render::strip_ansi(&note_lines[0]);
+    let clean_first = note_lines[0].to_string();
     assert_eq!(
         clean_first, "▌███ 💬 Test Markdown formatting:",
         "first line must have correct prefix and content: {}",
@@ -603,12 +606,9 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
     assert!(
         note_lines
             .iter()
-            .any(|l| crate::render::strip_ansi(l) == "▌███ │  • List item one"),
+            .any(|l| l.to_string() == "▌███ │  • List item one"),
         "must render bullet list items: {:?}",
-        note_lines
-            .iter()
-            .map(|l| crate::render::strip_ansi(l))
-            .collect::<Vec<_>>()
+        note_lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
     );
 
     // Continuation lines must start with the gutter line (│)
@@ -618,7 +618,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
         .skip(1)
         .take(note_lines.len() - 2)
     {
-        let clean = crate::render::strip_ansi(line);
+        let clean = line.to_string();
         assert!(
             clean.starts_with("▌███ │  "),
             "continuation line {i} must be indented with gutter line: {line:?}"
@@ -627,7 +627,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
 
     // Last line must start with the final corner (╰, no dash).
     if let Some(last) = note_lines.last() {
-        let clean = crate::render::strip_ansi(last);
+        let clean = last.to_string();
         assert!(
             clean.starts_with("▌███ ╰  "),
             "last line must start with final corner: {last:?}"
@@ -637,10 +637,10 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
     // Check code fence syntax styling
     let bash_line = note_lines
         .iter()
-        .find(|l| crate::render::strip_ansi(l).contains("cat hello.txt"))
+        .find(|l| l.to_string().contains("cat hello.txt"))
         .expect("must find bash fence line");
     assert!(
-        bash_line.contains("cat"),
+        bash_line.to_string().contains("cat"),
         "bash fence line must contain cat: {}",
         bash_line
     );
@@ -696,38 +696,49 @@ fn test_note_callout_gutter_band_and_terminal_line() {
     // 80 - 8 = 72 on a single visual line, code span without backticks.
     assert_eq!(note_lines.len(), 1);
 
-    let amber = crate::render::Color::Rgb(250, 75, 40).fg_code();
-    let yellow = crate::render::Color::Rgb(220, 220, 20).fg_code();
-    let note_bg = crate::render::Color::Fixed(234).bg_code();
-    let white = crate::render::Color::Fixed(255).fg_code();
-    // Legacy note-tint foreground guard (Rgb(76, 64, 20)); the cursor-tiered
+    let amber = crate::view::to_color(crate::render::Color::Rgb(250, 75, 40));
+    let yellow = crate::view::to_color(crate::render::Color::Rgb(220, 220, 20));
+    let note_bg = crate::view::to_color(crate::render::Color::Fixed(234));
+    let white = crate::view::to_color(crate::render::Color::Fixed(255));
+    // Legacy note-tint background guard (Rgb(76, 64, 20)); the cursor-tiered
     // schema dropped the unconsumed tint slot.
-    let muted = crate::render::Color::Rgb(76, 64, 20).bg_code();
+    let muted = crate::view::to_color(crate::render::Color::Rgb(76, 64, 20));
     for line in note_lines {
         assert!(
-            line.starts_with(&note_bg),
-            "note background must start at the line start: {line:?}"
+            line.spans.iter().all(|s| s.style.bg == Some(note_bg)),
+            "note background must cover the whole line: {line:?}"
         );
-        assert!(line.contains(&amber), "note stripe must be amber: {line:?}");
+        assert_eq!(
+            line.spans[0].content.as_ref(),
+            "▌",
+            "note stripe must lead the line: {line:?}"
+        );
+        assert_eq!(
+            line.spans[0].style.fg,
+            Some(amber),
+            "note stripe must be amber: {line:?}"
+        );
         assert!(
-            line.contains(&yellow),
+            line.spans
+                .iter()
+                .any(|s| s.content.as_ref() == "███" && s.style.fg == Some(yellow)),
             "note gutter must use filled yellow blocks: {line:?}"
         );
         assert!(
-            !line.contains(&muted),
+            line.spans.iter().all(|s| s.style.bg != Some(muted)),
             "note content must not use the muted note background: {line:?}"
         );
     }
     assert!(
-        note_lines[0].contains(&white),
+        note_lines[0]
+            .spans
+            .iter()
+            .any(|s| s.content.contains("💬") && s.style.fg == Some(white)),
         "speech bubble must be pure white: {:?}",
         note_lines[0]
     );
 
-    let plain: Vec<_> = note_lines
-        .iter()
-        .map(|line| crate::render::strip_ansi(line))
-        .collect();
+    let plain: Vec<_> = note_lines.iter().map(|line| line.to_string()).collect();
     assert_eq!(
         plain[0].trim_end(),
         "▌███ 💬 This is a 4-line note: let a = 17;"
@@ -816,7 +827,7 @@ fn test_note_callout_long_line_wrapping() {
     // Verify every rendered line fits within the content_width (including
     // gutter)
     for line in note_lines {
-        let visual_width = crate::view::visible_width(line);
+        let visual_width = line.width();
         assert!(
             visual_width <= content_width,
             "line exceeds content_width: {} > {}: {:?}",
@@ -871,7 +882,7 @@ fn test_table_note_width_at_narrow_content_width() {
         .expect("must have callout on file banner");
 
     for (i, line) in note_lines.iter().enumerate() {
-        let visual_width = crate::view::visible_width(line);
+        let visual_width = line.width();
         assert!(
             visual_width <= content_width,
             "line {i} exceeds content_width: {visual_width} > {content_width}: {line:?}"
@@ -997,157 +1008,166 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
 }
 
 #[test]
-fn test_style_focused_note_line() {
-    use crate::app::notes::style_focused_note_line;
+fn test_note_block_lines_focus_highlights_stripe_and_cursor() {
+    use crate::render::{Cursor, DiffKind};
     let mut state = AppState::new(
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
         crate::render::DiffuseTheme::dark(),
     );
-    state.note_draft = Some("test note".into());
+    state.note_draft = Some("- First line\n- Second line\n- Third line".into());
     state.commit_note_draft().expect("note commit must succeed");
-    let callouts = state.note_callouts(80);
-    let note_line = callouts.values().next().unwrap().first().unwrap();
+    let target = state
+        .note_callouts(80)
+        .keys()
+        .next()
+        .copied()
+        .expect("note must attach to a row");
+    let theme = crate::render::DiffuseTheme::dark();
+    let cyan = crate::view::to_color(crate::render::Color::Fixed(81));
+    let note_bg = crate::view::to_color(crate::render::Color::Fixed(234));
+    let cursor_bg = crate::view::to_color(theme.palette[Cursor::Row][DiffKind::Ctx].surface.bg);
 
-    // Non-current line of focused note keeps note_bg (234) with cyan stripe
-    let focused_non_current =
-        style_focused_note_line(note_line, false, &crate::render::DiffuseTheme::dark());
+    // Cursor on the middle line: every line takes the active cyan stripe,
+    // only the cursor line takes the cursor background.
+    let focused = state.note_block_lines(
+        target,
+        80,
+        Some(crate::app::notes::NoteRowFocus {
+            note_idx: 0,
+            line_idx: 1,
+        }),
+    );
+    assert_eq!(focused.len(), 3);
+    for (i, line) in focused.iter().enumerate() {
+        assert_eq!(
+            line.spans[0].style.fg,
+            Some(cyan),
+            "line {i} stripe must switch to active cyan"
+        );
+        let bg = if i == 1 { cursor_bg } else { note_bg };
+        assert!(
+            line.spans.iter().all(|s| s.style.bg == Some(bg)),
+            "line {i} background must follow the cursor line"
+        );
+    }
     assert!(
-        focused_non_current.contains("\x1b[38;5;81m"),
-        "must switch left stripe to cyan ANSI color"
+        focused[1].to_string().contains('│'),
+        "must preserve connector │"
     );
     assert!(
-        focused_non_current.contains("\x1b[48;5;234m"),
-        "non-current line keeps note_bg 234"
-    );
-    assert!(
-        focused_non_current.contains("💬"),
-        "must preserve original note callout glyph"
+        focused[2].to_string().contains('╰'),
+        "must preserve final corner ╰"
     );
 
-    // Current line of focused note gets cursor_bg (237) background highlight
-    let focused_current =
-        style_focused_note_line(note_line, true, &crate::render::DiffuseTheme::dark());
-    assert!(
-        focused_current.contains("\x1b[38;5;81m"),
-        "must switch left stripe to cyan ANSI color"
+    // Unknown note index: no focus applied, the status stripe is kept.
+    let quiet = state.note_block_lines(
+        target,
+        80,
+        Some(crate::app::notes::NoteRowFocus {
+            note_idx: 7,
+            line_idx: 0,
+        }),
     );
+    let open = crate::view::to_color(crate::render::Color::Rgb(250, 75, 40));
     assert!(
-        focused_current.contains("\x1b[48;5;237m"),
-        "current line receives cursor background 237"
-    );
-    assert!(
-        focused_current.contains("💬"),
-        "must preserve original note callout glyph"
+        quiet.iter().all(|l| l.spans[0].style.fg == Some(open)),
+        "unfocused block must keep the status stripe"
     );
 }
 
 #[test]
-fn test_style_focused_note_line_in_progress_and_resolved() {
-    use crate::app::notes::style_focused_note_line;
+fn test_note_block_lines_focus_preserves_status_glyphs() {
+    use crate::render::{Cursor, DiffKind};
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    state.show_resolved_notes = true;
+    for (id, status, text) in [
+        (
+            "prog-note",
+            NoteStatus::InProgress,
+            "- Line one\n- Line two\n- Line three",
+        ),
+        ("res-note", NoteStatus::Resolved, "- Res one\n- Res two"),
+    ] {
+        add_note(
+            &mut state.notes,
+            "test_repo",
+            "",
+            ReviewNote {
+                id: id.into(),
+                file: "filesystem.rs".into(),
+                location: crate::core::notes::NoteLocation::line(
+                    crate::core::notes::DiffCoord::new_side(9999),
+                ),
+                text: text.into(),
+                status,
+                created_at: 400,
+                content_hash: None,
+                ..Default::default()
+            },
+        );
+    }
+    state.sync_all_notes();
+    let target = state.first_row_of_file(0);
     let theme = crate::render::DiffuseTheme::dark();
+    let cyan = crate::view::to_color(crate::render::Color::Fixed(81));
+    let cursor_bg = crate::view::to_color(theme.palette[Cursor::Row][DiffKind::Ctx].surface.bg);
 
-    // Test InProgress status with 3 lines to exercise first_prefix, line_prefix,
-    // final_prefix
-    let in_progress_lines = crate::render::render_note_callout_lines(
-        NoteStatus::InProgress,
-        "- Line one\n- Line two\n- Line three",
-        &[],
-        false,
-        true,
-        &theme,
+    // Focus the in-progress note: cyan stripe plus cursor background on
+    // the cursor line, status glyph preserved.
+    let focused = state.note_block_lines(
+        target,
         80,
+        Some(crate::app::notes::NoteRowFocus {
+            note_idx: 0,
+            line_idx: 0,
+        }),
     );
-    assert_eq!(in_progress_lines.len(), 3);
-
-    // First line (InProgress)
-    let focused_first = style_focused_note_line(
-        &in_progress_lines[0],
-        true,
-        &crate::render::DiffuseTheme::dark(),
+    // Both unanchored notes share the banner row: 3 in-progress lines
+    // plus 2 resolved lines.
+    assert_eq!(focused.len(), 5);
+    assert_eq!(focused[0].spans[0].style.fg, Some(cyan));
+    assert!(
+        focused[0]
+            .spans
+            .iter()
+            .all(|s| s.style.bg == Some(cursor_bg)),
+        "current line receives the cursor background"
     );
     assert!(
-        focused_first.contains("\x1b[38;5;81m"),
-        "in-progress first line must switch left stripe to cyan"
-    );
-    assert!(
-        focused_first.contains("\x1b[48;5;237m"),
-        "current line receives cursor background 237"
-    );
-    assert!(
-        focused_first.contains("🔄"),
+        focused[0].to_string().contains("🔄"),
         "must preserve InProgress 🔄 glyph"
     );
+    assert!(
+        focused[1].to_string().contains('│'),
+        "must preserve connector │"
+    );
+    assert!(
+        focused[2].to_string().contains('╰'),
+        "must preserve connector ╰"
+    );
 
-    // Middle line (InProgress, line_prefix)
-    let focused_middle = style_focused_note_line(
-        &in_progress_lines[1],
-        false,
-        &crate::render::DiffuseTheme::dark(),
-    );
-    assert!(
-        focused_middle.contains("\x1b[38;5;81m"),
-        "in-progress continuation line must switch left stripe to cyan"
-    );
-    assert!(
-        focused_middle.contains("\x1b[48;5;234m"),
-        "non-current line keeps note_bg 234"
-    );
-    assert!(focused_middle.contains('│'), "must preserve connector │");
-
-    // Final line (InProgress, final_prefix)
-    let focused_final = style_focused_note_line(
-        &in_progress_lines[2],
-        false,
-        &crate::render::DiffuseTheme::dark(),
-    );
-    assert!(
-        focused_final.contains("\x1b[38;5;81m"),
-        "in-progress final line must switch left stripe to cyan"
-    );
-    assert!(
-        focused_final.contains("\x1b[48;5;234m"),
-        "non-current line keeps note_bg 234"
-    );
-    assert!(focused_final.contains('╰'), "must preserve connector ╰");
-
-    // Test Resolved status
-    let resolved_lines = crate::render::render_note_callout_lines(
-        NoteStatus::Resolved,
-        "- Res one\n- Res two",
-        &[],
-        false,
-        true,
-        &theme,
+    // Focus the resolved note instead: its ✅ glyph survives the focus.
+    let focused_res = state.note_block_lines(
+        target,
         80,
+        Some(crate::app::notes::NoteRowFocus {
+            note_idx: 1,
+            line_idx: 0,
+        }),
     );
-    assert_eq!(resolved_lines.len(), 2);
-
-    let focused_res = style_focused_note_line(
-        &resolved_lines[0],
-        true,
-        &crate::render::DiffuseTheme::dark(),
-    );
-    assert!(
-        focused_res.contains("\x1b[38;5;81m"),
-        "resolved line must switch left stripe to cyan"
-    );
-    assert!(
-        focused_res.contains("\x1b[48;5;237m"),
-        "current line receives cursor background 237"
-    );
-    assert!(
-        focused_res.contains("✅"),
-        "must preserve Resolved ✅ glyph"
-    );
-
-    // Non-note string falls through unchanged
-    let non_note = "arbitrary line content";
-    assert_eq!(
-        style_focused_note_line(non_note, true, &crate::render::DiffuseTheme::dark()),
-        non_note
-    );
+    assert!(focused_res.len() >= 3);
+    let res_line = focused_res
+        .iter()
+        .find(|l| l.to_string().contains("✅"))
+        .expect("resolved note line must render");
+    assert_eq!(res_line.spans[0].style.fg, Some(cyan));
 }
 
 #[test]
@@ -1226,7 +1246,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     // Callouts reflect InProgress glyph
     let callouts = state.note_callouts(80);
     let note_rendered = &callouts.values().next().unwrap()[0];
-    assert!(note_rendered.contains('🔄'));
+    assert!(note_rendered.to_string().contains('🔄'));
 
     // Cycle 2: InProgress -> Resolved
     let cycled2 = state.cycle_note_status();
@@ -1269,7 +1289,11 @@ fn test_note_status_cycling_open_progress_resolved() {
 
     let callouts_reopened = state.note_callouts(80);
     assert_eq!(callouts_reopened.len(), 1);
-    assert!(callouts_reopened.values().next().unwrap()[0].contains('💬'));
+    assert!(
+        callouts_reopened.values().next().unwrap()[0]
+            .to_string()
+            .contains('💬')
+    );
 }
 
 #[test]
@@ -1297,7 +1321,11 @@ fn test_toggle_show_resolved_notes() {
     assert!(state.show_resolved_notes);
     let callouts = state.note_callouts(80);
     assert_eq!(callouts.len(), 1);
-    assert!(callouts.values().next().unwrap()[0].contains('✅'));
+    assert!(
+        callouts.values().next().unwrap()[0]
+            .to_string()
+            .contains('✅')
+    );
 
     // Toggle off
     state.toggle_show_resolved_notes();
@@ -1349,12 +1377,12 @@ fn test_toggle_show_note_source() {
     assert!(
         !lines_no_src
             .iter()
-            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
+            .any(|l| l.to_string().contains(src.trim()))
     );
     assert!(
         lines_no_src
             .iter()
-            .any(|l| l.contains("Feedback on unanchored snippet"))
+            .any(|l| l.to_string().contains("Feedback on unanchored snippet"))
     );
 
     // Toggle on
@@ -1362,15 +1390,11 @@ fn test_toggle_show_note_source() {
     assert!(state.show_note_source);
     let callouts_src = state.note_callouts(80);
     let lines_src = &callouts_src[&banner_idx];
+    assert!(lines_src.iter().any(|l| l.to_string().contains(src.trim())));
     assert!(
         lines_src
             .iter()
-            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
-    );
-    assert!(
-        lines_src
-            .iter()
-            .any(|l| l.contains("Feedback on unanchored snippet"))
+            .any(|l| l.to_string().contains("Feedback on unanchored snippet"))
     );
 
     // Toggle off
@@ -1378,15 +1402,11 @@ fn test_toggle_show_note_source() {
     assert!(!state.show_note_source);
     let callouts_off = state.note_callouts(80);
     let lines_off = &callouts_off[&banner_idx];
-    assert!(
-        !lines_off
-            .iter()
-            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
-    );
+    assert!(!lines_off.iter().any(|l| l.to_string().contains(src.trim())));
     assert!(
         lines_off
             .iter()
-            .any(|l| l.contains("Feedback on unanchored snippet"))
+            .any(|l| l.to_string().contains("Feedback on unanchored snippet"))
     );
 }
 
@@ -1455,7 +1475,7 @@ fn test_show_source_only_on_unanchored_notes() {
     assert!(
         !anchored_callout
             .iter()
-            .any(|l| crate::render::strip_ansi(l).contains(anchored_src.trim())),
+            .any(|l| l.to_string().contains(anchored_src.trim())),
         "anchored notes must NEVER display source lines in the TUI even when show_note_source is on"
     );
 
@@ -1464,11 +1484,11 @@ fn test_show_source_only_on_unanchored_notes() {
     let banner_callout_on = &callouts_on[&banner_idx];
     let src_idx = banner_callout_on
         .iter()
-        .position(|l| crate::render::strip_ansi(l).contains("unanchored_original_code()"))
+        .position(|l| l.to_string().contains("unanchored_original_code()"))
         .expect("unanchored original code must be present");
     let note_idx = banner_callout_on
         .iter()
-        .position(|l| l.contains("Unanchored note on banner"))
+        .position(|l| l.to_string().contains("Unanchored note on banner"))
         .expect("note text must be present");
     assert!(
         src_idx < note_idx,
@@ -1575,14 +1595,17 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
     // Screen row 2 is line 1 of the note ("uniqueness check").
     state.scroll = 0;
     let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_0[0].contains("════"), "row 0 must be file banner");
     assert!(
-        lines_0[1].contains("Ambiguity guard test"),
+        lines_0[0].to_string().contains("════"),
+        "row 0 must be file banner"
+    );
+    assert!(
+        lines_0[1].to_string().contains("Ambiguity guard test"),
         "row 1 must be note line 0, got: {:?}",
         lines_0[1]
     );
     assert!(
-        lines_0[2].contains("uniqueness check"),
+        lines_0[2].to_string().contains("uniqueness check"),
         "row 2 must be note line 1, got: {:?}",
         lines_0[2]
     );
@@ -1593,9 +1616,12 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
     // Screen row 1 must smoothly show note line 1 ("uniqueness check")!
     state.scroll = 1;
     let (lines_1, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_1[0].contains("════"), "row 0 must be sticky banner");
     assert!(
-        lines_1[1].contains("uniqueness check"),
+        lines_1[0].to_string().contains("════"),
+        "row 0 must be sticky banner"
+    );
+    assert!(
+        lines_1[1].to_string().contains("uniqueness check"),
         "row 1 must smoothly show note line 1 beneath the sticky header, got: {:?}",
         lines_1[1]
     );
@@ -1604,9 +1630,12 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
     // Screen row 1 must smoothly show note line 2 ("places the note")!
     state.scroll = 2;
     let (lines_2, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
-    assert!(lines_2[0].contains("════"), "row 0 must be sticky banner");
     assert!(
-        lines_2[1].contains("places the note"),
+        lines_2[0].to_string().contains("════"),
+        "row 0 must be sticky banner"
+    );
+    assert!(
+        lines_2[1].to_string().contains("places the note"),
         "row 1 must smoothly show note line 2 beneath the sticky header, got: {:?}",
         lines_2[1]
     );

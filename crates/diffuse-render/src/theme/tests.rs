@@ -1018,3 +1018,65 @@ fn test_token_dispatch_matches_legacy() {
         }
     }
 }
+
+#[test]
+fn test_token_span_resolves_add_channel_for_add_runs() {
+    use diffuse_core::{merge::RunKind, parse::RowKind};
+
+    let theme = DiffuseTheme::dark();
+    // An add run inside a ctx row resolves through the add channel, matching
+    // `write_token`.
+    let span = theme.token_span(
+        TokenColor::Function,
+        "foo",
+        RowKind::Ctx,
+        RunKind::Add,
+        None,
+    );
+    assert_eq!(span.text, "foo");
+    assert_eq!(
+        span.fg,
+        theme.token_color(TokenColor::Function, RowKind::Add)
+    );
+    // A del run inside a mod row resolves through the del channel.
+    let span = theme.token_span(
+        TokenColor::Function,
+        "foo",
+        RowKind::Mod,
+        RunKind::Del,
+        None,
+    );
+    assert_eq!(
+        span.fg,
+        theme.token_color(TokenColor::Function, RowKind::Del)
+    );
+    // A ctx run inside a mod row resolves through the mod channel.
+    let span = theme.token_span(
+        TokenColor::Function,
+        "foo",
+        RowKind::Mod,
+        RunKind::Ctx,
+        None,
+    );
+    assert_eq!(
+        span.fg,
+        theme.token_color(TokenColor::Function, RowKind::Mod)
+    );
+}
+
+#[test]
+fn test_token_span_applies_sgr_modifiers() {
+    use diffuse_core::{merge::RunKind, parse::RowKind};
+
+    let theme = DiffuseTheme::dark();
+    let span = theme.token_span(
+        TokenColor::Strike,
+        "gone",
+        RowKind::Ctx,
+        RunKind::Ctx,
+        Some(9),
+    );
+    assert!(span.dim, "SGR 9 must apply dim");
+    assert!(span.strikethrough, "SGR 9 must apply strikethrough");
+    assert_eq!(span.fg, theme.token_color(TokenColor::Strike, RowKind::Ctx));
+}

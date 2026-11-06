@@ -26,7 +26,7 @@ pub(crate) struct CachedGeometry {
     pub(crate) seg_counts: Vec<usize>,
     pub(crate) nav_counts: Vec<usize>,
     pub(crate) total_vis_lines: usize,
-    pub(crate) callouts: HashMap<usize, Vec<String>>,
+    pub(crate) callouts: HashMap<usize, Vec<ratatui::text::Line<'static>>>,
 }
 
 impl AppState {
@@ -220,7 +220,7 @@ impl AppState {
     pub(crate) fn compute_geometry(
         &self,
         content_width: usize,
-        callouts: &HashMap<usize, Vec<String>>,
+        callouts: &HashMap<usize, Vec<ratatui::text::Line<'static>>>,
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>, usize) {
         let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
             HashMap::new()
