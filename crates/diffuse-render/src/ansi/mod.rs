@@ -16,7 +16,7 @@ pub use yansi::{Color, Condition, Paint, Style};
 pub use color::{AnsiColor, ColorExt};
 pub use optimize::{optimize_ansi, optimize_ansi_line, write_optimized_ansi_line};
 pub use sgr::{
-    BG_RESET, FG_RESET, SGR_RESET, decode_sgr, encode_sgr, sgr_off, sgr_off_code, sgr_on,
-    sgr_on_str, strip_ansi,
+    BG_RESET, FG_RESET, SGR_RESET, STRIKE_OFF, STRIKE_ON, decode_sgr, encode_sgr, sgr_off,
+    sgr_off_code, sgr_on, sgr_on_str, strip_ansi,
 };
 pub use style::AnsiStyle;

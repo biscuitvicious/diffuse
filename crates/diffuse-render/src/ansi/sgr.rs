@@ -3,6 +3,11 @@
 pub const SGR_RESET: &str = "\x1b[0m";
 pub const FG_RESET: &str = "\x1b[39m";
 pub const BG_RESET: &str = "\x1b[49m";
+/// Plain strikethrough on sequence: the bespoke del-run spelling, distinct
+/// from the stacked id-9 dim+strike sequence.
+pub const STRIKE_ON: &str = "\x1b[9m";
+/// Plain strikethrough off sequence (pairs with [`STRIKE_ON`]).
+pub const STRIKE_OFF: &str = "\x1b[29m";
 
 /// Return the static ANSI sequence to turn on a known SGR modifier, if
 /// available.

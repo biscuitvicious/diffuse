@@ -6,6 +6,7 @@ use crate::{
     core::wire::{OutputFile, OutputHunk},
     counts::format_counts_plain,
     row::slice_by_visual_width,
+    span::StyledSpan,
     theme::DiffuseTheme,
     width::display_width,
 };
@@ -84,30 +85,24 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
     format!("──── {}{summary_part}{gap_part} ────", badge.hunk_text())
 }
 
-/// Render a hunk header divider filling the specified width with horizontal bar
-/// characters.
+/// Project a hunk header divider onto a single bold [`StyledSpan`]: the
+/// ruler-filled divider text in the divider foreground on an explicit
+/// background. Rest state resolves at the cursor baseline tier, whose asset
+/// background is `primary`: the divider inherits the canvas instead of
+/// naming a color. The pager paints no canvas of its own, so an inherited
+/// background must be written out explicitly (falling back to `bg_base`);
+/// otherwise a terminal whose own background differs from the theme's (a
+/// light terminal running the dark theme) shows through the hunk headers.
+/// The CLI maps `Primary` to `bg_base` while the TUI inherits — by design.
 #[must_use]
-pub fn render_hunk_divider(
+pub fn hunk_divider_spans(
     badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     width: usize,
     theme: &DiffuseTheme,
-) -> String {
+) -> StyledSpan {
     let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    // Rest state resolves at the cursor baseline tier, whose asset background
-    // is `primary`: the divider inherits the canvas instead of naming a color.
-    // The pager paints no canvas of its own, so an inherited background must
-    // be written out explicitly; otherwise a terminal whose own background
-    // differs from the theme's (a light terminal running the dark theme) shows
-    // through the hunk headers.
-    let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
-    let bg_code = match divider.bg {
-        yansi::Color::Primary => theme.palette.ui.bg_base.bg_code(),
-        color => color.bg_code(),
-    };
-    let fg_code = divider.fg.fg_code();
-
     let piece = slice_by_visual_width(&txt, 0, width);
     let piece_w = display_width(&piece);
     let bar_str = if piece_w < width {
@@ -116,5 +111,29 @@ pub fn render_hunk_divider(
     } else {
         piece
     };
-    format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
+    let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
+    let bg = match divider.bg {
+        yansi::Color::Primary => theme.palette.ui.bg_base,
+        color => color,
+    };
+    StyledSpan::styled(bar_str, Some(divider.fg), Some(bg)).with_bold(true)
+}
+
+/// Render a hunk header divider filling the specified width with horizontal bar
+/// characters. Style decisions come from [`hunk_divider_spans`]; emission
+/// keeps the exact skeleton (explicit background, bold set, foreground,
+/// ruler text, full-reset close) so output stays byte-identical.
+#[must_use]
+pub fn render_hunk_divider(
+    badge: Badge,
+    hunk: &OutputHunk,
+    hidden_gap: usize,
+    width: usize,
+    theme: &DiffuseTheme,
+) -> String {
+    let span = hunk_divider_spans(badge, hunk, hidden_gap, width, theme);
+    let bg_code = span.bg.map(|color| color.bg_code()).unwrap_or_default();
+    let fg_code = span.fg.map(|color| color.fg_code()).unwrap_or_default();
+    debug_assert!(span.bold && span.sgrs.is_none());
+    format!("{bg_code}\x1b[1m{fg_code}{}\x1b[0m", span.text)
 }

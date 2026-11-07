@@ -210,25 +210,28 @@ pub fn write_file_header_bar_with_width<W: Write>(
     let surface = banner.surface;
     let bg_code = surface.bg.bg_code();
     let base_fg = surface.fg.fg_code();
-    let path_fg = surface.fg_or_path().fg_code();
+    // Style decisions live in `banner_spans`; the role machine below only
+    // preserves the exact open/close skeleton (bold base runs emit bare
+    // text, path runs drop bold around their color, count runs keep the
+    // redundant bold set before their color).
+    let styled = banner_spans(&banner, None);
 
     let mut bar = String::with_capacity(banner.text.len() + 96);
     write!(bar, "{bg_code}\x1b[1m{base_fg}")?;
-    for span in &banner.spans {
+    for (span, styled_span) in banner.spans.iter().zip(&styled) {
+        let fg_code = styled_span
+            .fg
+            .map(|color| color.fg_code())
+            .unwrap_or_default();
         match span.role {
-            HeaderRole::Base => bar.push_str(&span.text),
+            HeaderRole::Base => bar.push_str(&styled_span.text),
             HeaderRole::Path => write!(
                 bar,
-                "\x1b[22m{path_fg}{}\x1b[39m\x1b[1m{base_fg}",
-                span.text
+                "\x1b[22m{fg_code}{}\x1b[39m\x1b[1m{base_fg}",
+                styled_span.text
             )?,
-            HeaderRole::Count(color) => {
-                write!(
-                    bar,
-                    "\x1b[1m{}{}\x1b[39m{base_fg}",
-                    color.fg_code(),
-                    span.text
-                )?;
+            HeaderRole::Count(_) => {
+                write!(bar, "\x1b[1m{fg_code}{}\x1b[39m{base_fg}", styled_span.text)?;
             }
         }
     }

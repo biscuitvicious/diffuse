@@ -4,10 +4,16 @@
 //! shared by the ANSI batch path and the Ratatui grid path so their styling
 //! decisions cannot drift apart.
 
+use std::fmt::{self, Write};
+
 use unicode_segmentation::UnicodeSegmentation;
 use yansi::{Color, Style};
 
-use crate::{row::slice_by_visual_width, width::grapheme_width};
+use crate::{
+    ansi::{ColorExt, FG_RESET, STRIKE_OFF, STRIKE_ON, sgr_off, sgr_on_str},
+    row::slice_by_visual_width,
+    width::grapheme_width,
+};
 
 /// Modifier flags decoded from a wire SGR id. The mapping mirrors
 /// [`crate::ansi::sgr_on`]: 1 is bold, 2 is dim, 3 is italic, 4 is
@@ -24,6 +30,16 @@ pub struct SgrModifiers {
     pub underline: bool,
     /// Strikethrough flag.
     pub strikethrough: bool,
+}
+
+/// One set modifier flag, in canonical emission order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Flag {
+    Bold,
+    Dim,
+    Italic,
+    Underline,
+    Strike,
 }
 
 /// Decode a wire SGR id into modifier flags. Unknown ids carry no
@@ -83,6 +99,13 @@ pub struct StyledSpan {
     pub underline: bool,
     /// Strikethrough flag.
     pub strikethrough: bool,
+    /// Exact source SGR id list, when the modifiers came from wire SGR
+    /// ids. [`None`] means the flags were set directly (banner, gutter,
+    /// del runs) and serialize with the plain per-flag spellings. The
+    /// Ratatui converter reads only the flags, so this never affects the
+    /// grid path — it exists so ANSI serialization reproduces stacked and
+    /// raw-fallback spellings byte-for-byte.
+    pub sgrs: Option<Box<[u32]>>,
 }
 
 impl StyledSpan {
@@ -98,6 +121,7 @@ impl StyledSpan {
             italic: false,
             underline: false,
             strikethrough: false,
+            sgrs: None,
         }
     }
 
@@ -113,6 +137,7 @@ impl StyledSpan {
             italic: false,
             underline: false,
             strikethrough: false,
+            sgrs: None,
         }
     }
 
@@ -166,16 +191,144 @@ impl StyledSpan {
     }
 
     /// Apply the modifier flags of a wire SGR id, preserving flags already
-    /// set (stacked emphasis accumulates, as on the ANSI path).
+    /// set (stacked emphasis accumulates, as on the ANSI path). The id is
+    /// retained so ANSI serialization reproduces its exact spelling
+    /// (stacked, combined, or raw fallback).
     #[must_use]
     pub fn with_sgr(mut self, sgr: u32) -> Self {
-        let flags = modifiers_for_sgr(sgr);
-        self.bold |= flags.bold;
-        self.dim |= flags.dim;
-        self.italic |= flags.italic;
-        self.underline |= flags.underline;
-        self.strikethrough |= flags.strikethrough;
+        self = self.with_sgrs(&[sgr]);
         self
+    }
+
+    /// Apply the modifier flags of several wire SGR ids, retaining the
+    /// exact list for ANSI serialization (combined `\x1b[a;b;…m` emission
+    /// with per-modifier resets in reverse, as on the ANSI path).
+    #[must_use]
+    pub fn with_sgrs(mut self, sgrs: &[u32]) -> Self {
+        for sgr in sgrs {
+            let flags = modifiers_for_sgr(*sgr);
+            self.bold |= flags.bold;
+            self.dim |= flags.dim;
+            self.italic |= flags.italic;
+            self.underline |= flags.underline;
+            self.strikethrough |= flags.strikethrough;
+        }
+        if !sgrs.is_empty() {
+            self.sgrs = Some(sgrs.into());
+        }
+        self
+    }
+
+    /// One set modifier flag, in canonical emission order.
+    ///
+    /// SGR on-sequence for one modifier flag: the plain per-flag spelling
+    /// (`\x1b[1m`, `\x1b[2m`, `\x1b[3m`, `\x1b[4m`, or plain
+    /// strikethrough — never the stacked id-9 dim+strike spelling, which
+    /// only the retained-id path may emit).
+    fn flag_on(flag: Flag) -> &'static str {
+        match flag {
+            Flag::Bold => sgr_on_str(1).unwrap_or("\x1b[1m"),
+            Flag::Dim => sgr_on_str(2).unwrap_or("\x1b[2m"),
+            Flag::Italic => sgr_on_str(3).unwrap_or("\x1b[3m"),
+            Flag::Underline => sgr_on_str(4).unwrap_or("\x1b[4m"),
+            Flag::Strike => STRIKE_ON,
+        }
+    }
+
+    /// SGR off-sequence for one modifier flag, mirroring the ANSI path's
+    /// per-modifier resets.
+    fn flag_off(flag: Flag) -> &'static str {
+        match flag {
+            Flag::Bold => sgr_off(1).unwrap_or("\x1b[22m"),
+            Flag::Dim => sgr_off(2).unwrap_or("\x1b[22m"),
+            Flag::Italic => sgr_off(3).unwrap_or("\x1b[23m"),
+            Flag::Underline => sgr_off(4).unwrap_or("\x1b[24m"),
+            Flag::Strike => STRIKE_OFF,
+        }
+    }
+
+    /// Modifier flags set on this span, in canonical emission order.
+    fn flags(&self) -> Vec<Flag> {
+        let mut out = Vec::with_capacity(5);
+        if self.bold {
+            out.push(Flag::Bold);
+        }
+        if self.dim {
+            out.push(Flag::Dim);
+        }
+        if self.italic {
+            out.push(Flag::Italic);
+        }
+        if self.underline {
+            out.push(Flag::Underline);
+        }
+        if self.strikethrough {
+            out.push(Flag::Strike);
+        }
+        out
+    }
+
+    /// Write this span's SGR on-sequence: retained ids reproduce their
+    /// exact spelling (single, combined stacked, or raw fallback), while
+    /// directly-set flags use the plain per-flag spellings.
+    fn write_sgr_on<W: Write>(&self, out: &mut W) -> fmt::Result {
+        if let Some(ids) = &self.sgrs {
+            if ids.len() > 1 {
+                out.write_str("\x1b[")?;
+                for (i, s) in ids.iter().enumerate() {
+                    if i > 0 {
+                        out.write_str(";")?;
+                    }
+                    write!(out, "{s}")?;
+                }
+                return out.write_str("m");
+            }
+            if let Some(s) = ids.first() {
+                if let Some(on) = sgr_on_str(*s) {
+                    return out.write_str(on);
+                }
+                return write!(out, "\x1b[{s}m");
+            }
+        }
+        for flag in self.flags() {
+            out.write_str(Self::flag_on(flag))?;
+        }
+        Ok(())
+    }
+
+    /// Write this span's SGR off-sequence, in reverse (stacked resets
+    /// unwind in reverse, as on the ANSI path). Unknown retained ids have
+    /// no off-sequence, matching `write_token`.
+    fn write_sgr_off<W: Write>(&self, out: &mut W) -> fmt::Result {
+        if let Some(ids) = &self.sgrs {
+            for s in ids.iter().rev() {
+                if let Some(off) = sgr_off(*s) {
+                    out.write_str(off)?;
+                }
+            }
+            return Ok(());
+        }
+        for flag in self.flags().into_iter().rev() {
+            out.write_str(Self::flag_off(flag))?;
+        }
+        Ok(())
+    }
+
+    /// Whether this span emits an SGR on-sequence (unknown retained ids
+    /// still emit their raw fallback).
+    fn has_sgr_on(&self) -> bool {
+        if let Some(ids) = &self.sgrs {
+            return !ids.is_empty();
+        }
+        !self.flags().is_empty()
+    }
+
+    /// Whether this span emits an SGR off-sequence.
+    fn has_sgr_off(&self) -> bool {
+        if let Some(ids) = &self.sgrs {
+            return ids.iter().any(|s| sgr_off(*s).is_some());
+        }
+        !self.flags().is_empty()
     }
 
     /// Project this span onto a [`yansi::Style`]. [`None`] and
@@ -249,6 +402,30 @@ pub fn spans_width(spans: &[StyledSpan]) -> usize {
         .iter()
         .map(|span| crate::width::display_width(&span.text))
         .sum()
+}
+
+/// Write one span as styled ANSI text: the span's SGR on-sequence, its
+/// foreground, its text, then `FG_RESET` (iff a foreground was emitted)
+/// and the SGR off-sequence. No background is emitted — callers paint the
+/// span background around the token, exactly as `write_token` callers do.
+/// [`None`] and [`Color::Primary`] foregrounds emit nothing, matching the
+/// ANSI path where primary resolves to an empty code.
+pub fn write_span_token<W: Write>(out: &mut W, span: &StyledSpan) -> fmt::Result {
+    if span.has_sgr_on() {
+        span.write_sgr_on(out)?;
+    }
+    let fg = span.fg.filter(|color| *color != Color::Primary);
+    if let Some(color) = fg {
+        color.write_fg(out)?;
+    }
+    out.write_str(&span.text)?;
+    if fg.is_some() {
+        out.write_str(FG_RESET)?;
+    }
+    if span.has_sgr_off() {
+        span.write_sgr_off(out)?;
+    }
+    Ok(())
 }
 
 /// Truncate spans wider than `width`, or pad narrower spans with spaces on
@@ -329,6 +506,102 @@ mod tests {
         let span =
             StyledSpan::styled("hi", Some(Color::Primary), Some(Color::Primary)).with_bold(true);
         assert_eq!(span.yansi_style(), Style::new().bold());
+    }
+
+    #[test]
+    fn test_with_sgr_records_exact_id_and_flags() {
+        let span = StyledSpan::plain("hi").with_sgr(9);
+        assert_eq!(span.sgrs.as_deref(), Some(&[9][..]));
+        assert!(span.dim && span.strikethrough);
+        assert!(!span.bold && !span.italic && !span.underline);
+        // Unknown ids are retained verbatim with no flags, matching the
+        // raw-fallback emission of the ANSI path.
+        let unknown = StyledSpan::plain("hi").with_sgr(99);
+        assert_eq!(unknown.sgrs.as_deref(), Some(&[99][..]));
+        assert!(!unknown.bold && !unknown.strikethrough);
+    }
+
+    #[test]
+    fn test_with_sgrs_records_stacked_ids() {
+        let span = StyledSpan::plain("hi").with_sgrs(&[1, 4]);
+        assert_eq!(span.sgrs.as_deref(), Some(&[1, 4][..]));
+        assert!(span.bold && span.underline);
+    }
+
+    fn token_span(fg: Option<Color>, text: &str) -> StyledSpan {
+        StyledSpan::styled(text, fg, None)
+    }
+
+    #[test]
+    fn test_write_span_token_plain() {
+        let mut out = String::new();
+        write_span_token(&mut out, &token_span(None, "hi")).unwrap();
+        assert_eq!(out, "hi");
+    }
+
+    #[test]
+    fn test_write_span_token_fg() {
+        let mut out = String::new();
+        write_span_token(&mut out, &token_span(Some(Color::Fixed(120)), "hi")).unwrap();
+        assert_eq!(out, "\x1b[38;5;120mhi\x1b[39m");
+    }
+
+    #[test]
+    fn test_write_span_token_primary_fg_emits_nothing() {
+        let mut out = String::new();
+        write_span_token(&mut out, &token_span(Some(Color::Primary), "hi")).unwrap();
+        assert_eq!(out, "hi");
+    }
+
+    #[test]
+    fn test_write_span_token_single_sgr() {
+        let mut out = String::new();
+        let span = token_span(Some(Color::Fixed(120)), "hi").with_sgr(1);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[1m\x1b[38;5;120mhi\x1b[39m\x1b[22m");
+    }
+
+    #[test]
+    fn test_write_span_token_stacked_sgrs() {
+        let mut out = String::new();
+        let span = token_span(Some(Color::Fixed(120)), "hi").with_sgrs(&[1, 4]);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[1;4m\x1b[38;5;120mhi\x1b[39m\x1b[24m\x1b[22m");
+    }
+
+    #[test]
+    fn test_write_span_token_unknown_sgr_raw_fallback() {
+        let mut out = String::new();
+        let span = token_span(Some(Color::Fixed(120)), "hi").with_sgr(99);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[99m\x1b[38;5;120mhi\x1b[39m");
+    }
+
+    #[test]
+    fn test_write_span_token_sgr9_stacked_spelling() {
+        // Id 9 keeps its bespoke dim+strike spelling, not plain strike.
+        let mut out = String::new();
+        let span = token_span(Some(Color::Fixed(120)), "hi").with_sgr(9);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[2;9m\x1b[38;5;120mhi\x1b[39m\x1b[29m\x1b[22m");
+    }
+
+    #[test]
+    fn test_write_span_token_flag_strike_plain_spelling() {
+        // Flag-derived strike (del runs) uses plain 9/29, never id 9's
+        // dim+strike spelling.
+        let mut out = String::new();
+        let span = token_span(Some(Color::Fixed(203)), "hi").with_strikethrough(true);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[9m\x1b[38;5;203mhi\x1b[39m\x1b[29m");
+    }
+
+    #[test]
+    fn test_write_span_token_flag_bold_underline() {
+        let mut out = String::new();
+        let span = token_span(None, "hi").with_bold(true).with_underline(true);
+        write_span_token(&mut out, &span).unwrap();
+        assert_eq!(out, "\x1b[1m\x1b[4mhi\x1b[24m\x1b[22m");
     }
 
     #[test]

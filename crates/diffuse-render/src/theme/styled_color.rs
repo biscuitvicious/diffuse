@@ -151,6 +151,8 @@ impl StyledColor {
     /// Project this gutter color onto a renderer-agnostic [`StyledSpan`]
     /// riding on `bg`, preserving the bold, italic, dim, and underline
     /// flags the ANSI [`Self::fg_code`] path fuses into its escape.
+    /// The flags carry no retained SGR ids: the CLI gutter emitter
+    /// reproduces the fused spelling from the flags themselves.
     #[inline]
     #[must_use]
     pub fn span(&self, text: impl Into<String>, bg: Option<Color>) -> StyledSpan {
@@ -163,6 +165,7 @@ impl StyledColor {
             italic: self.italic,
             underline: self.underline,
             strikethrough: false,
+            sgrs: None,
         }
     }
 

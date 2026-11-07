@@ -6,9 +6,31 @@ use crate::{
         parse::{RowGroup, RowKind, Spans},
         wire::{MovSide, OutputRun},
     },
+    span::StyledSpan,
     theme::{Cursor, DiffKind, DiffuseTheme},
 };
 use diffuse_syntax::color::TokenColor;
+
+/// Emit gutter prefix spans with the exact CLI spelling, mirroring what
+/// `write_row_segment` does for first-segment prefixes.
+#[allow(clippy::too_many_arguments)]
+fn emitted_prefix(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    runs: &[OutputRun],
+    in_hunk: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let spans = styled_prefix_spans(
+        kind, mov_side, group, new_line, old_line, runs, in_hunk, None, theme,
+    );
+    let mut out = String::new();
+    write_gutter_prefix(&mut out, &spans, kind == RowKind::Del, true).unwrap();
+    out
+}
 
 #[test]
 fn test_prefix_gutters() {
@@ -64,7 +86,7 @@ fn test_styled_prefix_group_and_non_group() {
     let theme = DiffuseTheme::dark();
 
     // Non-group mod row has right-aligned ~ ("  55 ~")
-    let s_mod = styled_prefix(
+    let s_mod = emitted_prefix(
         RowKind::Mod,
         None,
         None,
@@ -86,7 +108,7 @@ fn test_styled_prefix_group_and_non_group() {
     );
 
     // Group anchor row has left-aligned ~ (" 141~ ")
-    let s_anchor = styled_prefix(
+    let s_anchor = emitted_prefix(
         RowKind::Mod,
         None,
         Some(RowGroup::Anchor),
@@ -108,7 +130,7 @@ fn test_styled_prefix_group_and_non_group() {
     );
 
     // Group aux add row has ~+ (" 140~+")
-    let s_aux_add = styled_prefix(
+    let s_aux_add = emitted_prefix(
         RowKind::Add,
         None,
         Some(RowGroup::Aux { anchor: 141 }),
@@ -150,7 +172,7 @@ fn test_styled_prefix_group_and_non_group() {
     );
 
     // Group aux del row has ~- (" 140~-")
-    let s_aux_del = styled_prefix(
+    let s_aux_del = emitted_prefix(
         RowKind::Del,
         None,
         Some(RowGroup::Aux { anchor: 141 }),
@@ -237,7 +259,8 @@ fn test_render_addition_row_with_subword_styling() {
         &runs,
         0,
         13,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -271,7 +294,8 @@ fn test_grapheme_clusters_never_split() {
         &runs,
         0,
         1,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -294,7 +318,8 @@ fn test_grapheme_clusters_never_split() {
         &runs,
         0,
         1,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         1,
@@ -327,7 +352,8 @@ fn test_syntax_on_toggle_disables_token_colors() {
         &runs,
         0,
         2,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -347,7 +373,8 @@ fn test_syntax_on_toggle_disables_token_colors() {
         &runs,
         0,
         2,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -387,7 +414,8 @@ fn test_col_offset_applies_to_token_runs() {
         &runs,
         0,
         13,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         4, // col_offset skips "pub "
@@ -420,7 +448,7 @@ fn test_render_raw_row_colors() {
     let theme = DiffuseTheme::dark();
     let add = render_raw_row(
         RowKind::Add,
-        "  42 + ",
+        &[StyledSpan::plain("  42 + ")],
         "added_line",
         false,
         false,
@@ -432,7 +460,7 @@ fn test_render_raw_row_colors() {
 
     let del = render_raw_row(
         RowKind::Del,
-        "  41 - ",
+        &[StyledSpan::plain("  41 - ")],
         "deleted_line",
         false,
         false,
@@ -444,7 +472,7 @@ fn test_render_raw_row_colors() {
 
     let ctx = render_raw_row(
         RowKind::Ctx,
-        "  40   ",
+        &[StyledSpan::plain("  40   ")],
         "context_line",
         false,
         false,
@@ -460,7 +488,7 @@ fn test_render_raw_row_trailing_whitespace() {
     let theme = DiffuseTheme::dark();
     let add_trailing = render_raw_row(
         RowKind::Add,
-        "  42 + ",
+        &[StyledSpan::plain("  42 + ")],
         "let x = 1;   ",
         false,
         false,
@@ -483,7 +511,7 @@ fn test_render_raw_row_trailing_whitespace() {
     // highlight
     let add_wrapped_intermediate = render_raw_row(
         RowKind::Add,
-        "  42 + ",
+        &[StyledSpan::plain("  42 + ")],
         "let x = 1;   ",
         false,
         false,
@@ -497,7 +525,7 @@ fn test_render_raw_row_trailing_whitespace() {
 
     let del_trailing = render_raw_row(
         RowKind::Del,
-        "  41 - ",
+        &[StyledSpan::plain("  41 - ")],
         "foo();  ",
         false,
         false,
@@ -545,7 +573,8 @@ fn test_render_moved_row_with_indentation_subwords() {
         &runs,
         0,
         usize::MAX,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -594,7 +623,8 @@ fn test_render_mod_row_with_indentation_subwords() {
         &runs,
         0,
         usize::MAX,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -628,7 +658,8 @@ fn test_render_moved_source_del_row() {
         &runs,
         0,
         usize::MAX,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -662,7 +693,8 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
         &runs,
         0,
         usize::MAX,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -711,7 +743,8 @@ fn test_mod_row_del_span_uses_del_fill_background() {
         &runs,
         0,
         usize::MAX,
-        "  15~- ",
+        &[StyledSpan::plain("  15~- ")],
+        false,
         false,
         false,
         0,
@@ -749,7 +782,8 @@ fn test_write_row_segment_direct_buffer() {
         &runs,
         0,
         usize::MAX,
-        "+ ",
+        &[StyledSpan::plain("+ ")],
+        false,
         false,
         false,
         0,
@@ -768,7 +802,8 @@ fn test_write_row_segment_direct_buffer() {
             &runs,
             0,
             usize::MAX,
-            "+ ",
+            &[StyledSpan::plain("+ ")],
+            false,
             false,
             false,
             0,
@@ -824,7 +859,8 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
         &runs,
         0,
         8,
-        "      ",
+        &[StyledSpan::plain("      ")],
+        false,
         false,
         false,
         0,
@@ -844,7 +880,8 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
         &runs,
         0,
         usize::MAX,
-        "      ",
+        &[StyledSpan::plain("      ")],
+        false,
         false,
         false,
         0,
@@ -870,7 +907,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
         &[],
         0,
         4,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -897,7 +935,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
         &runs,
         0,
         4,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -918,7 +957,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
         &[],
         0,
         4,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -940,7 +980,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
         &[],
         4,
         6,
-        prefix,
+        &[StyledSpan::plain(prefix)],
+        false,
         false,
         false,
         0,
@@ -985,7 +1026,8 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
         &runs,
         0,
         20,
-        "  42 + ",
+        &[StyledSpan::plain("  42 + ")],
+        false,
         false,
         false,
         0,
@@ -1034,7 +1076,8 @@ fn test_render_moved_src_run_skipped() {
         &runs,
         0,
         usize::MAX,
-        " 135~ ",
+        &[StyledSpan::plain(" 135~ ")],
+        false,
         false,
         false,
         0,
@@ -1075,7 +1118,8 @@ fn test_render_mov_tgt_with_add_row_bg() {
         &runs,
         0,
         usize::MAX,
-        " 135~+ ",
+        &[StyledSpan::plain(" 135~+ ")],
+        false,
         false,
         false,
         0,
@@ -1108,7 +1152,8 @@ fn test_render_mov_tgt_with_add_row_bg() {
         &runs,
         0,
         usize::MAX,
-        " 135~+ ",
+        &[StyledSpan::plain(" 135~+ ")],
+        false,
         true,
         false,
         0,
@@ -1198,7 +1243,7 @@ fn test_styled_prefix_spans_match_ansi_prefix_text() {
         (RowKind::Mov, Some(MovSide::Tgt), None, Some(11), None),
     ];
     for (kind, mov_side, group, new_line, old_line) in cases {
-        let ansi = styled_prefix(kind, mov_side, group, new_line, old_line, &[], true, &theme);
+        let ansi = emitted_prefix(kind, mov_side, group, new_line, old_line, &[], true, &theme);
         let spans = styled_prefix_spans(
             kind,
             mov_side,
@@ -1282,23 +1327,9 @@ fn test_row_segment_spans_match_ansi_text_across_matrix() {
                         None,
                         &theme,
                     );
-                    let ansi_prefix =
-                        styled_prefix(kind, None, None, Some(3), Some(2), &runs, true, &theme);
                     let ansi = render_row_segment(
-                        text,
-                        false,
-                        kind,
-                        None,
-                        &runs,
-                        seg_start,
-                        seg_end,
-                        &ansi_prefix,
-                        selected,
-                        band,
-                        0,
-                        true,
-                        syntax_on,
-                        &theme,
+                        text, false, kind, None, &runs, seg_start, seg_end, &prefix, false,
+                        selected, band, 0, true, syntax_on, &theme,
                     );
                     let line = row_segment_spans(
                         text, false, kind, None, &runs, seg_start, seg_end, prefix, selected, band,
@@ -1439,10 +1470,9 @@ fn test_raw_row_spans_match_ansi_text_and_trailing_fill() {
         None,
         &theme,
     );
-    let ansi_prefix = styled_prefix(RowKind::Add, None, None, Some(8), None, &[], true, &theme);
     let ansi = render_raw_row(
         RowKind::Add,
-        &ansi_prefix,
+        &prefix,
         "let x = 1;  ",
         false,
         false,

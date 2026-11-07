@@ -11,7 +11,7 @@ use crate::{
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
     },
     notes::{DEFAULT_CALLOUT_WIDTH, render_output_note_callout},
-    row::{styled_prefix, write_raw_row},
+    row::{styled_prefix_spans, write_raw_row},
     theme::DiffuseTheme,
 };
 
@@ -308,7 +308,7 @@ pub fn render_raw_file_diff_with_width(
         let _ = write_raw_row(
             &mut out,
             RowKind::Ctx,
-            "",
+            &[],
             &sep_text,
             false,
             false,
@@ -318,8 +318,8 @@ pub fn render_raw_file_diff_with_width(
         out.push('\n');
 
         for r in &h.rows {
-            let pfx = styled_prefix(
-                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
+            let pfx = styled_prefix_spans(
+                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, None, theme,
             );
             let text = r.text();
             let _ = write_raw_row(&mut out, r.kind, &pfx, &text, false, false, true, theme);

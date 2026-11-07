@@ -1,6 +1,9 @@
 //! Line number padding and coordinate gutter prefix rendering.
 
-use std::str;
+use std::{
+    fmt::{self, Write},
+    str,
+};
 
 use super::segment::is_common_only_row;
 use crate::{
@@ -10,7 +13,7 @@ use crate::{
         wire::{MovSide, OutputRun},
     },
     span::StyledSpan,
-    theme::{Cursor, DiffKind, DiffuseTheme, FG_RESET},
+    theme::{Cursor, DiffKind, DiffuseTheme, FG_RESET, StyledColor},
 };
 
 /// Format 4-character right-aligned line numbers into a stack buffer without
@@ -85,125 +88,7 @@ pub fn prefix_of(
     }
 }
 
-/// Generate styled ANSI 6-character prefix gutter with color highlights and
-/// theme support.
-///
-/// Colors resolve through the theme palette: per-kind gutters at the rest
-/// cursor tier, with cross-kind glyphs (the trailing `±` on relocation and
-/// aux rows, the `~` on aux rows) composed from the sibling kind slots at
-/// render time. The in-hunk flag selects the cursor tier for context
-/// gutters ([`Cursor::Hunk`] vs [`Cursor::Rest`]).
-#[allow(clippy::too_many_arguments)]
-pub fn styled_prefix(
-    kind: RowKind,
-    mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
-    new_line: Option<u32>,
-    old_line: Option<u32>,
-    runs: &[OutputRun],
-    in_hunk: bool,
-    theme: &DiffuseTheme,
-) -> String {
-    let mut buf = [b' '; 4];
-    let palette = theme.palette;
-    let ctx_num_fg = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
-        .gutter
-        .num
-        .fg_code();
-    if is_common_only_row(kind, runs) {
-        let pad = pad4_bytes(new_line, &mut buf);
-        return format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m");
-    }
-    let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
-    let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
-    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
-    let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
-    match group {
-        Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-            let pad = pad4_bytes(new_line, &mut buf);
-            format!(
-                "{}{pad}{}~ {FG_RESET}\x1b[23m",
-                r#mod.num.fg_code(),
-                r#mod.icon.fg_code()
-            )
-        }
-        Some(RowGroup::Aux { .. }) => match kind {
-            RowKind::Add => {
-                let pad = pad4_bytes(new_line, &mut buf);
-                format!(
-                    "{num_fg}{pad}{mod_fg}~{add_fg}+{FG_RESET}\x1b[23m",
-                    num_fg = add.num.fg_code(),
-                    mod_fg = r#mod.icon.fg_code(),
-                    add_fg = add.icon.fg_code(),
-                )
-            }
-            RowKind::Del => {
-                let pad = pad4_bytes(old_line, &mut buf);
-                format!(
-                    "{num_fg}{pad}\x1b[23m{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m",
-                    num_fg = del.num.fg_code(),
-                    mod_fg = r#mod.icon.fg_code(),
-                    del_fg = del.icon.fg_code(),
-                )
-            }
-            _ => {
-                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m")
-            }
-        },
-        _ => match kind {
-            RowKind::Del => {
-                let pad = pad4_bytes(old_line, &mut buf);
-                format!(
-                    "{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m",
-                    num_fg = del.num.fg_code(),
-                    icon_fg = del.icon.fg_code(),
-                )
-            }
-            RowKind::Add => {
-                let pad = pad4_bytes(new_line, &mut buf);
-                format!(
-                    "{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m",
-                    num_fg = add.num.fg_code(),
-                    icon_fg = add.icon.fg_code(),
-                )
-            }
-            RowKind::Mod => {
-                let pad = pad4_bytes(new_line, &mut buf);
-                format!(
-                    "{num_fg}{pad} {icon_fg}~{FG_RESET}\x1b[23m",
-                    num_fg = r#mod.num.fg_code(),
-                    icon_fg = r#mod.icon.fg_code(),
-                )
-            }
-            RowKind::Mov => {
-                if mov_side == Some(MovSide::Src) {
-                    let pad = pad4_bytes(old_line, &mut buf);
-                    format!(
-                        "{num_fg}{pad}{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m",
-                        num_fg = mov.num.fg_code(),
-                        mov_fg = mov.icon.fg_code(),
-                        del_fg = del.icon.fg_code(),
-                    )
-                } else {
-                    let pad = pad4_bytes(new_line, &mut buf);
-                    format!(
-                        "{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m",
-                        num_fg = mov.num.fg_code(),
-                        mov_fg = mov.icon.fg_code(),
-                        add_fg = add.icon.fg_code(),
-                    )
-                }
-            }
-            _ => {
-                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m")
-            }
-        },
-    }
-}
-
-/// Generate the span-native twin of [`styled_prefix`]: the same 6-column
+/// Generate the span-native 6-column coordinate gutter: the same
 /// gutter (line number plus kind glyph) as ordered [`StyledSpan`]s riding on
 /// `bg`, branching identically over groups, kinds, and move sides so the
 /// ANSI and Ratatui paths cannot drift apart.
@@ -262,7 +147,19 @@ pub fn styled_prefix_spans(
         _ => match kind {
             RowKind::Del => {
                 let pad = pad4_bytes(old_line, &mut buf);
-                vec![del.num.span(format!("{pad} "), bg), del.icon.span("-", bg)]
+                // The pad/space boundary carries the mid-prefix italic-off
+                // on the ANSI path (`{pad}\x1b[23m -`), so the space is
+                // its own span in the number foreground but without the
+                // number italic: serializing it re-emits the active
+                // foreground alone (a post-optimization no-op), keeping
+                // the quirk byte in its exact position. A fused italic
+                // re-emission would flip italic back on and survive the
+                // optimizer, so the flags must stay off here.
+                vec![
+                    del.num.span(pad, bg),
+                    StyledSpan::styled(" ", Some(del.num.color), bg),
+                    del.icon.span("-", bg),
+                ]
             }
             RowKind::Add => {
                 let pad = pad4_bytes(new_line, &mut buf);
@@ -306,4 +203,50 @@ pub fn styled_prefix_spans(
 /// emits for wrapped segments.
 pub fn continuation_prefix_spans(bg: Option<Color>) -> Vec<StyledSpan> {
     vec![StyledSpan::styled("      ", Some(Color::Fixed(242)), bg)]
+}
+
+/// Write gutter prefix spans with the exact ANSI gutter spelling: fused
+/// SGR attributes spliced into each foreground escape (as
+/// [`StyledColor::fg_code`] fuses them), a mid-prefix italic-off after
+/// the pad span on deletion-kind prefixes, and a single trailing
+/// `FG_RESET` plus italic-off close. Both off-sequences are provable
+/// no-ops post-optimization (italic is never on in prefix position), but
+/// keeping them preserves pre-optimization byte-identity with
+/// prefix builder. Backgrounds are never emitted: the row lead
+/// background covers the prefix, as on the ANSI path.
+pub fn write_gutter_prefix<W: Write>(
+    out: &mut W,
+    spans: &[StyledSpan],
+    mid_italic_off: bool,
+    trailing_italic_off: bool,
+) -> fmt::Result {
+    let mut emitted_fg = false;
+    for (i, span) in spans.iter().enumerate() {
+        // Styled prefixes always carry a foreground; plain ones (the
+        // unstyled CLI path) emit bare text with no closes, exactly as
+        // the ANSI path passes the plain string through untouched.
+        let span_fg = span.fg.filter(|color| *color != Color::Primary);
+        if let Some(fg) = span_fg {
+            let styled = StyledColor {
+                color: fg,
+                bold: span.bold,
+                italic: span.italic,
+                dim: span.dim,
+                underline: span.underline,
+            };
+            out.write_str(&styled.fg_code())?;
+            emitted_fg = true;
+        }
+        out.write_str(&span.text)?;
+        if mid_italic_off && i == 0 && span_fg.is_some() {
+            out.write_str("\x1b[23m")?;
+        }
+    }
+    if emitted_fg {
+        out.write_str(FG_RESET)?;
+    }
+    if trailing_italic_off && emitted_fg {
+        out.write_str("\x1b[23m")?;
+    }
+    Ok(())
 }

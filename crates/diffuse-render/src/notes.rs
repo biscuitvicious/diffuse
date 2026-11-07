@@ -41,29 +41,37 @@ pub fn render_note_callout_lines(
     theme: &DiffuseTheme,
     width: usize,
 ) -> Vec<String> {
-    let gutter_fg = Color::Rgb(220, 220, 20).fg_code();
-    let glyph_fg = Color::Fixed(255).fg_code();
-    let note_bg = Color::Fixed(234).bg_code();
-    let fg_reset = FG_RESET;
-    const STRIPE_LEFT: &str = "\u{258C}";
-    const BAND_BLOCK: &str = "\u{2588}";
     let text_cols = width.saturating_sub(8).max(1);
 
-    let (stripe_color, glyph) = match status {
-        NoteStatus::Open => (Color::Rgb(250, 75, 40), "💬"),
-        NoteStatus::InProgress => (Color::Rgb(60, 180, 240), "🔄"),
-        NoteStatus::Resolved => (Color::Rgb(40, 140, 60), "✅"),
+    let (stripe_color, glyph) = note_stripe(status);
+    // Style decisions come from `note_prefix_spans` (shared with the span
+    // path); the serializer below keeps the exact prefix skeleton — one
+    // leading background, each piece's foreground (an uncolored piece
+    // resets instead), and a single trailing reset — so output stays
+    // byte-identical.
+    let prefix_for = |marker: &str| -> String {
+        let spans = note_prefix_spans(marker, stripe_color, Some(NOTE_BG));
+        let mut prefix =
+            String::with_capacity(spans.iter().map(|span| span.text.len()).sum::<usize>() + 64);
+        let bg = spans
+            .first()
+            .and_then(|span| span.bg)
+            .map(|color| color.bg_code())
+            .unwrap_or_default();
+        prefix.push_str(&bg);
+        for span in &spans {
+            match span.fg.filter(|color| *color != Color::Primary) {
+                Some(color) => prefix.push_str(&color.fg_code()),
+                None => prefix.push_str(FG_RESET),
+            }
+            prefix.push_str(&span.text);
+        }
+        prefix.push_str(FG_RESET);
+        prefix
     };
-    let stripe_fg = stripe_color.fg_code();
-    let first_prefix = format!(
-        "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
-    );
-    let line_prefix = format!(
-        "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-    );
-    let final_prefix = format!(
-        "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-    );
+    let first_prefix = prefix_for(glyph);
+    let line_prefix = prefix_for("│  ");
+    let final_prefix = prefix_for("╰  ");
 
     let lines = markdown_lines(text, text_cols);
     let lines = if lines.is_empty() {

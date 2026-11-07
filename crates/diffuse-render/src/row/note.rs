@@ -5,39 +5,46 @@ use std::{fmt, fmt::Write};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::text::{expand_runs_tabs, expand_tabs, slice_by_visual_width};
-use crate::{core::wire::OutputRun, theme::DiffuseTheme, width::grapheme_width};
+use crate::{
+    core::{merge::RunKind, parse::RowKind, wire::OutputRun},
+    span::{StyledSpan, write_span_token},
+    theme::DiffuseTheme,
+    width::grapheme_width,
+};
 
-/// Write a single slice/segment of a review note row with syntax highlighting
-/// directly to a buffer.
+/// Project a review note row slice onto ordered [`StyledSpan`]s: the
+/// caller prefix spans plus the sliced run pieces. The tab-expansion
+/// pre-step mirrors [`write_note_segment`], so builders see the same
+/// expanded text the ANSI path slices. Run pieces become
+/// [`DiffuseTheme::token_span`]s (`ctx` channel, exactly as
+/// `write_token` resolves them), unhighlighted pieces stay plain.
 #[allow(clippy::too_many_arguments)]
-pub fn write_note_segment<W: Write>(
-    out: &mut W,
+#[must_use]
+pub fn note_segment_spans(
     text: &str,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
-    prefix: &str,
+    prefix: &[StyledSpan],
     syntax_on: bool,
     theme: &DiffuseTheme,
-) -> fmt::Result {
+) -> Vec<StyledSpan> {
     let has_tab = text.contains('\t') || runs.iter().any(|r| r.text.contains('\t'));
-    let exp_text = if has_tab {
-        Some(expand_tabs(text, 4))
+    let exp_text;
+    let exp_runs;
+    let (text, runs): (&str, &[OutputRun]) = if has_tab {
+        exp_text = expand_tabs(text, 4);
+        exp_runs = expand_runs_tabs(runs, 4);
+        (&exp_text, &exp_runs)
     } else {
-        None
+        (text, runs)
     };
-    let text = exp_text.as_deref().unwrap_or(text);
-    let exp_runs = if has_tab {
-        Some(expand_runs_tabs(runs, 4))
-    } else {
-        None
-    };
-    let runs = exp_runs.as_deref().unwrap_or(runs);
 
-    write!(out, "{prefix}")?;
+    let mut out = prefix.to_vec();
     if runs.is_empty() {
         let piece = slice_by_visual_width(text, seg_start, seg_end.saturating_sub(seg_start));
-        return out.write_str(&piece);
+        out.push(StyledSpan::plain(piece));
+        return out;
     }
 
     let mut pos = 0usize;
@@ -60,12 +67,44 @@ pub fn write_note_segment<W: Write>(
         }
 
         if !syntax_on {
-            out.write_str(&sub_piece)?;
+            out.push(StyledSpan::plain(sub_piece));
             continue;
         }
-        theme.write_token(tok.color, &sub_piece, "ctx", Some("ctx"), tok.sgr, out);
+        out.push(theme.token_span(tok.color, &sub_piece, RowKind::Ctx, RunKind::Ctx, tok.sgr));
     }
 
+    out
+}
+
+/// Write a single slice/segment of a review note row with syntax highlighting
+/// directly to a buffer. Style decisions come from [`note_segment_spans`];
+/// emission keeps the exact skeleton (prefix text, one token emission per
+/// run) so output stays byte-identical.
+#[allow(clippy::too_many_arguments)]
+pub fn write_note_segment<W: Write>(
+    out: &mut W,
+    text: &str,
+    runs: &[OutputRun],
+    seg_start: usize,
+    seg_end: usize,
+    prefix: &str,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> fmt::Result {
+    // Plain prefixes serialize to their bare text, exactly as the ANSI
+    // path writes the prefix string verbatim.
+    let spans = note_segment_spans(
+        text,
+        runs,
+        seg_start,
+        seg_end,
+        &[StyledSpan::plain(prefix)],
+        syntax_on,
+        theme,
+    );
+    for span in &spans {
+        write_span_token(out, span)?;
+    }
     Ok(())
 }
 

@@ -3,7 +3,7 @@
 
 use std::{fmt, fmt::Write};
 
-use super::segment::RowSegmentLine;
+use super::{gutter::write_gutter_prefix, segment::RowSegmentLine};
 use crate::{
     ansi::{Color, ColorExt},
     core::parse::RowKind,
@@ -11,81 +11,85 @@ use crate::{
     theme::{Cursor, DiffKind, DiffuseTheme},
 };
 
+/// Background escape for an optional line color: [`None`] and
+/// [`Color::Primary`] inherit (no escape), matching the ANSI path where a
+/// primary background resolves to an empty code.
+fn bg_code(bg: Option<Color>) -> String {
+    match bg.filter(|color| *color != Color::Primary) {
+        Some(color) => color.bg_code(),
+        None => String::new(),
+    }
+}
+
 /// Write a row in the raw unified-diff representation with theme support
-/// directly to a buffer.
+/// directly to a buffer. Style decisions come from [`raw_row_spans`];
+/// emission keeps the exact skeleton (lead background, gutter prefix,
+/// foreground, bespoke trailing fill, reset framing) so output stays
+/// byte-identical.
 #[allow(clippy::too_many_arguments)]
 pub fn write_raw_row<W: Write>(
     out: &mut W,
     kind: RowKind,
-    prefix: &str,
+    prefix: &[StyledSpan],
     text: &str,
     selected: bool,
     band: bool,
     highlight_trailing: bool,
     theme: &DiffuseTheme,
 ) -> fmt::Result {
-    let palette = theme.palette;
-    let (fg_color, sub_bg_color, sub_fg_color) = match kind {
-        RowKind::Add => (
-            palette[Cursor::Rest][DiffKind::Add].gutter.icon.color,
-            palette[Cursor::Rest][DiffKind::Add]
-                .surface
-                .fill
-                .unwrap_or(Color::Primary),
-            palette[Cursor::Rest][DiffKind::Add].gutter.num.color,
-        ),
-        RowKind::Del => (
-            palette[Cursor::Rest][DiffKind::Del].gutter.icon.color,
-            palette[Cursor::Row][DiffKind::Del].surface.bg,
-            palette[Cursor::Rest][DiffKind::Del].gutter.num.color,
-        ),
-        _ => (
-            palette[Cursor::Hunk][DiffKind::Ctx].gutter.num.color,
-            palette[Cursor::Row][DiffKind::Ctx].surface.bg,
-            palette[Cursor::Rest][DiffKind::Ctx].gutter.num.color,
-        ),
+    let row = raw_row_spans(
+        kind,
+        prefix.to_vec(),
+        text,
+        selected,
+        band,
+        highlight_trailing,
+        theme,
+    );
+    let line_bg_code = bg_code(row.line_bg);
+    let body = &row.spans[prefix.len().min(row.spans.len())..];
+    let fg_code = match body
+        .first()
+        .and_then(|span| span.fg)
+        .filter(|color| *color != Color::Primary)
+    {
+        Some(color) => color.fg_code(),
+        None => String::new(),
     };
-    let fg = fg_color.fg_code();
-    let sub_bg = sub_bg_color.bg_code();
-    let sub_fg = sub_fg_color.fg_code();
-
-    let bg_color = if selected {
-        palette[Cursor::Row][DiffKind::Ctx].surface.bg
-    } else if band {
-        palette[Cursor::Row].band.bg
-    } else {
-        palette[Cursor::Rest][DiffKind::Ctx].surface.bg
-    };
-    let bg = match bg_color {
-        Color::Primary => String::new(),
-        color => color.bg_code(),
-    };
-    let reset_bg = if bg.is_empty() { "\x1b[49m" } else { &bg };
-
-    let trailing_len = if highlight_trailing {
-        text.len() - text.trim_end_matches(|c: char| c.is_whitespace()).len()
-    } else {
-        0
-    };
-
-    write!(out, "{bg}{prefix}{fg}")?;
-    if trailing_len > 0 {
-        let (body, trailing) = text.split_at(text.len() - trailing_len);
-        out.write_str(body)?;
-        if kind == RowKind::Del {
-            write!(
-                out,
-                "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{reset_bg}{fg}"
-            )?;
-        } else {
-            write!(out, "{sub_bg}{sub_fg}{trailing}{reset_bg}{fg}")?;
-        }
-    } else {
-        out.write_str(text)?;
+    // Raw gutter prefixes carry no styled background of their own; the
+    // line background rides ahead of them, as on the ANSI path.
+    out.write_str(&line_bg_code)?;
+    // Raw prefixes are first-segment spellings: deletion rows keep the
+    // mid-prefix italic-off, always closed with the trailing italic-off.
+    write_gutter_prefix(out, prefix, kind == RowKind::Del, true)?;
+    out.write_str(&fg_code)?;
+    if let Some(main) = body.first() {
+        out.write_str(&main.text)?;
     }
-
+    // A split-off trailing fill repaints its sub-background; deletion
+    // rows strike it and close without a foreground reset, exactly as
+    // the ANSI path does.
+    if let Some(trailing) = body.get(1) {
+        out.write_str(&bg_code(trailing.bg))?;
+        if trailing.strikethrough && trailing.sgrs.is_none() {
+            out.write_str(crate::ansi::STRIKE_ON)?;
+        }
+        if let Some(color) = trailing.fg.filter(|color| *color != Color::Primary) {
+            color.write_fg(out)?;
+        }
+        out.write_str(&trailing.text)?;
+        if trailing.strikethrough && trailing.sgrs.is_none() {
+            out.write_str(crate::ansi::STRIKE_OFF)?;
+        }
+        if line_bg_code.is_empty() {
+            out.write_str("\x1b[49m")?;
+        } else {
+            out.write_str(&line_bg_code)?;
+        }
+        out.write_str(&fg_code)?;
+    }
     if selected || band {
-        out.write_str(&bg)?;
+        out.write_str(&line_bg_code)?;
     } else {
         out.write_str("\x1b[49m")?;
     }
@@ -98,7 +102,7 @@ pub fn write_raw_row<W: Write>(
 /// background when selected).
 pub fn render_raw_row(
     kind: RowKind,
-    prefix: &str,
+    prefix: &[StyledSpan],
     text: &str,
     selected: bool,
     band: bool,
@@ -186,6 +190,7 @@ pub fn raw_row_spans(
             italic: false,
             underline: false,
             strikethrough: kind == RowKind::Del,
+            sgrs: None,
         });
     } else {
         spans.push(StyledSpan::styled(text, Some(fg_color), line_bg));

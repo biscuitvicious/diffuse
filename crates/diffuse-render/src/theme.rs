@@ -45,7 +45,7 @@ pub use toml::model::Mode;
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
-use crate::span::StyledSpan;
+use crate::span::{StyledSpan, write_span_token};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowStyle {
@@ -263,33 +263,33 @@ impl DiffuseTheme {
             Some("del") => RunKind::Del,
             _ => RunKind::Ctx,
         };
-        let ansi_color = self.token_color(color, token_channel(kind, tok));
-
-        if let Some(s) = sgr {
-            if let Some(on) = sgr_on_str(s) {
-                let _ = out.write_str(on);
-            } else {
-                let _ = write!(out, "\x1b[{s}m");
-            }
-        }
-        if let Some(c) = ansi_color {
-            let _ = c.write_fg(out);
-            let _ = out.write_str(text);
-            let _ = out.write_str(FG_RESET);
-        } else {
-            let _ = out.write_str(text);
-        }
-        if let Some(s) = sgr
-            && let Some(off) = sgr_off(s)
-        {
-            let _ = out.write_str(off);
-        }
+        // Style decisions come from the span model; emission keeps the
+        // exact `write_token` byte pattern via `write_span_token`.
+        let span = self.token_span(color, text, kind, tok, sgr);
+        let _ = write_span_token(out, &span);
     }
 
-    /// Render a token with stacked SGR modifiers as one combined sequence
-    /// (`\x1b[1;4m`), with per-modifier resets in reverse order. Styles
-    /// like heading titles combine bold and underline, which a single SGR
-    /// slot cannot express.
+    /// Render stacked syntax/markdown tokens as one renderer-agnostic
+    /// [`StyledSpan`] retaining the exact SGR id list, so ANSI
+    /// serialization reproduces the combined emission of
+    /// [`Self::write_token_stacked`].
+    #[must_use]
+    pub fn token_span_stacked(
+        &self,
+        color: TokenColor,
+        text: &str,
+        kind: RowKind,
+        tok_kind: RunKind,
+        sgrs: &[u32],
+    ) -> StyledSpan {
+        let span = StyledSpan::styled(
+            text,
+            self.token_color(color, token_channel(kind, tok_kind)),
+            None,
+        );
+        span.with_sgrs(sgrs)
+    }
+
     /// Render a syntax/markdown token as a renderer-agnostic
     /// [`StyledSpan`]: the span-native twin of [`Self::write_token`].
     /// Colors resolve through the same [`token_channel`], so both paths
@@ -314,6 +314,11 @@ impl DiffuseTheme {
         span
     }
 
+    /// Render a token with stacked SGR modifiers as one combined sequence
+    /// (`\x1b[1;4m`), with per-modifier resets in reverse order. Styles
+    /// like heading titles combine bold and underline, which a single SGR
+    /// slot cannot express. Style decisions come from the span model;
+    /// emission keeps the exact byte pattern via `write_span_token`.
     pub fn write_token_stacked<W: Write>(
         &self,
         color: TokenColor,
@@ -334,30 +339,8 @@ impl DiffuseTheme {
             Some("del") => RunKind::Del,
             _ => RunKind::Ctx,
         };
-        let ansi_color = self.token_color(color, token_channel(kind, tok));
-
-        if !sgrs.is_empty() {
-            let _ = out.write_str("\x1b[");
-            for (i, s) in sgrs.iter().enumerate() {
-                if i > 0 {
-                    let _ = out.write_str(";");
-                }
-                let _ = write!(out, "{s}");
-            }
-            let _ = out.write_str("m");
-        }
-        if let Some(c) = ansi_color {
-            let _ = c.write_fg(out);
-            let _ = out.write_str(text);
-            let _ = out.write_str(FG_RESET);
-        } else {
-            let _ = out.write_str(text);
-        }
-        for s in sgrs.iter().rev() {
-            if let Some(off) = sgr_off(*s) {
-                let _ = out.write_str(off);
-            }
-        }
+        let span = self.token_span_stacked(color, text, kind, tok, sgrs);
+        let _ = write_span_token(out, &span);
     }
 
     /// Render a syntax/markdown token to styled ANSI text.

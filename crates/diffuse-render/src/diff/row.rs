@@ -3,7 +3,11 @@
 use crate::{
     ansi::{SGR_RESET, strip_ansi},
     core::wire::OutputRow,
-    row::{display_text, expand_tabs, prefix_of, styled_prefix, write_row_segment},
+    row::{
+        continuation_prefix_spans, display_text, expand_tabs, prefix_of, styled_prefix_spans,
+        write_row_segment,
+    },
+    span::StyledSpan,
     theme::DiffuseTheme,
     width::display_width,
 };
@@ -17,19 +21,19 @@ pub(crate) fn render_row_line(
     width: usize,
     styled_prefixes: bool,
 ) {
-    let pfx = if styled_prefixes {
-        styled_prefix(
-            r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, theme,
+    let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
+        (
+            styled_prefix_spans(
+                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, None, theme,
+            ),
+            continuation_prefix_spans(None),
         )
     } else {
         let plain = prefix_of(r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs);
-        format!("{plain} ")
-    };
-
-    let cont_pfx = if styled_prefixes {
-        "\x1b[38;5;242m      \x1b[39m".to_string()
-    } else {
-        "      ".to_string()
+        (
+            vec![StyledSpan::plain(format!("{plain} "))],
+            vec![StyledSpan::plain("      ")],
+        )
     };
 
     let text = r.text();
@@ -46,6 +50,7 @@ pub(crate) fn render_row_line(
             0,
             usize::MAX,
             &pfx,
+            false,
             false,
             false,
             0,
@@ -79,6 +84,7 @@ pub(crate) fn render_row_line(
             &pfx,
             false,
             false,
+            false,
             0,
             true,
             true,
@@ -99,7 +105,11 @@ pub(crate) fn render_row_line(
     }
 
     for s_idx in 0..seg_count {
-        let seg_pfx = if s_idx == 0 { &pfx } else { &cont_pfx };
+        let (seg_pfx, is_cont) = if s_idx == 0 {
+            (&pfx, false)
+        } else {
+            (&cont_pfx, true)
+        };
         let seg_start = s_idx * text_cols;
         let seg_end = seg_start + text_cols;
         let mut row_buf = String::with_capacity(text_cols + 64);
@@ -113,6 +123,7 @@ pub(crate) fn render_row_line(
             seg_start,
             seg_end,
             seg_pfx,
+            is_cont,
             false,
             false,
             0,
