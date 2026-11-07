@@ -12,11 +12,11 @@ use yansi::Color;
 
 use crate::{
     Badge,
-    ansi::{ColorExt, SGR_RESET, strip_ansi},
-    core::wire::OutputFile,
+    ansi::{ColorExt, FG_RESET, SGR_RESET, strip_ansi},
+    core::{parse::FileStatus, wire::OutputFile},
     counts::{count_cells, format_counts_plain},
     span::{StyledSpan, slice_spans},
-    theme::{Cursor, DiffuseTheme, SurfaceColors, UiPalette},
+    theme::{Cursor, DiffKind, DiffuseTheme, SurfaceColors, UiPalette},
     width::{display_width, grapheme_width},
 };
 
@@ -247,6 +247,34 @@ pub fn write_file_header_bar_with_width<W: Write>(
 
     writeln!(bar, "{SGR_RESET}")?;
     out.write_str(&bar)
+}
+
+/// Format a file's raw-mode header: traditional unified-diff `---`/`+++`
+/// lines, each riding whole-line in its side's row foreground (the same
+/// deletion/addition hues the `-`/`+` rows use, so headers match content
+/// in both themes). Paths carry git's `a/`/`b/` prefixes with `/dev/null`
+/// on the missing side of added, untracked, and deleted files; renames
+/// read the old path on the minus side. No badge, counts, or ruler fill:
+/// traditional headers carry no metadata, and only the foreground state
+/// is touched, so each line closes with a foreground reset.
+pub fn write_raw_file_header<W: Write>(
+    out: &mut W,
+    file: &OutputFile,
+    theme: &DiffuseTheme,
+) -> fmt::Result {
+    let palette = theme.palette;
+    let del_fg = palette[Cursor::Rest][DiffKind::Del].gutter.icon.color;
+    let add_fg = palette[Cursor::Rest][DiffKind::Add].gutter.icon.color;
+    let old_side = match file.status {
+        FileStatus::Added | FileStatus::Untracked => "/dev/null".to_string(),
+        _ => format!("a/{}", file.old_path.as_deref().unwrap_or(&file.path)),
+    };
+    let new_side = match file.status {
+        FileStatus::Deleted => "/dev/null".to_string(),
+        _ => format!("b/{}", file.path),
+    };
+    writeln!(out, "{}--- {old_side}{FG_RESET}", del_fg.fg_code())?;
+    writeln!(out, "{}+++ {new_side}{FG_RESET}", add_fg.fg_code())
 }
 
 /// Project a canonical [`FileHeaderBanner`] onto ordered [`StyledSpan`]s:

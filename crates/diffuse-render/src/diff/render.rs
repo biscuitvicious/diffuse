@@ -16,7 +16,9 @@ use crate::{
 };
 
 use super::{
-    header::write_file_header_bar_with_width, hunk::render_hunk_divider, row::render_row_line,
+    header::{write_file_header_bar_with_width, write_raw_file_header},
+    hunk::render_hunk_divider,
+    row::render_row_line,
 };
 
 pub(crate) fn partition_file_notes<'a>(
@@ -263,12 +265,14 @@ pub fn render_raw_file_diff(
     render_raw_file_diff_with_width(file, badge, theme, DEFAULT_CALLOUT_WIDTH)
 }
 
-/// Render a single file's diff in raw mode with a custom note wrapping width.
+/// Render a single file's diff in raw mode with a custom width. Review
+/// notes never render here: raw mode is plain unified diff, so notes stay
+/// in the rich renderer and the interactive reviewer.
 pub fn render_raw_file_diff_with_width(
     file: &OutputFile,
-    badge: Option<Badge>,
+    _badge: Option<Badge>,
     theme: &DiffuseTheme,
-    width: usize,
+    _width: usize,
 ) -> String {
     let hunks = if !file.raw_hunks.is_empty() {
         &file.raw_hunks
@@ -278,28 +282,8 @@ pub fn render_raw_file_diff_with_width(
     let total_rows: usize = hunks.iter().map(|h| h.rows.len() + 1).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
-    let (banner_notes, row_notes) = if !file.notes.is_empty() {
-        let all_rows: Vec<&OutputRow> = hunks.iter().flat_map(|h| &h.rows).collect();
-        partition_file_notes(file, &all_rows)
-    } else {
-        (Vec::new(), HashMap::new())
-    };
+    let _ = write_raw_file_header(&mut out, file, theme);
 
-    let _ = write_file_header_bar_with_width(&mut out, file, badge, theme, Some(width));
-
-    let emit_note = |note: &OutputNote, out: &mut String| {
-        for line in render_output_note_callout(note, false, true, theme, width) {
-            out.push_str(&line);
-            out.push_str(SGR_RESET);
-            out.push('\n');
-        }
-    };
-
-    for note in &banner_notes {
-        emit_note(note, &mut out);
-    }
-
-    let mut row_idx = 0;
     for h in hunks {
         let sep_text = format!(
             "@@ -{},{} +{},{} @@",
@@ -324,13 +308,6 @@ pub fn render_raw_file_diff_with_width(
             let text = r.text();
             let _ = write_raw_row(&mut out, r.kind, &pfx, &text, false, false, true, theme);
             out.push('\n');
-
-            if let Some(notes) = row_notes.get(&row_idx) {
-                for note in notes {
-                    emit_note(note, &mut out);
-                }
-            }
-            row_idx += 1;
         }
     }
 

@@ -76,8 +76,10 @@ fn test_render_raw_pipeline_output() {
     file_fallback.counts.mods = 1;
     file_fallback.counts.movs = 1;
     let single_raw = render_raw_file_diff(&file_fallback, None, &DiffuseTheme::dark());
-    assert!(single_raw.contains("~1"));
-    assert!(single_raw.contains("≈1"));
+    // Traditional raw headers carry no counts: the header is just the
+    // `---`/`+++` pair in whole-line side colors.
+    let single_stripped = strip_ansi(&single_raw);
+    assert!(single_stripped.starts_with("--- a/a.txt\n+++ b/a.txt\n"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
 }
 
@@ -112,9 +114,10 @@ fn test_render_renamed_file_diff() {
     );
 
     let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
-    assert!(
-        crate::ansi::strip_ansi(&raw).contains("src/old.rs -> new.rs (renamed, 0B)"),
-        "zero counts omitted, status parens follow the path: {raw:?}"
+    assert_eq!(
+        crate::ansi::strip_ansi(&raw),
+        "--- a/src/old.rs\n+++ b/src/new.rs\n",
+        "raw renames read the old path on the minus side: {raw:?}"
     );
 }
 
@@ -189,9 +192,10 @@ fn test_nonzero_notes_still_rendered() {
         "styled render must show '1 note' when there is 1 note"
     );
     let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
+    // Raw mode is plain unified diff: no note counts, no callouts.
     assert!(
-        raw.contains("1 note"),
-        "raw render must show '1 note' when there is 1 note"
+        !strip_ansi(&raw).contains("a note"),
+        "raw render must not render note callouts: {raw:?}"
     );
 }
 
@@ -437,11 +441,11 @@ fn test_render_file_diff_renders_inline_note_callouts() {
         "line note must follow target code row"
     );
 
-    // Raw mode diff must also render the inline callouts
+    // Raw mode is plain unified diff: no banner or inline callouts.
     let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
     let raw_plain = strip_ansi(&raw);
-    assert!(raw_plain.contains("▌███ 💬 Unanchored banner note"));
-    assert!(raw_plain.contains("▌███ 🔄 Anchored line note"));
+    assert!(!raw_plain.contains("Unanchored banner note"));
+    assert!(!raw_plain.contains("Anchored line note"));
 }
 
 #[test]
@@ -508,19 +512,12 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
     let p_wide_lines: Vec<&str> = p_wide.lines().filter(|l| l.contains('▌')).collect();
     assert!(p_narrow_lines.len() > p_wide_lines.len());
 
+    // Raw mode renders no notes, so there is nothing to wrap: the width
+    // argument is accepted for API symmetry but ignored.
     let raw_narrow = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::dark(), 40);
     let raw_wide = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::dark(), 160);
-    let raw_narrow_lines: Vec<&str> = raw_narrow.lines().filter(|l| l.contains('▌')).collect();
-    let raw_wide_lines: Vec<&str> = raw_wide.lines().filter(|l| l.contains('▌')).collect();
-    assert!(raw_narrow_lines.len() > raw_wide_lines.len());
-
-    let raw_p_narrow =
-        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), 40);
-    let raw_p_wide =
-        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), 160);
-    let raw_p_narrow_lines: Vec<&str> = raw_p_narrow.lines().filter(|l| l.contains('▌')).collect();
-    let raw_p_wide_lines: Vec<&str> = raw_p_wide.lines().filter(|l| l.contains('▌')).collect();
-    assert!(raw_p_narrow_lines.len() > raw_p_wide_lines.len());
+    assert_eq!(raw_narrow, raw_wide);
+    assert!(!strip_ansi(&raw_narrow).contains('▌'));
 }
 
 #[test]
@@ -972,4 +969,118 @@ fn test_banner_spans_underline_rename_range() {
     );
     assert_eq!(underlined[0].text, "src/");
     assert_eq!(underlined[0].fg, Some(yansi::Color::Fixed(139)));
+}
+
+/// Raw-mode file headers use traditional unified-diff markers: `---` in
+/// the deletion foreground, `+++` in the addition foreground, whole-line.
+fn raw_header_colors() -> (String, String) {
+    use crate::theme::{Cursor, DiffKind};
+
+    let theme = DiffuseTheme::dark();
+    let del_fg = theme.palette[Cursor::Rest][DiffKind::Del]
+        .gutter
+        .icon
+        .color
+        .fg_code();
+    let add_fg = theme.palette[Cursor::Rest][DiffKind::Add]
+        .gutter
+        .icon
+        .color
+        .fg_code();
+    (del_fg, add_fg)
+}
+
+fn raw_header_rendered(file: &OutputFile) -> String {
+    let mut buf = String::new();
+    write_raw_file_header(&mut buf, file, &DiffuseTheme::dark()).unwrap();
+    buf
+}
+
+#[test]
+fn test_raw_file_header_modified_paths() {
+    let rendered = raw_header_rendered(&banner_test_file());
+    assert_eq!(
+        strip_ansi(&rendered),
+        "--- a/src/main.rs\n+++ b/src/main.rs\n"
+    );
+    let (del_fg, add_fg) = raw_header_colors();
+    assert!(
+        rendered.contains(&format!("{del_fg}--- a/src/main.rs")),
+        "minus line rides whole-line in the deletion foreground"
+    );
+    assert!(
+        rendered.contains(&format!("{add_fg}+++ b/src/main.rs")),
+        "plus line rides whole-line in the addition foreground"
+    );
+}
+
+#[test]
+fn test_raw_file_header_added_uses_dev_null() {
+    let mut file = banner_test_file();
+    file.path = "new.txt".to_string();
+    file.status = diffuse_core::FileStatus::Added;
+    assert_eq!(
+        strip_ansi(&raw_header_rendered(&file)),
+        "--- /dev/null\n+++ b/new.txt\n"
+    );
+}
+
+#[test]
+fn test_raw_file_header_deleted_uses_dev_null() {
+    let mut file = banner_test_file();
+    file.path = "old.txt".to_string();
+    file.status = diffuse_core::FileStatus::Deleted;
+    assert_eq!(
+        strip_ansi(&raw_header_rendered(&file)),
+        "--- a/old.txt\n+++ /dev/null\n"
+    );
+}
+
+#[test]
+fn test_raw_file_header_rename_uses_old_path() {
+    let mut file = banner_test_file();
+    file.path = "new.txt".to_string();
+    file.old_path = Some("old.txt".to_string());
+    file.status = diffuse_core::FileStatus::Renamed;
+    assert_eq!(
+        strip_ansi(&raw_header_rendered(&file)),
+        "--- a/old.txt\n+++ b/new.txt\n"
+    );
+}
+
+#[test]
+fn test_raw_file_header_untracked_uses_dev_null() {
+    let mut file = banner_test_file();
+    file.path = "fresh.txt".to_string();
+    file.status = diffuse_core::FileStatus::Untracked;
+    assert_eq!(
+        strip_ansi(&raw_header_rendered(&file)),
+        "--- /dev/null\n+++ b/fresh.txt\n"
+    );
+}
+
+#[test]
+fn test_raw_pipeline_output_opens_with_traditional_header() {
+    let diff = "diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old line one\n+new line one\n";
+    let new_content = [("a.txt".to_string(), "new line one\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("a.txt".to_string(), "old line one\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let rendered = render_raw_pipeline_output(&out, &DiffuseTheme::dark());
+    let stripped = strip_ansi(&rendered);
+    let mut lines = stripped.lines();
+    assert_eq!(lines.next(), Some("--- a/a.txt"));
+    assert_eq!(lines.next(), Some("+++ b/a.txt"));
+    assert!(
+        !stripped.contains('\u{2550}'),
+        "raw output must not carry the banner ruler"
+    );
 }
