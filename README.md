@@ -147,6 +147,7 @@ constitute the machine interface for external tooling.
 | `--color <WHEN>` | ANSI colorization: `always`, `never`, or `auto` (default) |
 | `--no-color` | Disable ANSI colorization |
 | `--theme <NAME>` | Color theme (`auto`, `default`/`dark`, `light`). Defaults to `auto` |
+| `--line-number-width <WIDTH>` | Gutter line number column width (0..=16, 0 hides numbers) |
 | `-p, --pager`, `--no-tui` | Print the rendered diff and exit |
 
 | `--raw` | Flat red/green rendering without sub-line detail |

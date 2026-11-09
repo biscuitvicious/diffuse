@@ -94,6 +94,7 @@ impl AppState {
             expanded_mods: HashSet::new(),
             expand_mods: Some(false),
             line_num_width: 0,
+            explicit_line_num_width: None,
             max_line_num: 0,
             loading_files: HashSet::new(),
             on_demand_tx: None,
@@ -131,6 +132,12 @@ impl AppState {
 
     pub fn with_commit_range(mut self, commit_range: Option<String>) -> Self {
         self.commit_range = commit_range;
+        self
+    }
+
+    pub fn with_line_num_width(mut self, width: Option<usize>) -> Self {
+        self.explicit_line_num_width = width.map(|w| w.min(diffuse_render::MAX_LINE_NUM_WIDTH));
+        self.recalculate_line_num_width();
         self
     }
 

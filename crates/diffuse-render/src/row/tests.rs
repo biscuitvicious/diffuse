@@ -37,19 +37,19 @@ fn emitted_prefix(
 #[test]
 fn test_prefix_gutters() {
     let r_add = prefix_of(RowKind::Add, None, None, Some(42), None, &[]);
-    assert_eq!(r_add, "  42 +");
+    assert_eq!(r_add, "   42 +");
 
     let r_del = prefix_of(RowKind::Del, None, None, None, Some(10), &[]);
-    assert_eq!(r_del, "  10 -");
+    assert_eq!(r_del, "   10 -");
 
-    // Non-group 1-to-1 mod row styles with right-aligned ~ ("  55 ~")
+    // Non-group 1-to-1 mod row styles with right-aligned ~ ("   55 ~")
     let r_mod = prefix_of(RowKind::Mod, None, None, Some(55), Some(54), &[]);
-    assert_eq!(r_mod, "  55 ~");
+    assert_eq!(r_mod, "   55 ~");
 }
 
 #[test]
 fn test_prefix_group_gutters() {
-    // Group anchor row has single left-aligned ~ (" 141~ ")
+    // Group anchor row has single left-aligned ~ ("  141~ ")
     let r_anchor = prefix_of(
         RowKind::Mod,
         None,
@@ -58,7 +58,7 @@ fn test_prefix_group_gutters() {
         Some(140),
         &[],
     );
-    assert_eq!(r_anchor, " 141~ ");
+    assert_eq!(r_anchor, "  141~ ");
 
     // Group aux add row has ~+
     let r_aux_add = prefix_of(
@@ -69,7 +69,7 @@ fn test_prefix_group_gutters() {
         None,
         &[],
     );
-    assert_eq!(r_aux_add, " 140~+");
+    assert_eq!(r_aux_add, "  140~+");
 
     // Group aux del row has ~-
     let r_aux_del = prefix_of(
@@ -80,14 +80,14 @@ fn test_prefix_group_gutters() {
         Some(140),
         &[],
     );
-    assert_eq!(r_aux_del, " 140~-");
+    assert_eq!(r_aux_del, "  140~-");
 }
 
 #[test]
 fn test_styled_prefix_group_and_non_group() {
     let theme = DiffuseTheme::dark();
 
-    // Non-group mod row has right-aligned ~ ("  55 ~")
+    // Non-group mod row has right-aligned ~ ("   55 ~")
     let s_mod = emitted_prefix(
         RowKind::Mod,
         None,
@@ -98,7 +98,7 @@ fn test_styled_prefix_group_and_non_group() {
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_mod), "  55 ~");
+    assert_eq!(crate::ansi::strip_ansi(&s_mod), "   55 ~");
     assert!(
         s_mod.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
@@ -109,7 +109,7 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
 
-    // Group anchor row has left-aligned ~ (" 141~ ")
+    // Group anchor row has left-aligned ~ ("  141~ ")
     let s_anchor = emitted_prefix(
         RowKind::Mod,
         None,
@@ -120,7 +120,7 @@ fn test_styled_prefix_group_and_non_group() {
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_anchor), " 141~ ");
+    assert_eq!(crate::ansi::strip_ansi(&s_anchor), "  141~ ");
     assert!(
         s_anchor.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
@@ -131,7 +131,7 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
 
-    // Group aux add row has ~+ (" 140~+")
+    // Group aux add row has ~+ ("  140~+")
     let s_aux_add = emitted_prefix(
         RowKind::Add,
         None,
@@ -142,7 +142,7 @@ fn test_styled_prefix_group_and_non_group() {
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_aux_add), " 140~+");
+    assert_eq!(crate::ansi::strip_ansi(&s_aux_add), "  140~+");
     assert!(
         s_aux_add.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
@@ -184,7 +184,7 @@ fn test_styled_prefix_group_and_non_group() {
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_aux_del), " 140~-");
+    assert_eq!(crate::ansi::strip_ansi(&s_aux_del), "  140~-");
     assert!(
         s_aux_del.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
@@ -230,7 +230,7 @@ fn test_addition_row_with_all_common_runs_preserves_plus_gutter() {
     }];
     let r_add = prefix_of(RowKind::Add, None, None, Some(53), None, &runs);
     assert_eq!(
-        r_add, "  53 +",
+        r_add, "   53 +",
         "Leading add row must keep '+' in gutter even if runs are common"
     );
 }
@@ -1500,7 +1500,7 @@ fn test_continuation_prefix_spans_match_ansi_continuation() {
     let theme = DiffuseTheme::dark();
     let bg = Some(theme.palette[Cursor::Rest][DiffKind::Mod].surface.bg);
     let spans = continuation_prefix_spans(bg);
-    assert_eq!(span_text(&spans), "      ");
+    assert_eq!(span_text(&spans), "       ");
     assert!(spans.iter().all(|span| span.bg == bg));
 }
 
@@ -1923,7 +1923,7 @@ fn test_continuation_prefix_with_mod_side() {
     let theme = DiffuseTheme::dark();
     let spans_del = continuation_prefix_spans_with_mod_side(Some(ModSide::Del), None, &theme, None);
     assert_eq!(spans_del.len(), 3);
-    assert_eq!(spans_del[0].text, "    ");
+    assert_eq!(spans_del[0].text, "     ");
     assert_eq!(spans_del[1].text, "│");
     assert_eq!(
         spans_del[1].fg,
@@ -1933,23 +1933,23 @@ fn test_continuation_prefix_with_mod_side() {
 
     let spans_add = continuation_prefix_spans_with_mod_side(Some(ModSide::Add), None, &theme, None);
     assert_eq!(spans_add.len(), 1);
-    assert_eq!(spans_add[0].text, "      ");
+    assert_eq!(spans_add[0].text, "       ");
 
     let spans_none = continuation_prefix_spans_with_mod_side(None, None, &theme, None);
     assert_eq!(spans_none.len(), 1);
-    assert_eq!(spans_none[0].text, "      ");
+    assert_eq!(spans_none[0].text, "       ");
 
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Del), None),
-        "    │ "
+        "     │ "
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), None),
-        "      "
+        "       "
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(None, None),
-        "      "
+        "       "
     );
 
     // Test with explicit ModGlyph
@@ -1978,15 +1978,15 @@ fn test_continuation_prefix_with_mod_side() {
         None,
     );
     assert_eq!(spans_add_bottom.len(), 1);
-    assert_eq!(spans_add_bottom[0].text, "      ");
+    assert_eq!(spans_add_bottom[0].text, "       ");
 
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Mid)),
-        "    │ "
+        "     │ "
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Bottom)),
-        "      "
+        "       "
     );
 }
 
@@ -2149,4 +2149,51 @@ fn test_styled_prefix_spans_with_custom_line_num_width() {
     );
     let full_cont_w2: String = cont_w2.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(full_cont_w2, "  │ ");
+}
+
+#[test]
+fn test_format_line_num_fit_and_truncation_with_ellipsis() {
+    use super::gutter::{MAX_LINE_NUM_BUF_LEN, MAX_LINE_NUM_WIDTH, format_line_num};
+
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+
+    // width = 0: always empty
+    assert_eq!(format_line_num(None, 0, &mut buf), "");
+    assert_eq!(format_line_num(Some(42), 0, &mut buf), "");
+
+    // None produces spaces
+    assert_eq!(format_line_num(None, 1, &mut buf), " ");
+    assert_eq!(format_line_num(None, 3, &mut buf), "   ");
+    assert_eq!(format_line_num(None, 5, &mut buf), "     ");
+
+    // width = 1
+    assert_eq!(format_line_num(Some(5), 1, &mut buf), "5");
+    // 12 does not fit in 1: stripped until fits in 0 digits -> just ellipsis
+    assert_eq!(format_line_num(Some(12), 1, &mut buf), "…");
+
+    // width = 2
+    assert_eq!(format_line_num(Some(7), 2, &mut buf), " 7");
+    assert_eq!(format_line_num(Some(42), 2, &mut buf), "42");
+    // 100 does not fit in 2: 100 / 10 = 10 / 10 = 1 (fits in 2 - 1 = 1) -> "1…"
+    assert_eq!(format_line_num(Some(100), 2, &mut buf), "1…");
+    assert_eq!(format_line_num(Some(999), 2, &mut buf), "9…");
+
+    // width = 3
+    assert_eq!(format_line_num(Some(42), 3, &mut buf), " 42");
+    assert_eq!(format_line_num(Some(123), 3, &mut buf), "123");
+    // 12345: repeatedly / 10 -> 1234 -> 123 -> 12 (fits in 3 - 1 = 2) -> "12…"
+    assert_eq!(format_line_num(Some(12345), 3, &mut buf), "12…");
+    assert_eq!(format_line_num(Some(9999), 3, &mut buf), "99…");
+
+    // width = 4
+    assert_eq!(format_line_num(Some(1000), 4, &mut buf), "1000");
+    assert_eq!(format_line_num(Some(10000), 4, &mut buf), "100…");
+    assert_eq!(format_line_num(Some(123456), 4, &mut buf), "123…");
+
+    // width = 5
+    assert_eq!(format_line_num(Some(12345), 5, &mut buf), "12345");
+    assert_eq!(format_line_num(Some(123456), 5, &mut buf), "1234…");
+
+    // Constant verification
+    assert_eq!(MAX_LINE_NUM_WIDTH, 16);
 }

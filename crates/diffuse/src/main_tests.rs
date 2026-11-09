@@ -864,3 +864,42 @@ fn test_cli_expand_mods_flag_resolution() {
         assert_eq!(args.resolved_expand_mods(false), None);
     }
 }
+
+#[test]
+fn test_cli_line_number_width_flag() {
+    // 1. Omitted flag defaults to None
+    let args = Args::try_parse_from(["diffuse"]).expect("default args");
+    assert_eq!(args.line_number_width, None);
+
+    // 2. Valid range 0..=16
+    for val in 0..=16 {
+        let args = Args::try_parse_from(["diffuse", "--line-number-width", &val.to_string()])
+            .unwrap_or_else(|e| panic!("failed to parse width {val}: {e}"));
+        assert_eq!(args.line_number_width, Some(val));
+    }
+
+    // 3. Out-of-range (>16) rejected
+    let err17 = Args::try_parse_from(["diffuse", "--line-number-width", "17"]);
+    assert!(err17.is_err(), "17 must be rejected");
+    let err_msg = err17.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("17 is not in 0..=16"),
+        "error must mention bounds: {err_msg}"
+    );
+
+    let err99 = Args::try_parse_from(["diffuse", "--line-number-width", "99"]);
+    assert!(err99.is_err(), "99 must be rejected");
+
+    // 4. Invalid non-integers rejected
+    let err_neg = Args::try_parse_from(["diffuse", "--line-number-width", "-1"]);
+    assert!(err_neg.is_err());
+    let err_alpha = Args::try_parse_from(["diffuse", "--line-number-width", "foo"]);
+    assert!(err_alpha.is_err());
+
+    // 5. Compatible with pager flag and positional revision
+    let args = Args::try_parse_from(["diffuse", "-p", "--line-number-width", "0", "HEAD~1"])
+        .expect("parse pager with width 0 and rev");
+    assert!(args.pager);
+    assert_eq!(args.line_number_width, Some(0));
+    assert_eq!(args.revision.git_revs, vec!["HEAD~1"]);
+}

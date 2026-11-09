@@ -16,17 +16,46 @@ use crate::{
     theme::{Cursor, DiffKind, DiffuseTheme, FG_RESET, StyledColor},
 };
 
-/// Format variable-width right-aligned line numbers into a stack buffer without
-/// heap allocation.
-pub fn format_line_num(num: Option<u32>, width: usize, buf: &mut [u8; 16]) -> &str {
+/// Maximum line number width in columns.
+pub const MAX_LINE_NUM_WIDTH: usize = 16;
+
+/// Default line number width for the one-shot pager.
+pub const DEFAULT_PAGER_LINE_NUM_WIDTH: usize = 5;
+
+/// Buffer length needed for formatted line numbers: up to 15 digits plus 3
+/// bytes for '…'.
+pub const MAX_LINE_NUM_BUF_LEN: usize = 32;
+
+/// Format variable-width line numbers into a stack buffer without heap
+/// allocation.
+///
+/// - `0`: returns `""` (hides line numbers).
+/// - `1..=16`:
+///   - If `num` fits in `width` columns, it is rendered right-aligned with
+///     leading spaces.
+///   - Otherwise, repeatedly strips the least significant magnitude (`/ 10`)
+///     until the remainder fits in `width - 1` columns, rendering the remainder
+///     followed by a trailing ellipsis (`…`).
+///   - If `num` is `None`, renders `width` spaces.
+pub fn format_line_num(
+    num: Option<u32>,
+    width: usize,
+    buf: &mut [u8; MAX_LINE_NUM_BUF_LEN],
+) -> &str {
     if width == 0 {
         return "";
     }
-    let w = width.min(16);
-    buf[..w].fill(b' ');
-    if let Some(n) = num {
+    let w = width.min(MAX_LINE_NUM_WIDTH);
+    let Some(n) = num else {
+        buf[..w].fill(b' ');
+        return unsafe { str::from_utf8_unchecked(&buf[..w]) };
+    };
+
+    let digits = if n == 0 { 1 } else { (n.ilog10() + 1) as usize };
+    if digits <= w {
+        buf[..w].fill(b' ');
         let mut val = n;
-        let mut idx = w.saturating_sub(1);
+        let mut idx = w - 1;
         if val == 0 {
             buf[idx] = b'0';
         } else {
@@ -39,46 +68,31 @@ pub fn format_line_num(num: Option<u32>, width: usize, buf: &mut [u8; 16]) -> &s
                 idx -= 1;
             }
         }
-    }
-    // SAFETY: buf contains only ASCII spaces and digits.
-    unsafe { str::from_utf8_unchecked(&buf[..w]) }
-}
-
-/// Format 4-character right-aligned line numbers into a stack buffer without
-/// heap allocation.
-pub fn pad4_bytes(num: Option<u32>, buf: &mut [u8; 4]) -> &str {
-    match num {
-        None => "    ",
-        Some(n) => {
-            *buf = *b"    ";
-            let mut val = n;
-            let mut idx = 3;
-            if val == 0 {
-                buf[3] = b'0';
-            } else {
-                while val > 0 {
-                    buf[idx] = b'0' + (val % 10) as u8;
-                    val /= 10;
-                    if idx == 0 {
-                        break;
-                    }
-                    idx -= 1;
-                }
+        unsafe { str::from_utf8_unchecked(&buf[..w]) }
+    } else {
+        let target = w - 1;
+        if target == 0 {
+            buf[..3].copy_from_slice("…".as_bytes());
+            unsafe { str::from_utf8_unchecked(&buf[..3]) }
+        } else {
+            let limit = 10_u64.pow(target as u32);
+            let mut rem = n as u64;
+            while rem >= limit {
+                rem /= 10;
             }
-            // SAFETY: buf contains only ASCII spaces and digits.
-            unsafe { str::from_utf8_unchecked(buf) }
+            let mut val = rem;
+            for idx in (0..target).rev() {
+                buf[idx] = b'0' + (val % 10) as u8;
+                val /= 10;
+            }
+            buf[target..target + 3].copy_from_slice("…".as_bytes());
+            let total_bytes = target + 3;
+            unsafe { str::from_utf8_unchecked(&buf[..total_bytes]) }
         }
     }
 }
 
-/// Format 4-character right-aligned line numbers.
-pub fn pad4(num: Option<u32>) -> String {
-    let mut buf = [b' '; 4];
-    pad4_bytes(num, &mut buf).to_string()
-}
-
-/// Generate plain 6-character prefix gutter (` 123 +`, ` 123 -`, ` 123 ~`, `
-/// 123~ `, ` 123~+`, ` 123~-`, ` 123≈+`, ` 123≈-`).
+/// Generate plain prefix gutter with default pager line number width.
 pub fn prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
@@ -87,10 +101,21 @@ pub fn prefix_of(
     old_line: Option<u32>,
     runs: &[OutputRun],
 ) -> String {
-    prefix_of_with_mod_side(kind, mov_side, None, None, group, new_line, old_line, runs)
+    prefix_of_with_mod_side_and_width(
+        kind,
+        mov_side,
+        None,
+        None,
+        group,
+        new_line,
+        old_line,
+        runs,
+        DEFAULT_PAGER_LINE_NUM_WIDTH,
+    )
 }
 
-/// Generate plain 6-character prefix gutter with optional expanded mod side.
+/// Generate plain prefix gutter with optional expanded mod side and default
+/// pager width.
 #[allow(clippy::too_many_arguments)]
 pub fn prefix_of_with_mod_side(
     kind: RowKind,
@@ -102,40 +127,114 @@ pub fn prefix_of_with_mod_side(
     old_line: Option<u32>,
     runs: &[OutputRun],
 ) -> String {
-    let mut buf = [b' '; 4];
+    prefix_of_with_mod_side_and_width(
+        kind,
+        mov_side,
+        mod_side,
+        mod_glyph,
+        group,
+        new_line,
+        old_line,
+        runs,
+        DEFAULT_PAGER_LINE_NUM_WIDTH,
+    )
+}
+
+/// Generate plain prefix gutter with optional expanded mod side and specified
+/// line number width.
+#[allow(clippy::too_many_arguments)]
+pub fn prefix_of_with_mod_side_and_width(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    group: Option<RowGroup>,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    runs: &[OutputRun],
+    line_num_width: usize,
+) -> String {
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    if line_num_width == 0 {
+        if is_common_only_row(kind, runs) {
+            return "  ".to_string();
+        }
+        if let Some(side) = mod_side {
+            let glyph_str = mod_glyph
+                .unwrap_or_else(|| ModGlyph::for_side(side))
+                .as_str();
+            return match side {
+                ModSide::Del => format!("{glyph_str}-"),
+                ModSide::Add => format!("{glyph_str}+"),
+            };
+        }
+        return match group {
+            Some(RowGroup::Anchor) if kind == RowKind::Mod => "~ ".to_string(),
+            Some(RowGroup::Aux { .. }) => match kind {
+                RowKind::Add => "~+".to_string(),
+                RowKind::Del => "~-".to_string(),
+                _ => "  ".to_string(),
+            },
+            _ => match kind {
+                RowKind::Add => " +".to_string(),
+                RowKind::Del => " -".to_string(),
+                RowKind::Mod => " ~".to_string(),
+                RowKind::Mov => {
+                    if mov_side == Some(MovSide::Src) {
+                        "≈-".to_string()
+                    } else {
+                        "≈+".to_string()
+                    }
+                }
+                _ => "  ".to_string(),
+            },
+        };
+    }
     if is_common_only_row(kind, runs) {
-        return format!("{}  ", pad4_bytes(new_line, &mut buf));
+        return format!("{}  ", format_line_num(new_line, line_num_width, &mut buf));
     }
     if let Some(side) = mod_side {
         let glyph_str = mod_glyph
             .unwrap_or_else(|| ModGlyph::for_side(side))
             .as_str();
         return match side {
-            ModSide::Del => format!("{}{glyph_str}-", pad4_bytes(old_line, &mut buf)),
-            ModSide::Add => format!("{}{glyph_str}+", pad4_bytes(new_line, &mut buf)),
+            ModSide::Del => format!(
+                "{}{glyph_str}-",
+                format_line_num(old_line, line_num_width, &mut buf)
+            ),
+            ModSide::Add => format!(
+                "{}{glyph_str}+",
+                format_line_num(new_line, line_num_width, &mut buf)
+            ),
         };
     }
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-            format!("{}~ ", pad4_bytes(new_line, &mut buf))
+            format!("{}~ ", format_line_num(new_line, line_num_width, &mut buf))
         }
         Some(RowGroup::Aux { .. }) => match kind {
-            RowKind::Add => format!("{}~+", pad4_bytes(new_line, &mut buf)),
-            RowKind::Del => format!("{}~-", pad4_bytes(old_line, &mut buf)),
-            _ => format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf)),
+            RowKind::Add => format!("{}~+", format_line_num(new_line, line_num_width, &mut buf)),
+            RowKind::Del => format!("{}~-", format_line_num(old_line, line_num_width, &mut buf)),
+            _ => format!(
+                "{}  ",
+                format_line_num(new_line.or(old_line), line_num_width, &mut buf)
+            ),
         },
         _ => match kind {
-            RowKind::Add => format!("{} +", pad4_bytes(new_line, &mut buf)),
-            RowKind::Del => format!("{} -", pad4_bytes(old_line, &mut buf)),
-            RowKind::Mod => format!("{} ~", pad4_bytes(new_line, &mut buf)),
+            RowKind::Add => format!("{} +", format_line_num(new_line, line_num_width, &mut buf)),
+            RowKind::Del => format!("{} -", format_line_num(old_line, line_num_width, &mut buf)),
+            RowKind::Mod => format!("{} ~", format_line_num(new_line, line_num_width, &mut buf)),
             RowKind::Mov => {
                 if mov_side == Some(MovSide::Src) {
-                    format!("{}≈-", pad4_bytes(old_line, &mut buf))
+                    format!("{}≈-", format_line_num(old_line, line_num_width, &mut buf))
                 } else {
-                    format!("{}≈+", pad4_bytes(new_line, &mut buf))
+                    format!("{}≈+", format_line_num(new_line, line_num_width, &mut buf))
                 }
             }
-            _ => format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf)),
+            _ => format!(
+                "{}  ",
+                format_line_num(new_line.or(old_line), line_num_width, &mut buf)
+            ),
         },
     }
 }
@@ -159,7 +258,7 @@ pub fn styled_prefix_spans_with_width(
     theme: &DiffuseTheme,
     line_num_width: usize,
 ) -> Vec<StyledSpan> {
-    let mut buf = [b' '; 16];
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
     let palette = theme.palette;
     let ctx_num = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
         .gutter
@@ -319,7 +418,7 @@ pub fn styled_prefix_spans_with_width(
     }
 }
 
-/// Generate the span-native 6-column coordinate gutter: the same
+/// Generate the span-native coordinate gutter: the same
 /// gutter (line number plus kind glyph) as ordered [`StyledSpan`]s riding on
 /// `bg`, branching identically over groups, kinds, and move sides so the
 /// ANSI and Ratatui paths cannot drift apart.
@@ -338,16 +437,25 @@ pub fn styled_prefix_spans(
     theme: &DiffuseTheme,
 ) -> Vec<StyledSpan> {
     styled_prefix_spans_with_width(
-        kind, mov_side, mod_side, mod_glyph, group, new_line, old_line, runs, in_hunk, bg, theme, 4,
+        kind,
+        mov_side,
+        mod_side,
+        mod_glyph,
+        group,
+        new_line,
+        old_line,
+        runs,
+        in_hunk,
+        bg,
+        theme,
+        DEFAULT_PAGER_LINE_NUM_WIDTH,
     )
 }
 
-/// Generate the span-native twin of the wrapped-row continuation prefix:
-/// six spaces in the dim gutter color riding on `bg`, matching the inline
-/// `"\\x1b[38;5;242m      \\x1b[39m"` continuation prefix the ANSI viewport
-/// emits for wrapped segments.
+/// Generate the span-native twin of the wrapped-row continuation prefix
+/// using default pager line number width.
 pub fn continuation_prefix_spans(bg: Option<Color>) -> Vec<StyledSpan> {
-    continuation_prefix_spans_with_width(bg, 4)
+    continuation_prefix_spans_with_width(bg, DEFAULT_PAGER_LINE_NUM_WIDTH)
 }
 
 /// Continuation prefix spans for an arbitrary line number width.
@@ -355,23 +463,33 @@ pub fn continuation_prefix_spans_with_width(
     bg: Option<Color>,
     line_num_width: usize,
 ) -> Vec<StyledSpan> {
-    let pad = match line_num_width {
-        0 => "  ",
-        1 => "   ",
-        2 => "    ",
-        3 => "     ",
-        4 => "      ",
-        5 => "       ",
-        6 => "        ",
-        7 => "         ",
-        8 => "          ",
-        _ => {
-            return vec![StyledSpan::styled(
-                " ".repeat(line_num_width + 2),
-                Some(Color::Fixed(242)),
-                bg,
-            )];
-        }
+    const PADS: [&str; 17] = [
+        "  ",
+        "   ",
+        "    ",
+        "     ",
+        "      ",
+        "       ",
+        "        ",
+        "         ",
+        "          ",
+        "           ",
+        "            ",
+        "             ",
+        "              ",
+        "               ",
+        "                ",
+        "                 ",
+        "                  ",
+    ];
+    let pad = if line_num_width <= MAX_LINE_NUM_WIDTH {
+        PADS[line_num_width]
+    } else {
+        return vec![StyledSpan::styled(
+            " ".repeat(line_num_width + 2),
+            Some(Color::Fixed(242)),
+            bg,
+        )];
     };
     vec![StyledSpan::styled(pad, Some(Color::Fixed(242)), bg)]
 }
@@ -402,22 +520,33 @@ pub fn continuation_prefix_spans_with_mod_side_and_width(
                 StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
             ]
         } else {
-            let pad = match line_num_width {
-                1 => " ",
-                2 => "  ",
-                3 => "   ",
-                4 => "    ",
-                5 => "     ",
-                6 => "      ",
-                7 => "       ",
-                8 => "        ",
-                _ => {
-                    return vec![
-                        StyledSpan::styled(" ".repeat(line_num_width), Some(Color::Fixed(242)), bg),
-                        r#mod.icon.span("│", bg),
-                        StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
-                    ];
-                }
+            const PADS: [&str; 17] = [
+                "",
+                " ",
+                "  ",
+                "   ",
+                "    ",
+                "     ",
+                "      ",
+                "       ",
+                "        ",
+                "         ",
+                "          ",
+                "           ",
+                "            ",
+                "             ",
+                "              ",
+                "               ",
+                "                ",
+            ];
+            let pad = if line_num_width <= MAX_LINE_NUM_WIDTH {
+                PADS[line_num_width]
+            } else {
+                return vec![
+                    StyledSpan::styled(" ".repeat(line_num_width), Some(Color::Fixed(242)), bg),
+                    r#mod.icon.span("│", bg),
+                    StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
+                ];
             };
             vec![
                 StyledSpan::styled(pad, Some(Color::Fixed(242)), bg),
@@ -436,7 +565,13 @@ pub fn continuation_prefix_spans_with_mod_side(
     theme: &DiffuseTheme,
     bg: Option<Color>,
 ) -> Vec<StyledSpan> {
-    continuation_prefix_spans_with_mod_side_and_width(mod_side, mod_glyph, theme, bg, 4)
+    continuation_prefix_spans_with_mod_side_and_width(
+        mod_side,
+        mod_glyph,
+        theme,
+        bg,
+        DEFAULT_PAGER_LINE_NUM_WIDTH,
+    )
 }
 
 /// Continuation prefix plain text taking `ModSide`, `ModGlyph`, and
@@ -446,7 +581,7 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
     mod_glyph: Option<ModGlyph>,
     line_num_width: usize,
 ) -> &'static str {
-    const BOX_PREFIXES: [&str; 9] = [
+    const BOX_PREFIXES: [&str; 17] = [
         "│ ",
         " │ ",
         "  │ ",
@@ -456,8 +591,16 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
         "      │ ",
         "       │ ",
         "        │ ",
+        "         │ ",
+        "          │ ",
+        "           │ ",
+        "            │ ",
+        "             │ ",
+        "              │ ",
+        "               │ ",
+        "                │ ",
     ];
-    const PLAIN_PREFIXES: [&str; 9] = [
+    const PLAIN_PREFIXES: [&str; 17] = [
         "  ",
         "   ",
         "    ",
@@ -467,9 +610,17 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
         "        ",
         "         ",
         "          ",
+        "           ",
+        "            ",
+        "             ",
+        "              ",
+        "               ",
+        "                ",
+        "                 ",
+        "                  ",
     ];
     let extends_box = mod_row_extends_box(mod_side, mod_glyph);
-    let idx = line_num_width.min(8);
+    let idx = line_num_width.min(MAX_LINE_NUM_WIDTH);
     if extends_box {
         BOX_PREFIXES[idx]
     } else {
@@ -482,7 +633,11 @@ pub fn continuation_prefix_plain_with_mod_side(
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
 ) -> &'static str {
-    continuation_prefix_plain_with_mod_side_and_width(mod_side, mod_glyph, 4)
+    continuation_prefix_plain_with_mod_side_and_width(
+        mod_side,
+        mod_glyph,
+        DEFAULT_PAGER_LINE_NUM_WIDTH,
+    )
 }
 
 /// Write gutter prefix spans with the exact ANSI gutter spelling: fused

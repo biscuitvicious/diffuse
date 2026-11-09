@@ -411,6 +411,22 @@ Overrides the DIFFUSE_THEME environment variable."
     )]
     pub theme: Option<String>,
 
+    /// Gutter line number column width (0..=16, 0 hides line numbers).
+    #[arg(
+        long,
+        value_name = "WIDTH",
+        value_parser = parse_line_number_width,
+        global = true,
+        help_heading = "Theme & Styling",
+        help = "Gutter line number column width (0..=16, 0 hides line numbers)",
+        long_help = "Gutter line number column width (0..=16). \
+0 hides line numbers completely. \
+Values 1..=16 right-align line numbers within the width, or truncate with a trailing \
+ellipsis (…) if the number exceeds the width. In pager mode, defaults to 5. In TUI mode, \
+defaults to adaptive dynamic width based on loaded files."
+    )]
+    pub line_number_width: Option<usize>,
+
     #[command(subcommand)]
     pub command: Option<SubCommand>,
 
@@ -1118,4 +1134,19 @@ Resolved notes are hidden from active views by default and summarized in footer 
         )]
         status: String,
     },
+}
+
+/// Parse and validate `--line-number-width` value in `0..=MAX_LINE_NUM_WIDTH`.
+pub fn parse_line_number_width(s: &str) -> Result<usize, String> {
+    let val: usize = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a valid unsigned integer"))?;
+    if val <= diffuse::render::MAX_LINE_NUM_WIDTH {
+        Ok(val)
+    } else {
+        Err(format!(
+            "{val} is not in 0..={}",
+            diffuse::render::MAX_LINE_NUM_WIDTH
+        ))
+    }
 }

@@ -64,7 +64,14 @@ pub fn render_pipeline_output(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
 ) -> String {
-    render_pipeline_output_with_options(output, theme, styled_prefixes, DEFAULT_CALLOUT_WIDTH, None)
+    render_pipeline_output_with_options(
+        output,
+        theme,
+        styled_prefixes,
+        DEFAULT_CALLOUT_WIDTH,
+        None,
+        None,
+    )
 }
 
 /// Render complete pipeline output to terminal ANSI strings with a custom note
@@ -75,17 +82,18 @@ pub fn render_pipeline_output_with_width(
     styled_prefixes: bool,
     width: usize,
 ) -> String {
-    render_pipeline_output_with_options(output, theme, styled_prefixes, width, None)
+    render_pipeline_output_with_options(output, theme, styled_prefixes, width, None, None)
 }
 
 /// Render complete pipeline output to terminal ANSI strings with options
-/// including modification row expansion.
+/// including modification row expansion and line number width.
 pub fn render_pipeline_output_with_options(
     output: &PipelineOutput,
     theme: &DiffuseTheme,
     styled_prefixes: bool,
     width: usize,
     expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
 ) -> String {
     let total_rows: usize = output
         .files
@@ -112,6 +120,7 @@ pub fn render_pipeline_output_with_options(
             styled_prefixes,
             width,
             expand_mods,
+            line_num_width,
         ));
     }
 
@@ -137,6 +146,7 @@ pub fn render_file_diff(
         styled_prefixes,
         DEFAULT_CALLOUT_WIDTH,
         None,
+        None,
     )
 }
 
@@ -149,11 +159,11 @@ pub fn render_file_diff_with_width(
     styled_prefixes: bool,
     width: usize,
 ) -> String {
-    render_file_diff_with_options(file, badge, theme, styled_prefixes, width, None)
+    render_file_diff_with_options(file, badge, theme, styled_prefixes, width, None, None)
 }
 
 /// Render a single file's header bar and colored hunks with custom options
-/// including modification row expansion.
+/// including modification row expansion and line number width.
 pub fn render_file_diff_with_options(
     file: &OutputFile,
     badge: Option<Badge>,
@@ -161,7 +171,9 @@ pub fn render_file_diff_with_options(
     styled_prefixes: bool,
     width: usize,
     expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
 ) -> String {
+    let ln_w = line_num_width.unwrap_or(crate::row::DEFAULT_PAGER_LINE_NUM_WIDTH);
     let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
@@ -216,6 +228,7 @@ pub fn render_file_diff_with_options(
                         styled_prefixes,
                         Some(ModSide::Del),
                         Some(glyph),
+                        ln_w,
                     );
                 }
                 for (idx, row) in rows[i..j].iter().enumerate() {
@@ -228,6 +241,7 @@ pub fn render_file_diff_with_options(
                         styled_prefixes,
                         Some(ModSide::Add),
                         Some(glyph),
+                        ln_w,
                     );
                 }
                 for row_idx in (start_idx + i)..(start_idx + j) {
@@ -239,7 +253,7 @@ pub fn render_file_diff_with_options(
                 }
                 i = j;
             } else {
-                render_row_line(out, r, theme, width, styled_prefixes, None, None);
+                render_row_line(out, r, theme, width, styled_prefixes, None, None, ln_w);
                 if let Some(notes) = row_notes.get(&(start_idx + i)) {
                     for note in notes {
                         emit_note(note, out);

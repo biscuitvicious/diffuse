@@ -325,6 +325,7 @@ fn dispatch_path_diff(
             show_source,
             false,
             args.resolved_expand_mods(true),
+            args.line_number_width,
         )?;
         return Ok(());
     }
@@ -433,6 +434,7 @@ fn dispatch_diff_stream(
             show_source,
             false,
             args.resolved_expand_mods(true),
+            args.line_number_width,
         )?;
         return Ok(());
     }
@@ -537,6 +539,7 @@ fn dispatch_git_review(
             show_source,
             !args.no_watch,
             args.resolved_expand_mods(true),
+            args.line_number_width,
         )?;
         return Ok(());
     }
@@ -643,6 +646,7 @@ fn dispatch_git_review(
                 true,
                 term_width,
                 expand_mods,
+                args.line_number_width,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
@@ -775,6 +779,7 @@ fn consume_and_render(
                 true,
                 term_width,
                 expand_mods,
+                args.line_number_width,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();

@@ -4,8 +4,9 @@ use crate::{
     ansi::{SGR_RESET, strip_ansi},
     core::{ModGlyph, ModSide, wire::OutputRow},
     row::{
-        continuation_prefix_plain_with_mod_side, continuation_prefix_spans_with_mod_side,
-        display_text, expand_tabs, prefix_of_with_mod_side, styled_prefix_spans, write_row_segment,
+        continuation_prefix_plain_with_mod_side_and_width,
+        continuation_prefix_spans_with_mod_side_and_width, display_text, expand_tabs,
+        prefix_of_with_mod_side_and_width, styled_prefix_spans_with_width, write_row_segment,
     },
     span::StyledSpan,
     theme::DiffuseTheme,
@@ -14,6 +15,7 @@ use crate::{
 
 /// Render one diff row (gutter prefix, run coloring, wrapping, padding)
 /// exactly as `render_file_diff` does, appending complete lines to `out`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_row_line(
     out: &mut String,
     r: &OutputRow,
@@ -22,24 +24,53 @@ pub(crate) fn render_row_line(
     styled_prefixes: bool,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
+    line_num_width: usize,
 ) {
     let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
         (
-            styled_prefix_spans(
-                r.kind, r.mov_side, mod_side, mod_glyph, r.group, r.new_line, r.old_line, &r.runs,
-                false, None, theme,
+            styled_prefix_spans_with_width(
+                r.kind,
+                r.mov_side,
+                mod_side,
+                mod_glyph,
+                r.group,
+                r.new_line,
+                r.old_line,
+                &r.runs,
+                false,
+                None,
+                theme,
+                line_num_width,
             ),
-            continuation_prefix_spans_with_mod_side(mod_side, mod_glyph, theme, None),
+            continuation_prefix_spans_with_mod_side_and_width(
+                mod_side,
+                mod_glyph,
+                theme,
+                None,
+                line_num_width,
+            ),
         )
     } else {
-        let plain = prefix_of_with_mod_side(
-            r.kind, r.mov_side, mod_side, mod_glyph, r.group, r.new_line, r.old_line, &r.runs,
+        let plain = prefix_of_with_mod_side_and_width(
+            r.kind,
+            r.mov_side,
+            mod_side,
+            mod_glyph,
+            r.group,
+            r.new_line,
+            r.old_line,
+            &r.runs,
+            line_num_width,
         );
         (
             vec![StyledSpan::plain(format!("{plain} "))],
-            vec![StyledSpan::plain(continuation_prefix_plain_with_mod_side(
-                mod_side, mod_glyph,
-            ))],
+            vec![StyledSpan::plain(
+                continuation_prefix_plain_with_mod_side_and_width(
+                    mod_side,
+                    mod_glyph,
+                    line_num_width,
+                ),
+            )],
         )
     };
 
@@ -76,7 +107,12 @@ pub(crate) fn render_row_line(
         return;
     }
 
-    let text_cols = width.saturating_sub(6).max(1);
+    let gutter_w = if line_num_width == 0 {
+        2
+    } else {
+        line_num_width + 2
+    };
+    let text_cols = width.saturating_sub(gutter_w).max(1);
     let disp = if mod_side.is_some() {
         text.clone()
     } else {
@@ -174,7 +210,16 @@ pub fn render_source_rows(
 ) -> Vec<String> {
     let mut out = String::with_capacity(rows.len() * 128);
     for r in rows {
-        render_row_line(&mut out, r, theme, width, styled_prefixes, None, None);
+        render_row_line(
+            &mut out,
+            r,
+            theme,
+            width,
+            styled_prefixes,
+            None,
+            None,
+            crate::row::DEFAULT_PAGER_LINE_NUM_WIDTH,
+        );
     }
     out.trim_end_matches('\n')
         .split('\n')

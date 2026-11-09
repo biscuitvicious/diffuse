@@ -5958,3 +5958,73 @@ fn test_content_width_less_than_or_equal_to_gutter_width_fails_with_informative_
     // Call render_diff_viewport_lines with width 5 (which is <= gutter_width 6)
     let _ = state.render_diff_viewport_lines(5, 10, 10);
 }
+
+#[test]
+fn test_explicit_line_num_width_override() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1000,2 +1000,2 @@
+-old 1
+-old 2
++new 1
++new 2
+"#;
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Default adaptive: max line is 1001, width is 4, gutter is 6
+    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.gutter_width(), 6);
+
+    // Override with 0 (hide line numbers entirely)
+    state = state.with_line_num_width(Some(0));
+    assert_eq!(state.line_num_width, 0);
+    assert_eq!(state.gutter_width(), 2);
+
+    let (lines, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
+    // Find a rendered row (e.g. line with "old 1")
+    let del_line = lines
+        .iter()
+        .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
+        .expect("must find del row");
+    // With line_num_width 0, gutter has 2 columns: a space span and a '-' span (no
+    // line number)
+    assert_eq!(del_line.spans[0].content, " ");
+    assert_eq!(del_line.spans[1].content, "-");
+
+    // Override with 2 (numbers >= 100 truncate with ellipsis)
+    state = state.with_line_num_width(Some(2));
+    assert_eq!(state.line_num_width, 2);
+    assert_eq!(state.gutter_width(), 4);
+
+    let (lines_w2, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
+    let del_line_w2 = lines_w2
+        .iter()
+        .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
+        .expect("must find del row");
+    // 1000 truncated to width 2 becomes "1…" followed by " " and "-"
+    assert_eq!(del_line_w2.spans[0].content, "1…");
+    assert_eq!(del_line_w2.spans[1].content, " ");
+    assert_eq!(del_line_w2.spans[2].content, "-");
+
+    // Override with 16
+    state = state.with_line_num_width(Some(16));
+    assert_eq!(state.line_num_width, 16);
+    assert_eq!(state.gutter_width(), 18);
+
+    // Reset override to None -> restores adaptive dynamic calculation
+    state = state.with_line_num_width(None);
+    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.gutter_width(), 6);
+}

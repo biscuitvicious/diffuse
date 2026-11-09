@@ -63,8 +63,9 @@ fn test_render_with_expand_mods_options() {
     let theme = default_theme();
 
     // Default / None / Some(false): collapsed mod line with ~
-    let collapsed_none = render_pipeline_output_with_options(&out, &theme, false, 80, None);
-    let collapsed_false = render_pipeline_output_with_options(&out, &theme, false, 80, Some(false));
+    let collapsed_none = render_pipeline_output_with_options(&out, &theme, false, 80, None, None);
+    let collapsed_false =
+        render_pipeline_output_with_options(&out, &theme, false, 80, Some(false), None);
     assert_eq!(collapsed_none, collapsed_false);
     let stripped_collapsed = strip_ansi(&collapsed_none);
     assert!(
@@ -75,7 +76,7 @@ fn test_render_with_expand_mods_options() {
     assert!(!stripped_collapsed.contains("└+"));
 
     // Some(true): expanded mod lines with ┌- and └+
-    let expanded = render_pipeline_output_with_options(&out, &theme, false, 80, Some(true));
+    let expanded = render_pipeline_output_with_options(&out, &theme, false, 80, Some(true), None);
     let stripped_expanded = strip_ansi(&expanded);
     assert!(
         stripped_expanded.contains("┌-"),

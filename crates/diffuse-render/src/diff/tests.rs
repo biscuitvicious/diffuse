@@ -740,7 +740,7 @@ fn test_write_file_header_bar_without_width_ends_with_a_gap() {
 }
 
 #[test]
-fn test_render_file_diff_continuation_lines_indented_six_spaces() {
+fn test_render_file_diff_continuation_lines_indented_gutter_width() {
     let long_line = "abcdefghij".repeat(10); // 100 characters
     let diff = format!(
         "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line}\n+{long_line}\n"
@@ -788,26 +788,26 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
 
     let plain0 = strip_ansi(diff_lines[0]);
     assert_eq!(
-        &plain0[0..6],
-        "   1 ~",
+        &plain0[0..7],
+        "    1 ~",
         "segment 0 starts with line number gutter"
     );
     assert_eq!(
-        &plain0[6..16],
+        &plain0[7..17],
         "abcdefghij",
-        "segment 0 content starts at col 6"
+        "segment 0 content starts at col 7"
     );
 
     let plain1 = strip_ansi(diff_lines[1]);
     assert_eq!(
-        &plain1[0..6],
-        "      ",
-        "continuation segment must start with 6 spaces"
+        &plain1[0..7],
+        "       ",
+        "continuation segment must start with 7 spaces"
     );
     assert_eq!(
-        &plain1[6..16],
-        "efghijabcd",
-        "continuation content starts at col 6 with offset 74"
+        &plain1[7..17],
+        "defghijabc",
+        "continuation content starts at col 7 with offset 73"
     );
     assert!(
         diff_lines[1].starts_with("\x1b[48;"),
@@ -842,7 +842,7 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
     let width = 80;
     let theme = DiffuseTheme::dark();
     let rendered =
-        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true));
+        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true), None);
 
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
@@ -856,16 +856,16 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
         "expected 4 segments for expanded wrapped mod row: {diff_lines:#?}"
     );
 
-    // Del half segment 0: starts with "   1┌-"
+    // Del half segment 0: starts with "    1┌-"
     let plain_del0 = strip_ansi(diff_lines[0]);
-    let prefix_del0: String = plain_del0.chars().take(6).collect();
-    assert_eq!(prefix_del0, "   1┌-");
+    let prefix_del0: String = plain_del0.chars().take(7).collect();
+    assert_eq!(prefix_del0, "    1┌-");
 
-    // Del half segment 1 (continuation): must extend box glyph with "    │ "
+    // Del half segment 1 (continuation): must extend box glyph with "     │ "
     let plain_del1 = strip_ansi(diff_lines[1]);
-    let prefix_del1: String = plain_del1.chars().take(6).collect();
+    let prefix_del1: String = plain_del1.chars().take(7).collect();
     assert_eq!(
-        prefix_del1, "    │ ",
+        prefix_del1, "     │ ",
         "wrapped del continuation line must extend the box glyph with '│ '"
     );
     // Vertical line │ is colored in mod orange
@@ -878,18 +878,18 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
         "continuation vertical bar │ must use mod icon color"
     );
 
-    // Add half segment 0: starts with "   1└+"
+    // Add half segment 0: starts with "    1└+"
     let plain_add0 = strip_ansi(diff_lines[2]);
-    let prefix_add0: String = plain_add0.chars().take(6).collect();
-    assert_eq!(prefix_add0, "   1└+");
+    let prefix_add0: String = plain_add0.chars().take(7).collect();
+    assert_eq!(prefix_add0, "    1└+");
 
     // Add half segment 1 (continuation): terminates box, starts with standard "
     // "
     let plain_add1 = strip_ansi(diff_lines[3]);
-    let prefix_add1: String = plain_add1.chars().take(6).collect();
+    let prefix_add1: String = plain_add1.chars().take(7).collect();
     assert_eq!(
-        prefix_add1, "      ",
-        "wrapped add continuation line closes box and uses 6 spaces"
+        prefix_add1, "       ",
+        "wrapped add continuation line closes box and uses 7 spaces"
     );
 }
 
@@ -932,7 +932,7 @@ fn test_render_file_diff_adjacent_expanded_mods_merged_into_unified_cluster() {
     let width = 80;
     let theme = DiffuseTheme::dark();
     let rendered =
-        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true));
+        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true), None);
 
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
@@ -948,20 +948,20 @@ fn test_render_file_diff_adjacent_expanded_mods_merged_into_unified_cluster() {
     );
 
     // 3 deletions first
-    let p0: String = strip_ansi(diff_lines[0]).chars().take(6).collect();
-    let p1: String = strip_ansi(diff_lines[1]).chars().take(6).collect();
-    let p2: String = strip_ansi(diff_lines[2]).chars().take(6).collect();
-    assert_eq!(p0, "   1┌-");
-    assert_eq!(p1, "   2│-");
-    assert_eq!(p2, "   3│-");
+    let p0: String = strip_ansi(diff_lines[0]).chars().take(7).collect();
+    let p1: String = strip_ansi(diff_lines[1]).chars().take(7).collect();
+    let p2: String = strip_ansi(diff_lines[2]).chars().take(7).collect();
+    assert_eq!(p0, "    1┌-");
+    assert_eq!(p1, "    2│-");
+    assert_eq!(p2, "    3│-");
 
     // 3 additions second
-    let p3: String = strip_ansi(diff_lines[3]).chars().take(6).collect();
-    let p4: String = strip_ansi(diff_lines[4]).chars().take(6).collect();
-    let p5: String = strip_ansi(diff_lines[5]).chars().take(6).collect();
-    assert_eq!(p3, "   1│+");
-    assert_eq!(p4, "   2│+");
-    assert_eq!(p5, "   3└+");
+    let p3: String = strip_ansi(diff_lines[3]).chars().take(7).collect();
+    let p4: String = strip_ansi(diff_lines[4]).chars().take(7).collect();
+    let p5: String = strip_ansi(diff_lines[5]).chars().take(7).collect();
+    assert_eq!(p3, "    1│+");
+    assert_eq!(p4, "    2│+");
+    assert_eq!(p5, "    3└+");
 
     // Verify text correspondence
     assert!(diff_lines[0].contains("val_one"));
@@ -1007,11 +1007,14 @@ fn test_render_source_rows_mirrors_grid_rendering() {
     let styled = render_source_rows(&rows, &theme, 0, true);
     assert_eq!(styled.len(), 2, "one rendered line per row");
     let plain_ctx = strip_ansi(&styled[0]);
-    assert!(plain_ctx.starts_with("  10  "), "ctx gutter: {plain_ctx:?}");
+    assert!(
+        plain_ctx.starts_with("   10  "),
+        "ctx gutter: {plain_ctx:?}"
+    );
     assert!(plain_ctx.contains("unchanged line"));
     let plain_add = strip_ansi(&styled[1]);
     assert!(
-        plain_add.starts_with("  11 +"),
+        plain_add.starts_with("   11 +"),
         "add row renders its number and sign: {plain_add:?}"
     );
     assert!(plain_add.contains("added line"));
@@ -1020,7 +1023,7 @@ fn test_render_source_rows_mirrors_grid_rendering() {
     // Plain prefixes: bare sign gutters.
     let plain = render_source_rows(&rows, &theme, 0, false);
     let plain0 = strip_ansi(&plain[0]);
-    assert!(plain0.starts_with("  10 "), "plain ctx gutter: {plain0:?}");
+    assert!(plain0.starts_with("   10 "), "plain ctx gutter: {plain0:?}");
 }
 
 fn banner_test_file() -> OutputFile {

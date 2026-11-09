@@ -81,6 +81,9 @@ pub struct AppState {
     /// Adaptive line number width in columns (0 hides line numbers, >0 formats
     /// numbers right-aligned).
     pub line_num_width: usize,
+    /// Explicit line number width override (Some(0..=16)), or None for
+    /// adaptive dynamic width.
+    pub explicit_line_num_width: Option<usize>,
     /// Maximum line number across all currently uncollapsed files in the grid.
     pub max_line_num: u32,
     pub loading_files: HashSet<usize>,

@@ -138,6 +138,7 @@ fn first_frame_is_presented_promptly() {
         false,
         false,
         None,
+        None,
     )
     .expect("the loop returns after the session disconnects");
     let elapsed = started.elapsed();
@@ -194,6 +195,7 @@ fn empty_state_notice_waits_for_the_stream() {
         false,
         false,
         None,
+        None,
     )
     .expect("the loop returns after the session disconnects");
 
@@ -242,6 +244,7 @@ fn first_frame_precedes_streamed_files() {
         false,
         false,
         false,
+        None,
         None,
     )
     .expect("the loop returns after the session disconnects");
@@ -293,6 +296,7 @@ fn test_run_session_with_expand_mods_expands_mod_rows() {
         false,
         false,
         Some(true),
+        None,
     )
     .expect("the loop returns");
 

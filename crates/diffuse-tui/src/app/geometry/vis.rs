@@ -104,7 +104,9 @@ impl AppState {
             }
         }
         self.max_line_num = max_num;
-        let new_width = if max_num > 0 {
+        let new_width = if let Some(w) = self.explicit_line_num_width {
+            w.min(diffuse_render::MAX_LINE_NUM_WIDTH)
+        } else if max_num > 0 {
             (max_num.ilog10() as usize) + 1
         } else {
             0

@@ -201,6 +201,7 @@ pub fn run_tui(
     show_source: bool,
     watch: bool,
     expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
     run_session(
@@ -216,6 +217,7 @@ pub fn run_tui(
         show_source,
         watch,
         expand_mods,
+        line_num_width,
     )
 }
 
@@ -235,6 +237,7 @@ pub fn run_session<S: Session + ?Sized>(
     show_source: bool,
     watch: bool,
     expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
 ) -> io::Result<()> {
     let mut state = AppState::new(
         initial_output,
@@ -247,7 +250,8 @@ pub fn run_session<S: Session + ?Sized>(
         .with_expand_lines(expand_lines)
         .with_show_resolved_notes(show_resolved)
         .with_show_note_source(show_source)
-        .with_expand_mods(expand_mods);
+        .with_expand_mods(expand_mods)
+        .with_line_num_width(line_num_width);
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();
@@ -604,5 +608,6 @@ pub fn run_interactive_tui(
         false,
         false,
         Some(false),
+        None,
     )
 }
