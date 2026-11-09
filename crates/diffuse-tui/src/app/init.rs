@@ -92,6 +92,7 @@ impl AppState {
             file_finder: None,
             collapsed_files,
             expanded_mods: HashSet::new(),
+            expand_mods: Some(false),
             loading_files: HashSet::new(),
             on_demand_tx: None,
             on_demand_rx: None,
@@ -137,6 +138,14 @@ impl AppState {
 
     pub fn with_show_note_source(mut self, show_source: bool) -> Self {
         self.show_note_source = show_source;
+        self
+    }
+
+    pub fn with_expand_mods(mut self, expand_mods: Option<bool>) -> Self {
+        self.expand_mods = expand_mods;
+        if expand_mods == Some(true) {
+            self.expand_all_mods();
+        }
         self
     }
 

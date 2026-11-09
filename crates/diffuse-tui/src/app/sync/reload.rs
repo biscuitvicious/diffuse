@@ -28,6 +28,9 @@ impl AppState {
             return;
         }
 
+        if self.expand_mods == Some(true) {
+            self.populate_all_expanded_mods();
+        }
         self.rebuild_flat_preserving_snapshot(&snapshot);
     }
 
@@ -61,6 +64,9 @@ impl AppState {
             return;
         }
 
+        if self.expand_mods == Some(true) {
+            self.populate_all_expanded_mods();
+        }
         self.rebuild_flat_preserving_snapshot(&snapshot);
     }
 
@@ -79,6 +85,9 @@ impl AppState {
                 .binary_search_by(|f| f.path.cmp(&path))
                 .unwrap_or_else(|pos| pos);
             self.output.files.insert(insert_pos, file);
+        }
+        if self.expand_mods == Some(true) {
+            self.populate_all_expanded_mods();
         }
         self.rebuild_flat_preserving_snapshot(snapshot);
     }

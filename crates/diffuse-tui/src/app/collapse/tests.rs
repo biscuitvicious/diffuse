@@ -905,4 +905,114 @@ index 1111111..2222222 100644
     // Pressing 'e' again collapses all mod rows
     state.execute(TuiCommand::ToggleExpandAllMods);
     assert_eq!(state.expanded_mods.len(), 0);
+    assert_eq!(state.expand_mods, Some(false));
+}
+
+#[test]
+fn test_with_expand_mods_and_raw_diff_toggle_preserves_option_bool() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,5 +1,5 @@
+ fn main() {
+-    let a = 1;
++    let a = 10;
+     let mid = 2;
+-    let b = 3;
++    let b = 30;
+ }
+"#;
+    let mut state = AppState::new(
+        run_pipeline_full(diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true));
+
+    assert_eq!(state.expand_mods, Some(true));
+    assert_eq!(state.expanded_mods.len(), 2);
+
+    // Flat rows should contain expanded mod rows
+    let del_rows: Vec<_> = state
+        .flat
+        .iter()
+        .filter(|fr| fr.mod_side() == Some(diffuse_core::ModSide::Del))
+        .collect();
+    let add_rows: Vec<_> = state
+        .flat
+        .iter()
+        .filter(|fr| fr.mod_side() == Some(diffuse_core::ModSide::Add))
+        .collect();
+    assert_eq!(del_rows.len(), 2);
+    assert_eq!(add_rows.len(), 2);
+
+    // Toggle raw diff [R] -> switches to raw unified diff mode
+    state.toggle_raw_diff();
+    assert!(state.raw_diff);
+    // Crucial requirement: switching to raw diff does NOT reset expand_mods to
+    // None, but keeps Some(true)
+    assert_eq!(state.expand_mods, Some(true));
+
+    // Toggle back from raw diff [R] -> restores visual mode
+    state.toggle_raw_diff();
+    assert!(!state.raw_diff);
+    assert_eq!(state.expand_mods, Some(true));
+    assert_eq!(state.expanded_mods.len(), 2);
+
+    // Toggle expand all mods [e] -> collapses all
+    state.toggle_expand_all_mods();
+    assert_eq!(state.expand_mods, Some(false));
+    assert_eq!(state.expanded_mods.len(), 0);
+
+    // Toggle raw diff again from collapsed state
+    state.toggle_raw_diff();
+    assert!(state.raw_diff);
+    assert_eq!(state.expand_mods, Some(false));
+
+    // Toggle back from raw diff
+    state.toggle_raw_diff();
+    assert!(!state.raw_diff);
+    assert_eq!(state.expand_mods, Some(false));
+    assert_eq!(state.expanded_mods.len(), 0);
+}
+
+#[test]
+fn test_append_file_auto_expands_when_expand_mods_some_true() {
+    let diff1 = r#"diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let a = 1;
++    let a = 10;
+ }
+"#;
+    let diff2 = r#"diff --git a/b.rs b/b.rs
+--- a/b.rs
++++ b/b.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let b = 2;
++    let b = 20;
+ }
+"#;
+    let out1 = run_pipeline_full(diff1, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out1,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true));
+
+    assert_eq!(state.expanded_mods.len(), 1);
+
+    // Stream/append second file
+    let out2 = run_pipeline_full(diff2, None, None, PipelineOptions::default());
+    let file2 = out2.files.into_iter().next().unwrap();
+    state.append_file(file2);
+
+    // File 2's mod row should have been auto-expanded into expanded_mods
+    assert_eq!(state.expanded_mods.len(), 2);
 }

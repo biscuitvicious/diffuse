@@ -75,6 +75,9 @@ pub struct AppState {
     pub file_finder: Option<crate::finder::FileFinderState>,
     pub collapsed_files: HashSet<usize>,
     pub expanded_mods: HashSet<ModRowKey>,
+    /// Global modification row expansion state (Some(true) = expanded,
+    /// Some(false) = collapsed, None = mode ignores mod expansion).
+    pub expand_mods: Option<bool>,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,

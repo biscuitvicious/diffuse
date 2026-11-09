@@ -59,9 +59,28 @@ pub fn prefix_of(
     old_line: Option<u32>,
     runs: &[OutputRun],
 ) -> String {
+    prefix_of_with_mod_side(kind, mov_side, None, group, new_line, old_line, runs)
+}
+
+/// Generate plain 6-character prefix gutter with optional expanded mod side.
+pub fn prefix_of_with_mod_side(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    group: Option<RowGroup>,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    runs: &[OutputRun],
+) -> String {
     let mut buf = [b' '; 4];
     if is_common_only_row(kind, runs) {
         return format!("{}  ", pad4_bytes(new_line, &mut buf));
+    }
+    if let Some(side) = mod_side {
+        return match side {
+            ModSide::Del => format!("{}┌-", pad4_bytes(old_line, &mut buf)),
+            ModSide::Add => format!("{}└+", pad4_bytes(new_line, &mut buf)),
+        };
     }
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
@@ -224,6 +243,37 @@ pub fn styled_prefix_spans(
 /// emits for wrapped segments.
 pub fn continuation_prefix_spans(bg: Option<Color>) -> Vec<StyledSpan> {
     vec![StyledSpan::styled("      ", Some(Color::Fixed(242)), bg)]
+}
+
+/// Continuation prefix spans taking `ModSide` into account.
+/// Wrapped `ModSide::Del` lines extend the mod box glyph with `"    │ "`:
+/// 4 spaces for the line number column, vertical box glyph `│` in mod icon
+/// color, and 1 trailing space (total visual width: 6 columns).
+/// All other row types use standard 6 spaces.
+pub fn continuation_prefix_spans_with_mod_side(
+    mod_side: Option<ModSide>,
+    theme: &DiffuseTheme,
+    bg: Option<Color>,
+) -> Vec<StyledSpan> {
+    if mod_side == Some(ModSide::Del) {
+        let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+        vec![
+            StyledSpan::styled("    ", Some(Color::Fixed(242)), bg),
+            r#mod.icon.span("│", bg),
+            StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
+        ]
+    } else {
+        continuation_prefix_spans(bg)
+    }
+}
+
+/// Continuation prefix plain text taking `ModSide` into account.
+pub fn continuation_prefix_plain_with_mod_side(mod_side: Option<ModSide>) -> &'static str {
+    if mod_side == Some(ModSide::Del) {
+        "    │ "
+    } else {
+        "      "
+    }
 }
 
 /// Write gutter prefix spans with the exact ANSI gutter spelling: fused

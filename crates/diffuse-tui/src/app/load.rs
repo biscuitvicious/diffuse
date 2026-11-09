@@ -55,6 +55,9 @@ impl AppState {
             && let Some(rendered) = self.render_file_on_demand_sync(fi)
         {
             self.output.files[fi] = rendered;
+            if self.expand_mods == Some(true) {
+                self.populate_all_expanded_mods();
+            }
             if fi < self.hunk_meta.len() {
                 self.hunk_meta[fi] = Self::build_file_hunk_meta(&self.output.files[fi]);
             }
@@ -125,6 +128,9 @@ impl AppState {
         if fi < self.output.files.len() {
             self.output.files[fi] = rendered;
             self.sync_file_notes(fi);
+            if self.expand_mods == Some(true) {
+                self.populate_all_expanded_mods();
+            }
             if fi < self.hunk_meta.len() {
                 self.hunk_meta[fi] = Self::build_file_hunk_meta(&self.output.files[fi]);
             }

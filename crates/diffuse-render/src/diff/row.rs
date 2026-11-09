@@ -2,10 +2,10 @@
 
 use crate::{
     ansi::{SGR_RESET, strip_ansi},
-    core::wire::OutputRow,
+    core::{ModSide, wire::OutputRow},
     row::{
-        continuation_prefix_spans, display_text, expand_tabs, prefix_of, styled_prefix_spans,
-        write_row_segment,
+        continuation_prefix_plain_with_mod_side, continuation_prefix_spans_with_mod_side,
+        display_text, expand_tabs, prefix_of_with_mod_side, styled_prefix_spans, write_row_segment,
     },
     span::StyledSpan,
     theme::DiffuseTheme,
@@ -20,24 +20,33 @@ pub(crate) fn render_row_line(
     theme: &DiffuseTheme,
     width: usize,
     styled_prefixes: bool,
+    mod_side: Option<ModSide>,
 ) {
     let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
         (
             styled_prefix_spans(
-                r.kind, r.mov_side, None, r.group, r.new_line, r.old_line, &r.runs, false, None,
-                theme,
+                r.kind, r.mov_side, mod_side, r.group, r.new_line, r.old_line, &r.runs, false,
+                None, theme,
             ),
-            continuation_prefix_spans(None),
+            continuation_prefix_spans_with_mod_side(mod_side, theme, None),
         )
     } else {
-        let plain = prefix_of(r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs);
+        let plain = prefix_of_with_mod_side(
+            r.kind, r.mov_side, mod_side, r.group, r.new_line, r.old_line, &r.runs,
+        );
         (
             vec![StyledSpan::plain(format!("{plain} "))],
-            vec![StyledSpan::plain("      ")],
+            vec![StyledSpan::plain(continuation_prefix_plain_with_mod_side(
+                mod_side,
+            ))],
         )
     };
 
-    let text = r.text();
+    let text = match mod_side {
+        Some(ModSide::Del) => r.old_text(),
+        Some(ModSide::Add) => r.new_text(),
+        None => r.text(),
+    };
 
     if width == 0 {
         let mut row_buf = String::with_capacity(text.len() + 64);
@@ -47,7 +56,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
-            None,
+            mod_side,
             &r.runs,
             0,
             usize::MAX,
@@ -67,7 +76,11 @@ pub(crate) fn render_row_line(
     }
 
     let text_cols = width.saturating_sub(6).max(1);
-    let disp = display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true);
+    let disp = if mod_side.is_some() {
+        text.clone()
+    } else {
+        display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true)
+    };
     let exp = expand_tabs(&disp, 4);
     let len = display_width(&exp);
     let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
@@ -80,7 +93,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
-            None,
+            mod_side,
             &r.runs,
             0,
             usize::MAX,
@@ -122,7 +135,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
-            None,
+            mod_side,
             &r.runs,
             seg_start,
             seg_end,
@@ -160,7 +173,7 @@ pub fn render_source_rows(
 ) -> Vec<String> {
     let mut out = String::with_capacity(rows.len() * 128);
     for r in rows {
-        render_row_line(&mut out, r, theme, width, styled_prefixes);
+        render_row_line(&mut out, r, theme, width, styled_prefixes, None);
     }
     out.trim_end_matches('\n')
         .split('\n')

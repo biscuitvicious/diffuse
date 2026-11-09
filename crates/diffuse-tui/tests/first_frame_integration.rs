@@ -137,6 +137,7 @@ fn first_frame_is_presented_promptly() {
         false,
         false,
         false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
     let elapsed = started.elapsed();
@@ -192,6 +193,7 @@ fn empty_state_notice_waits_for_the_stream() {
         false,
         false,
         false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
 
@@ -240,6 +242,7 @@ fn first_frame_precedes_streamed_files() {
         false,
         false,
         false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
 
@@ -257,4 +260,44 @@ fn first_frame_precedes_streamed_files() {
         session.frames.iter().any(|frame| frame.contains("big.rs")),
         "the streamed file must appear once ingested"
     );
+}
+
+#[test]
+fn test_run_session_with_expand_mods_expands_mod_rows() {
+    let mut session = BufferedSession::new(1);
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    let (streaming_tx, streaming_rx) = mpsc::channel();
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
+    let file = run_pipeline_full(diff, None, None, PipelineOptions::default())
+        .files
+        .into_iter()
+        .next()
+        .unwrap();
+    streaming_tx.send(file).unwrap();
+    drop(streaming_tx);
+
+    run_session(
+        &mut session,
+        PipelineOutput {
+            files: Vec::new(),
+            branch: String::new(),
+            untracked_skipped: Vec::new(),
+        },
+        Some(streaming_rx),
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        Some(true),
+    )
+    .expect("the loop returns");
+
+    let last_frame = session.frames.last().unwrap();
+    eprintln!("LAST FRAME:\n{last_frame}");
+    assert!(last_frame.contains("┌-"));
+    assert!(last_frame.contains("└+"));
 }

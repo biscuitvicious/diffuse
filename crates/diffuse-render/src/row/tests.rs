@@ -4,7 +4,7 @@ use crate::{
     core::{
         merge::RunKind,
         parse::{RowGroup, RowKind, Spans},
-        wire::{MovSide, OutputRun},
+        wire::{ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
     theme::{Cursor, DiffKind, DiffuseTheme},
@@ -1849,4 +1849,92 @@ fn test_expanded_mod_prefix_spans_and_row_segment_spans() {
         .expect("new span");
     assert!(!new_span.strikethrough);
     assert_eq!(new_span.bg, s_mod.fill_bg);
+}
+
+#[test]
+fn test_mod_side_del_prefix_suppresses_italic_on_box_and_icon() {
+    let theme = DiffuseTheme::dark();
+    let runs = vec![
+        span_run(RunKind::Del, TokenColor::Default, None, "old"),
+        span_run(RunKind::Add, TokenColor::Default, None, "new"),
+    ];
+    let del_prefix = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        None,
+        Some(20),
+        Some(10),
+        &runs,
+        false,
+        None,
+        &theme,
+    );
+    let mut out = String::new();
+    write_row_segment(
+        &mut out,
+        "let old = 1;",
+        false,
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        &runs,
+        0,
+        usize::MAX,
+        &del_prefix,
+        false,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    )
+    .unwrap();
+
+    // Line number 10 is styled with italic (fused SGR starting with 3;)
+    assert!(
+        out.contains("\x1b[3;") || out.contains("\x1b[3m"),
+        "line number should have italic: {out:?}"
+    );
+    // After line number and before ┌, italic must be turned off with \x1b[23m
+    let num_pos = out.find("10").expect("line number 10");
+    let box_pos = out.find("┌").expect("box glyph ┌");
+    let italic_off_pos = out.find("\x1b[23m").expect("italic off code");
+    assert!(
+        num_pos < italic_off_pos && italic_off_pos < box_pos,
+        "italic must be turned off between line number and box glyph ┌: {out:?}"
+    );
+}
+
+#[test]
+fn test_continuation_prefix_with_mod_side() {
+    let theme = DiffuseTheme::dark();
+    let spans_del = continuation_prefix_spans_with_mod_side(Some(ModSide::Del), &theme, None);
+    assert_eq!(spans_del.len(), 3);
+    assert_eq!(spans_del[0].text, "    ");
+    assert_eq!(spans_del[1].text, "│");
+    assert_eq!(
+        spans_del[1].fg,
+        Some(theme.palette[Cursor::Rest][DiffKind::Mod].gutter.icon.color)
+    );
+    assert_eq!(spans_del[2].text, " ");
+
+    let spans_add = continuation_prefix_spans_with_mod_side(Some(ModSide::Add), &theme, None);
+    assert_eq!(spans_add.len(), 1);
+    assert_eq!(spans_add[0].text, "      ");
+
+    let spans_none = continuation_prefix_spans_with_mod_side(None, &theme, None);
+    assert_eq!(spans_none.len(), 1);
+    assert_eq!(spans_none[0].text, "      ");
+
+    assert_eq!(
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Del)),
+        "    │ "
+    );
+    assert_eq!(
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Add)),
+        "      "
+    );
+    assert_eq!(continuation_prefix_plain_with_mod_side(None), "      ");
 }

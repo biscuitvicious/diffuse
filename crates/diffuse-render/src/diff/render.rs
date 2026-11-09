@@ -6,6 +6,7 @@ use crate::{
     Badge,
     ansi::{SGR_RESET, optimize_ansi},
     core::{
+        ModSide,
         notes::{ReviewNote, note_anchors_in_rows},
         parse::RowKind,
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
@@ -63,7 +64,7 @@ pub fn render_pipeline_output(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
 ) -> String {
-    render_pipeline_output_with_width(output, theme, styled_prefixes, DEFAULT_CALLOUT_WIDTH)
+    render_pipeline_output_with_options(output, theme, styled_prefixes, DEFAULT_CALLOUT_WIDTH, None)
 }
 
 /// Render complete pipeline output to terminal ANSI strings with a custom note
@@ -73,6 +74,18 @@ pub fn render_pipeline_output_with_width(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
     width: usize,
+) -> String {
+    render_pipeline_output_with_options(output, theme, styled_prefixes, width, None)
+}
+
+/// Render complete pipeline output to terminal ANSI strings with options
+/// including modification row expansion.
+pub fn render_pipeline_output_with_options(
+    output: &PipelineOutput,
+    theme: &DiffuseTheme,
+    styled_prefixes: bool,
+    width: usize,
+    expand_mods: Option<bool>,
 ) -> String {
     let total_rows: usize = output
         .files
@@ -89,7 +102,7 @@ pub fn render_pipeline_output_with_width(
 
     let total = output.files.len();
     for (fi, f) in output.files.iter().enumerate() {
-        out.push_str(&render_file_diff_with_width(
+        out.push_str(&render_file_diff_with_options(
             f,
             Some(Badge {
                 idx: fi,
@@ -98,6 +111,7 @@ pub fn render_pipeline_output_with_width(
             theme,
             styled_prefixes,
             width,
+            expand_mods,
         ));
     }
 
@@ -116,7 +130,14 @@ pub fn render_file_diff(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
 ) -> String {
-    render_file_diff_with_width(file, badge, theme, styled_prefixes, DEFAULT_CALLOUT_WIDTH)
+    render_file_diff_with_options(
+        file,
+        badge,
+        theme,
+        styled_prefixes,
+        DEFAULT_CALLOUT_WIDTH,
+        None,
+    )
 }
 
 /// Render a single file's header bar and colored hunks with a custom note
@@ -127,6 +148,19 @@ pub fn render_file_diff_with_width(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
     width: usize,
+) -> String {
+    render_file_diff_with_options(file, badge, theme, styled_prefixes, width, None)
+}
+
+/// Render a single file's header bar and colored hunks with custom options
+/// including modification row expansion.
+pub fn render_file_diff_with_options(
+    file: &OutputFile,
+    badge: Option<Badge>,
+    theme: &DiffuseTheme,
+    styled_prefixes: bool,
+    width: usize,
+    expand_mods: Option<bool>,
 ) -> String {
     let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
@@ -162,6 +196,15 @@ pub fn render_file_diff_with_width(
         out.push('\n');
     };
 
+    let emit_row = |r: &OutputRow, out: &mut String| {
+        if expand_mods == Some(true) && r.kind == RowKind::Mod {
+            render_row_line(out, r, theme, width, styled_prefixes, Some(ModSide::Del));
+            render_row_line(out, r, theme, width, styled_prefixes, Some(ModSide::Add));
+        } else {
+            render_row_line(out, r, theme, width, styled_prefixes, None);
+        }
+    };
+
     for note in &banner_notes {
         emit_note(note, &mut out);
     }
@@ -173,7 +216,7 @@ pub fn render_file_diff_with_width(
             for _ in 0..h.rows.len() {
                 if row_idx < file.rows.len() {
                     let r = &file.rows[row_idx];
-                    render_row_line(&mut out, r, theme, width, styled_prefixes);
+                    emit_row(r, &mut out);
                     if let Some(notes) = row_notes.get(&row_idx) {
                         for note in notes {
                             emit_note(note, &mut out);
@@ -185,7 +228,7 @@ pub fn render_file_diff_with_width(
         }
         while row_idx < file.rows.len() {
             let r = &file.rows[row_idx];
-            render_row_line(&mut out, r, theme, width, styled_prefixes);
+            emit_row(r, &mut out);
             if let Some(notes) = row_notes.get(&row_idx) {
                 for note in notes {
                     emit_note(note, &mut out);
@@ -195,7 +238,7 @@ pub fn render_file_diff_with_width(
         }
     } else if !file.rows.is_empty() {
         for r in &file.rows {
-            render_row_line(&mut out, r, theme, width, styled_prefixes);
+            emit_row(r, &mut out);
             if let Some(notes) = row_notes.get(&row_idx) {
                 for note in notes {
                     emit_note(note, &mut out);
@@ -207,7 +250,7 @@ pub fn render_file_diff_with_width(
         for (hi, h) in file.hunks.iter().enumerate() {
             emit_hunk_divider(hi, h, &mut out);
             for r in &h.rows {
-                render_row_line(&mut out, r, theme, width, styled_prefixes);
+                emit_row(r, &mut out);
                 if let Some(notes) = row_notes.get(&row_idx) {
                     for note in notes {
                         emit_note(note, &mut out);

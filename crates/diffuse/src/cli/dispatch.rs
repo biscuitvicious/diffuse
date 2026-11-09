@@ -324,6 +324,7 @@ fn dispatch_path_diff(
             show_resolved,
             show_source,
             false,
+            args.resolved_expand_mods(true),
         )?;
         return Ok(());
     }
@@ -431,6 +432,7 @@ fn dispatch_diff_stream(
             show_resolved,
             show_source,
             false,
+            args.resolved_expand_mods(true),
         )?;
         return Ok(());
     }
@@ -534,6 +536,7 @@ fn dispatch_git_review(
             show_resolved,
             show_source,
             !args.no_watch,
+            args.resolved_expand_mods(true),
         )?;
         return Ok(());
     }
@@ -627,13 +630,20 @@ fn dispatch_git_review(
     } else {
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
+        let expand_mods = args.resolved_expand_mods(true);
         // Stream each file as it is parsed. The total is only known once the
         // stream ends, so the banner carries the position alone, exactly as
         // the TUI does before the total is known.
         for (idx, file) in consumer.enumerate() {
             let badge = Badge { idx, total: None };
-            let mut rendered =
-                render_file_diff_with_width(&file, Some(badge), &theme, true, term_width);
+            let mut rendered = render_file_diff_with_options(
+                &file,
+                Some(badge),
+                &theme,
+                true,
+                term_width,
+                expand_mods,
+            );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
             }
@@ -752,13 +762,20 @@ fn consume_and_render(
     } else {
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
+        let expand_mods = args.resolved_expand_mods(true);
         // Stream each file as it is parsed. The total is only known once the
         // stream ends, so the banner carries the position alone, exactly as
         // the TUI does before the total is known.
         for (idx, file) in consumer.enumerate() {
             let badge = Badge { idx, total: None };
-            let mut rendered =
-                render_file_diff_with_width(&file, Some(badge), &theme, true, term_width);
+            let mut rendered = render_file_diff_with_options(
+                &file,
+                Some(badge),
+                &theme,
+                true,
+                term_width,
+                expand_mods,
+            );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
             }

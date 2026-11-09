@@ -92,6 +92,73 @@ impl AppState {
         self.bump_content();
     }
 
+    /// Populate `self.expanded_mods` with keys for every modification row in
+    /// `self.output`.
+    pub fn populate_all_expanded_mods(&mut self) {
+        self.expanded_mods.clear();
+        for (fi, f) in self.output.files.iter().enumerate() {
+            if !f.rows.is_empty() {
+                for r in &f.rows {
+                    if r.kind == RowKind::Mod {
+                        self.expanded_mods.insert(ModRowKey::new(fi, r));
+                    }
+                }
+            } else {
+                for h in &f.hunks {
+                    for r in &h.rows {
+                        if r.kind == RowKind::Mod {
+                            self.expanded_mods.insert(ModRowKey::new(fi, r));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Expand all modification rows across all files.
+    pub fn expand_all_mods(&mut self) {
+        self.expand_mods = Some(true);
+        self.populate_all_expanded_mods();
+        let cur_item = self.flat.get(self.row_idx).copied();
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
+        if let Some(item) = cur_item {
+            if let Some(pos) = self.flat.iter().position(|r| {
+                r.file_idx == item.file_idx
+                    && r.diff_row_idx() == item.diff_row_idx()
+                    && (r.mod_side() == Some(ModSide::Del) || r.mod_side().is_none())
+            }) {
+                self.row_idx = pos;
+            } else if self.row_idx >= self.flat.len() {
+                self.row_idx = self.flat.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Collapse all modification rows across all files.
+    pub fn collapse_all_mods(&mut self) {
+        self.expand_mods = Some(false);
+        self.expanded_mods.clear();
+        let cur_item = self.flat.get(self.row_idx).copied();
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
+        if let Some(item) = cur_item {
+            if let Some(pos) = self.flat.iter().position(|r| {
+                r.file_idx == item.file_idx
+                    && r.diff_row_idx() == item.diff_row_idx()
+                    && !r.is_expanded_mod()
+            }) {
+                self.row_idx = pos;
+            } else if self.row_idx >= self.flat.len() {
+                self.row_idx = self.flat.len().saturating_sub(1);
+            }
+        }
+    }
+
     pub fn toggle_expand_all_mods(&mut self) {
         if self.raw_diff {
             return;
@@ -110,24 +177,10 @@ impl AppState {
 
         let expand_all = self.expanded_mods.len() < total_mods;
         if expand_all {
-            for (fi, f) in self.output.files.iter().enumerate() {
-                if !f.rows.is_empty() {
-                    for r in &f.rows {
-                        if r.kind == RowKind::Mod {
-                            self.expanded_mods.insert(ModRowKey::new(fi, r));
-                        }
-                    }
-                } else {
-                    for h in &f.hunks {
-                        for r in &h.rows {
-                            if r.kind == RowKind::Mod {
-                                self.expanded_mods.insert(ModRowKey::new(fi, r));
-                            }
-                        }
-                    }
-                }
-            }
+            self.expand_mods = Some(true);
+            self.populate_all_expanded_mods();
         } else {
+            self.expand_mods = Some(false);
             self.expanded_mods.clear();
         }
 

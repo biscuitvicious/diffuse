@@ -10,8 +10,8 @@ use crate::{
     app::{AppState, notes::NoteRowFocus},
     core::parse::RowKind,
     render::{
-        continuation_prefix_spans, raw_row_spans, row_segment_spans, slice_by_visual_width,
-        styled_prefix_spans,
+        continuation_prefix_spans_with_mod_side, raw_row_spans, row_segment_spans,
+        slice_by_visual_width, styled_prefix_spans,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
@@ -491,7 +491,7 @@ impl AppState {
                                     &self.theme,
                                 )
                             } else {
-                                continuation_prefix_spans(None)
+                                continuation_prefix_spans_with_mod_side(mod_side, &self.theme, None)
                             };
                             let rendered_row = if self.raw_diff {
                                 let text_cols = content_width.saturating_sub(6).max(1);

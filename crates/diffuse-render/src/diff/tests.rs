@@ -816,6 +816,84 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
 }
 
 #[test]
+fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
+    let long_line_old = "old_value_".repeat(10); // 100 characters
+    let long_line_new = "new_value_".repeat(10); // 100 characters
+    let diff = format!(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line_old}\n+{long_line_new}\n"
+    );
+    let new_content = Some(
+        [("a.txt".to_string(), format!("{long_line_new}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let old_content = Some(
+        [("a.txt".to_string(), format!("{long_line_old}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        &diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+
+    let width = 80;
+    let theme = DiffuseTheme::dark();
+    let rendered =
+        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true));
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    let diff_lines: Vec<&str> = lines
+        .into_iter()
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
+        .collect();
+
+    assert_eq!(
+        diff_lines.len(),
+        4,
+        "expected 4 segments for expanded wrapped mod row: {diff_lines:#?}"
+    );
+
+    // Del half segment 0: starts with "   1┌-"
+    let plain_del0 = strip_ansi(diff_lines[0]);
+    let prefix_del0: String = plain_del0.chars().take(6).collect();
+    assert_eq!(prefix_del0, "   1┌-");
+
+    // Del half segment 1 (continuation): must extend box glyph with "    │ "
+    let plain_del1 = strip_ansi(diff_lines[1]);
+    let prefix_del1: String = plain_del1.chars().take(6).collect();
+    assert_eq!(
+        prefix_del1, "    │ ",
+        "wrapped del continuation line must extend the box glyph with '│ '"
+    );
+    // Vertical line │ is colored in mod orange
+    let mod_icon_color = theme.palette[crate::theme::Cursor::Rest][crate::theme::DiffKind::Mod]
+        .gutter
+        .icon
+        .color;
+    assert!(
+        diff_lines[1].contains(&mod_icon_color.fg_code()),
+        "continuation vertical bar │ must use mod icon color"
+    );
+
+    // Add half segment 0: starts with "   1└+"
+    let plain_add0 = strip_ansi(diff_lines[2]);
+    let prefix_add0: String = plain_add0.chars().take(6).collect();
+    assert_eq!(prefix_add0, "   1└+");
+
+    // Add half segment 1 (continuation): terminates box, starts with standard "
+    // "
+    let plain_add1 = strip_ansi(diff_lines[3]);
+    let prefix_add1: String = plain_add1.chars().take(6).collect();
+    assert_eq!(
+        prefix_add1, "      ",
+        "wrapped add continuation line closes box and uses 6 spaces"
+    );
+}
+
+#[test]
 fn test_render_source_rows_mirrors_grid_rendering() {
     let theme = DiffuseTheme::dark();
     let rows = vec![

@@ -276,6 +276,32 @@ subword token alignment, relocation detection, or phrase anchoring."
     )]
     pub raw: bool,
 
+    /// Expand modification rows into separate deletion and addition lines
+    /// (pager and TUI only).
+    #[arg(
+        long = "expand-mods",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "no_expand_mods",
+        global = true,
+        help_heading = "Execution Modes",
+        help = "Expand modification rows into separate deletion and addition lines (pager and TUI only)",
+        long_help = "Expand modification rows into separate deletion ('┌-') and addition ('└+') \
+lines. Relevant only for pager and TUI modes; ignored in raw, markdown, and JSON modes."
+    )]
+    pub expand_mods: bool,
+
+    /// Keep modification rows collapsed into single visual lines (pager and TUI
+    /// only).
+    #[arg(
+        long = "no-expand-mods",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "expand_mods",
+        global = true,
+        help_heading = "Execution Modes",
+        help = "Keep modification rows collapsed into single visual lines (pager and TUI only)"
+    )]
+    pub no_expand_mods: bool,
+
     /// View staged (cached) index changes against HEAD.
     #[arg(
         short = 's',
@@ -390,6 +416,25 @@ Overrides the DIFFUSE_THEME environment variable."
 
     #[command(flatten)]
     pub revision: RevisionArgs,
+}
+
+impl Args {
+    /// Resolve whether modification rows should be expanded.
+    ///
+    /// Relevant only for pager and TUI execution modes; all remaining modes
+    /// (`--raw`, `--markdown`, `--json`, `--jsonl`) ignore the flag and return
+    /// `None`.
+    pub fn resolved_expand_mods(&self, is_pager_or_tui: bool) -> Option<bool> {
+        if !is_pager_or_tui {
+            None
+        } else if self.no_expand_mods {
+            Some(false)
+        } else if self.expand_mods {
+            Some(true)
+        } else {
+            Some(false)
+        }
+    }
 }
 
 /// Reusable git diff arguments (revisions, commit ranges, or file pathspecs).

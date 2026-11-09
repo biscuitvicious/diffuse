@@ -809,3 +809,58 @@ fn test_relocate_span_interleaved_rows() {
     assert_eq!(single.len(), 1);
     assert_eq!(single[0].new_line, Some(10));
 }
+
+#[test]
+fn test_cli_expand_mods_flag_resolution() {
+    // 1. Default (no flag) in pager/TUI mode -> Some(false); non-pager/TUI -> None
+    let args = Args::try_parse_from(["diffuse"]).expect("parse default");
+    assert!(!args.expand_mods);
+    assert!(!args.no_expand_mods);
+    assert_eq!(args.resolved_expand_mods(true), Some(false));
+    assert_eq!(args.resolved_expand_mods(false), None);
+
+    // 2. --expand-mods flag in pager/TUI mode -> Some(true); non-pager/TUI -> None
+    let args = Args::try_parse_from(["diffuse", "--expand-mods"]).expect("parse expand-mods");
+    assert!(args.expand_mods);
+    assert!(!args.no_expand_mods);
+    assert_eq!(args.resolved_expand_mods(true), Some(true));
+    assert_eq!(args.resolved_expand_mods(false), None);
+
+    // 3. Positional args after --expand-mods work properly without taking an
+    //    argument
+    let args = Args::try_parse_from(["diffuse", "--expand-mods", "HEAD"])
+        .expect("parse expand-mods with positional rev");
+    assert!(args.expand_mods);
+    assert_eq!(args.revision.git_revs, vec!["HEAD"]);
+    assert_eq!(args.resolved_expand_mods(true), Some(true));
+
+    // 4. --no-expand-mods flag -> Some(false)
+    let args = Args::try_parse_from(["diffuse", "--no-expand-mods"]).expect("parse no-expand-mods");
+    assert!(!args.expand_mods);
+    assert!(args.no_expand_mods);
+    assert_eq!(args.resolved_expand_mods(true), Some(false));
+    assert_eq!(args.resolved_expand_mods(false), None);
+
+    // 5. Overrides: --no-expand-mods followed by --expand-mods -> Some(true)
+    let args = Args::try_parse_from(["diffuse", "--no-expand-mods", "--expand-mods"])
+        .expect("parse no-expand-mods then expand-mods");
+    assert!(args.expand_mods);
+    assert!(!args.no_expand_mods);
+    assert_eq!(args.resolved_expand_mods(true), Some(true));
+
+    // 6. Overrides: --expand-mods followed by --no-expand-mods -> Some(false)
+    let args = Args::try_parse_from(["diffuse", "--expand-mods", "--no-expand-mods"])
+        .expect("parse expand-mods then no-expand-mods");
+    assert!(args.no_expand_mods);
+    assert!(!args.expand_mods);
+    assert_eq!(args.resolved_expand_mods(true), Some(false));
+
+    // 7. Non-pager/TUI modes (e.g. raw, markdown, json) always resolve to None
+    for non_pager_arg in ["--raw", "--markdown", "-m", "--json", "--jsonl"] {
+        let args = Args::try_parse_from(["diffuse", non_pager_arg, "--expand-mods"])
+            .expect("parse non-pager mode with expand-mods");
+        // Although the CLI flag was parsed, when evaluated for non-pager/TUI mode it
+        // returns None
+        assert_eq!(args.resolved_expand_mods(false), None);
+    }
+}

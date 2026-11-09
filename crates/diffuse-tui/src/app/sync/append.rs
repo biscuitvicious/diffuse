@@ -22,6 +22,24 @@ impl AppState {
         let meta = Self::build_file_hunk_meta(&file);
         self.hunk_meta.push(meta);
 
+        if self.expand_mods == Some(true) {
+            if !file.rows.is_empty() {
+                for r in &file.rows {
+                    if r.kind == RowKind::Mod {
+                        self.expanded_mods.insert(ModRowKey::new(fi, r));
+                    }
+                }
+            } else {
+                for h in &file.hunks {
+                    for r in &h.rows {
+                        if r.kind == RowKind::Mod {
+                            self.expanded_mods.insert(ModRowKey::new(fi, r));
+                        }
+                    }
+                }
+            }
+        }
+
         let file_header_idx = self.flat.len();
         self.flat.push(FlatRow::file_header(fi));
 

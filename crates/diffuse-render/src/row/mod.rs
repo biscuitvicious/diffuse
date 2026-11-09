@@ -11,8 +11,9 @@ pub mod text;
 mod tests;
 
 pub use gutter::{
-    continuation_prefix_spans, pad4, pad4_bytes, prefix_of, styled_prefix_spans,
-    write_gutter_prefix,
+    continuation_prefix_plain_with_mod_side, continuation_prefix_spans,
+    continuation_prefix_spans_with_mod_side, pad4, pad4_bytes, prefix_of, prefix_of_with_mod_side,
+    styled_prefix_spans, write_gutter_prefix,
 };
 pub use note::{note_segment_spans, render_note_segment, write_note_segment};
 pub use raw::{raw_row_spans, render_raw_row, write_raw_row};

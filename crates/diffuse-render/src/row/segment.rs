@@ -115,7 +115,8 @@ pub fn write_row_segment<W: Write>(
     };
     out.write_str(&lead_bg)?;
     let is_mov_src = mov_side == Some(MovSide::Src);
-    let mid_italic_off = (kind == RowKind::Del || is_mov_src) && !is_continuation;
+    let is_del_num = kind == RowKind::Del || is_mov_src || mod_side == Some(ModSide::Del);
+    let mid_italic_off = is_del_num && !is_continuation;
     write_gutter_prefix(out, prefix, mid_italic_off, !is_continuation)?;
     let body = &row.spans[prefix.len()..];
     // Fast-path conditions mirror `row_segment_spans`: plain deletion rows and
