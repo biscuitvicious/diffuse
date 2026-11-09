@@ -188,4 +188,18 @@ impl StickyHeaderInfo {
     pub fn total_sticky_lines(&self) -> usize {
         self.sticky_lines_count + self.hunk.map_or(0, |h| h.sticky_lines_count)
     }
+
+    /// Number of sticky header lines that obscure content above `row_idx`.
+    /// When on the file banner itself, 0 lines are sticky; when on the hunk
+    /// divider, only the banner lines are sticky.
+    #[inline]
+    pub fn effective_sticky_lines_for_row(&self, row_idx: usize) -> usize {
+        if row_idx == self.banner_row {
+            0
+        } else if self.hunk.is_some_and(|h| row_idx == h.flat_row) {
+            self.sticky_lines_count
+        } else {
+            self.total_sticky_lines()
+        }
+    }
 }

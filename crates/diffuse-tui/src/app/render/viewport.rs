@@ -247,15 +247,7 @@ impl AppState {
         }
         if !pin_applied {
             let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts, content_width);
-            let sticky_count = sticky.map_or(0, |s| {
-                if self.row_idx == s.banner_row {
-                    0
-                } else if s.hunk.is_some_and(|h| self.row_idx == h.flat_row) {
-                    s.sticky_lines_count
-                } else {
-                    s.total_sticky_lines()
-                }
-            });
+            let sticky_count = sticky.map_or(0, |s| s.effective_sticky_lines_for_row(self.row_idx));
             let top_vis = if self.vis_line == 0 {
                 min_vis
             } else {

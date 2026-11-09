@@ -5493,7 +5493,7 @@ fn test_status_message_moves_to_secondary_and_expires() {
         "message must not render below the viewport"
     );
 
-    // Message leads transient segments.
+    // `go` leads status message segment.
     state.num_buffer = "42".to_string();
     let frame2 = state.render_frame(100, 30);
     let msg_line = frame2
@@ -5505,7 +5505,7 @@ fn test_status_message_moves_to_secondary_and_expires() {
         msg_line.find("staged hunk").unwrap(),
         msg_line.find("go 42").unwrap(),
     );
-    assert!(mi < gi, "message leads `go` segment: {msg_line}");
+    assert!(gi < mi, "`go` segment leads message: {msg_line}");
 
     // Expiry: ok messages time out, errors linger longer but also expire.
     state.set_status_message_at(

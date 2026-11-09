@@ -95,72 +95,48 @@ impl AppState {
             MovSide::Tgt => MovSide::Src,
         };
         let cur_fi = fr.file_idx;
-        let cur_key = row.text().trim_start().to_string();
+        let cur_text = row.text();
+        let cur_key = cur_text.trim_start();
 
         let mut cur_occ = 0;
-        for (i, item) in self.flat.iter().enumerate() {
-            if item.file_idx != cur_fi || !item.is_diff_row() {
-                continue;
-            }
-            if let Some(r) = self.row_of(item)
-                && r.kind == RowKind::Mov
-                && r.mov_side == Some(cur_side)
-                && r.text().trim_start() == cur_key
-            {
-                if i == from_idx {
-                    break;
-                }
-                cur_occ += 1;
-            }
-        }
-
+        let mut found_from = false;
         let mut matching_opposing = Vec::new();
-        for (i, item) in self.flat.iter().enumerate() {
-            if item.file_idx != cur_fi || !item.is_diff_row() {
-                continue;
-            }
-            if let Some(r) = self.row_of(item)
-                && r.kind == RowKind::Mov
-                && r.mov_side == Some(target_side)
-                && r.text().trim_start() == cur_key
-            {
-                matching_opposing.push(i);
-            }
-        }
-
-        if !matching_opposing.is_empty() {
-            let target_idx = if cur_occ < matching_opposing.len() {
-                matching_opposing[cur_occ]
-            } else {
-                *matching_opposing.last().unwrap()
-            };
-            return Some(target_idx);
-        }
-
         let mut matching_by_runs = Vec::new();
+
         for (i, item) in self.flat.iter().enumerate() {
             if item.file_idx != cur_fi || !item.is_diff_row() {
                 continue;
             }
-            if let Some(r) = self.row_of(item)
-                && r.kind == RowKind::Mov
-                && r.mov_side == Some(target_side)
-                && r.runs == row.runs
-            {
-                matching_by_runs.push(i);
+            let Some(r) = self.row_of(item) else { continue };
+            if r.kind != RowKind::Mov {
+                continue;
+            }
+            if r.mov_side == Some(cur_side) {
+                if !found_from {
+                    if i == from_idx {
+                        found_from = true;
+                    } else if r.text().trim_start() == cur_key {
+                        cur_occ += 1;
+                    }
+                }
+            } else if r.mov_side == Some(target_side) {
+                if r.text().trim_start() == cur_key {
+                    matching_opposing.push(i);
+                } else if r.runs == row.runs {
+                    matching_by_runs.push(i);
+                }
             }
         }
 
-        if !matching_by_runs.is_empty() {
-            let target_idx = if cur_occ < matching_by_runs.len() {
-                matching_by_runs[cur_occ]
-            } else {
-                *matching_by_runs.last().unwrap()
-            };
-            return Some(target_idx);
-        }
+        let pool = if !matching_opposing.is_empty() {
+            &matching_opposing
+        } else if !matching_by_runs.is_empty() {
+            &matching_by_runs
+        } else {
+            return None;
+        };
 
-        None
+        pool.get(cur_occ).copied().or_else(|| pool.last().copied())
     }
 
     /// Position cursor at `target_row`. If the target row is visible anywhere
@@ -183,15 +159,7 @@ impl AppState {
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
 
         let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts, cw);
-        let sticky_count = sticky.map_or(0, |s| {
-            if self.row_idx == s.banner_row {
-                0
-            } else if s.hunk.is_some_and(|h| self.row_idx == h.flat_row) {
-                s.sticky_lines_count
-            } else {
-                s.total_sticky_lines()
-            }
-        });
+        let sticky_count = sticky.map_or(0, |s| s.effective_sticky_lines_for_row(self.row_idx));
         let visible_top = self.scroll + sticky_count;
         let visible_bottom = self.scroll + max_rows;
 

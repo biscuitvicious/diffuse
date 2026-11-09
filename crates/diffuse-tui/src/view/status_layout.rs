@@ -2,6 +2,8 @@
 //! wrapping, consumed by both renderers — the ANSI string path and the
 //! ratatui span path — so their decisions can never drift apart.
 
+use std::borrow::Cow;
+
 use crate::render::Color;
 
 use super::header::StatusBarContext;
@@ -45,15 +47,35 @@ fn push_segment(
     }
 }
 
-/// Build the ordered segment list: the status message first, then the
-/// persistent empty-state notice (zero files), then the transient
-/// indicators.
+/// Build the ordered segment list from most persistent to most ephemeral:
+/// common prefix -> raw diff -> col -> go -> error/status message ->
+/// persistent empty-state notice (zero files) -> streaming.
 fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     let p = &ctx.theme.palette.ui;
-    let mut segs = Vec::new();
+
+    // Collect trailing segments following the common prefix
+    let mut trailing: Vec<(Cow<'_, str>, Color, bool)> = Vec::new();
+
+    if ctx.raw_diff {
+        trailing.push((Cow::Borrowed("raw diff"), p.status_bar_accent, true));
+    }
+    if ctx.col_offset > 0 {
+        trailing.push((
+            Cow::Owned(format!("col {}+", ctx.col_offset)),
+            p.status_bar_dim,
+            false,
+        ));
+    }
+    if !ctx.num_buffer.is_empty() {
+        trailing.push((
+            Cow::Owned(format!("go {}", ctx.num_buffer)),
+            p.warning,
+            true,
+        ));
+    }
     if let Some((msg, is_ok)) = ctx.status_message {
         let color = if is_ok { p.header_staged } else { p.count_dels };
-        push_segment(&mut segs, msg.to_string(), color, true, p);
+        trailing.push((Cow::Borrowed(msg), color, true));
     }
     // Persistent empty state (no timeout): with no files the bar carries the
     // notice instead of the main area, so the reserved slot stays meaningful
@@ -61,13 +83,11 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     // the absence of files says nothing — the first file may be milliseconds
     // away — so the notice waits for the stream to finish.
     if ctx.total_files == 0 && !ctx.is_streaming {
-        push_segment(
-            &mut segs,
-            "No diff to display.".to_string(),
+        trailing.push((
+            Cow::Borrowed("No diff to display."),
             p.status_bar_dim,
             false,
-            p,
-        );
+        ));
     }
     if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
@@ -75,49 +95,37 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
         } else {
             ctx.streaming_dot
         };
-        push_segment(&mut segs, format!("{dot} streaming..."), p.accent, true, p);
+        trailing.push((Cow::Owned(format!("{dot} streaming...")), p.accent, true));
     }
-    if ctx.raw_diff {
-        push_segment(
-            &mut segs,
-            "raw diff".to_string(),
-            p.status_bar_accent,
-            true,
-            p,
-        );
-    }
-    if ctx.col_offset > 0 {
-        push_segment(
-            &mut segs,
-            format!("col {}+", ctx.col_offset),
-            p.status_bar_dim,
-            false,
-            p,
-        );
-    }
-    if !ctx.num_buffer.is_empty() {
-        push_segment(
-            &mut segs,
-            format!("go {}", ctx.num_buffer),
-            p.warning,
-            true,
-            p,
-        );
-    }
-    // Global directory prefix trails last, truncated leftmost-first so the
-    // deepest part stays visible.
+
+    let mut segs = Vec::new();
+
+    // 1. Global directory prefix leads first, truncated leftmost-first so the
+    // deepest part stays visible. It is budgeted against trailing segments so
+    // that active view modes and ephemeral messages are not crowded out.
     if let Some(prefix) = ctx.common_prefix
         && !prefix.is_empty()
     {
-        let used: usize = segs.iter().map(StatusSegment::width).sum();
-        let sep = if segs.is_empty() { 1 } else { 3 };
-        let budget = ctx.width.saturating_sub(used + sep);
+        let trailing_text_width: usize = trailing.iter().map(|(t, _, _)| display_width(t)).sum();
+        let trailing_separators = if trailing.is_empty() {
+            0
+        } else {
+            (trailing.len() - 1) * 3 + 3
+        };
+        let trailing_width = trailing_text_width + trailing_separators;
+        let budget = ctx.width.saturating_sub(1 + trailing_width);
         if budget > 0 {
             let text = super::header::truncate_status_path(prefix, budget)
                 .unwrap_or_else(|| prefix.to_string());
             push_segment(&mut segs, text, p.status_bar_dim, false, p);
         }
     }
+
+    // 2. Trailing segments in persistent-to-ephemeral order
+    for (text, color, bold) in trailing {
+        push_segment(&mut segs, text.into_owned(), color, bold, p);
+    }
+
     segs
 }
 
@@ -274,13 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_status_message_leads_segments() {
+    fn test_layout_go_leads_status_message() {
         let (mut c, _file) = ctx(80, "short.rs");
         c.status_message = Some(("staged hunk", true));
         c.num_buffer = "42";
         let layout = status_layout(&c);
         assert!(!layout.wraps);
-        assert_eq!(plain(&layout), "staged hunk · go 42");
+        assert_eq!(plain(&layout), "go 42 · staged hunk");
     }
 
     #[test]
@@ -321,13 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_prefix_trails_segments_with_dot_separator() {
+    fn test_layout_prefix_leads_raw_diff_with_dot_separator() {
         let (mut c, _file) = ctx(80, "short.rs");
         c.raw_diff = true;
         c.common_prefix = Some("crates/");
         let layout = status_layout(&c);
         assert!(!layout.wraps);
-        assert_eq!(plain(&layout), "raw diff · crates/");
+        assert_eq!(plain(&layout), "crates/ · raw diff");
     }
 
     #[test]
@@ -342,6 +350,40 @@ mod tests {
         );
         assert!(text.starts_with("…"), "cut must be marked: {text}");
         assert!(!layout.wraps, "truncated prefix must fit one line: {text}");
+    }
+
+    #[test]
+    fn test_layout_prefix_budgeted_against_trailing_segments() {
+        let (mut c, _file) = ctx(25, "short.rs");
+        c.common_prefix = Some("crates/diffuse-core/src/moves/");
+        c.raw_diff = true;
+        let layout = status_layout(&c);
+        let text = plain(&layout);
+        assert!(
+            text.ends_with(" · raw diff"),
+            "trailing segment must be preserved: {text}"
+        );
+        assert!(
+            text.starts_with("…"),
+            "prefix must be truncated on left: {text}"
+        );
+        assert!(!layout.wraps, "budgeted prefix must not cause wrap: {text}");
+    }
+
+    #[test]
+    fn test_layout_full_order_persistent_to_ephemeral() {
+        let (mut c, _file) = ctx(120, "short.rs");
+        c.common_prefix = Some("crates/");
+        c.raw_diff = true;
+        c.col_offset = 8;
+        c.num_buffer = "10";
+        c.status_message = Some(("note saved", true));
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(
+            plain(&layout),
+            "crates/ · raw diff · col 8+ · go 10 · note saved"
+        );
     }
 }
 

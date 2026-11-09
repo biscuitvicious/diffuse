@@ -210,16 +210,16 @@ fn test_ratatui_header_and_status_lines() {
         "secondary status bar must omit file change counts"
     );
 
-    // Streaming leads; the directory prefix trails last: streaming, col,
-    // go, prefix.
+    // Directory prefix leads; streaming trails last: prefix, col, go,
+    // streaming.
     let text = status_line.to_string();
-    let stream = text.find("streaming...").expect("must show streaming");
+    let pfx = text.find("src/").expect("must show directory prefix");
     let col = text.find("col 4+").expect("must show col offset");
     let go = text.find("go 12").expect("must show go buffer");
-    let pfx = text.find("src/").expect("must show directory prefix");
+    let stream = text.find("streaming...").expect("must show streaming");
     assert!(
-        stream < col && col < go && go < pfx,
-        "order must be streaming, col, go, prefix: {text}"
+        pfx < col && col < go && go < stream,
+        "order must be prefix, col, go, streaming: {text}"
     );
     assert!(
         !text.contains("hunk"),
