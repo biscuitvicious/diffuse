@@ -80,10 +80,7 @@ impl AppState {
                 let is_collapsed = self.collapsed_files.contains(&item.file_idx);
                 let txt = crate::view::diff_grid::file_header_text_with_prefix(
                     file_obj,
-                    crate::render::Badge {
-                        idx: item.file_idx,
-                        total: (!self.is_streaming).then_some(self.output.files.len()),
-                    },
+                    self.file_badge(item.file_idx),
                     is_collapsed,
                     self.output.common_directory_prefix().as_deref(),
                 );

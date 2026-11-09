@@ -280,10 +280,7 @@ impl AppState {
                 line_src.push(Some(s.banner_row));
                 lines.push(file_header_segment_line(
                     file_obj,
-                    crate::render::Badge {
-                        idx: s.file_idx,
-                        total: (!self.is_streaming).then_some(self.output.files.len()),
-                    },
+                    self.file_badge(s.file_idx),
                     is_collapsed,
                     is_selected,
                     is_current,
@@ -395,10 +392,7 @@ impl AppState {
                             line_src.push(Some(idx));
                             lines.push(file_header_segment_line(
                                 file_obj,
-                                crate::render::Badge {
-                                    idx: item.file_idx,
-                                    total: (!self.is_streaming).then_some(self.output.files.len()),
-                                },
+                                self.file_badge(item.file_idx),
                                 is_collapsed,
                                 is_selected,
                                 is_current,

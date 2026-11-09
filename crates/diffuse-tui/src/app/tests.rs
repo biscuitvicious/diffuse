@@ -5726,16 +5726,64 @@ fn test_header_file_count_waits_for_the_stream() {
     );
 
     state.is_streaming = true;
+    assert_eq!(
+        state.header_file_count(),
+        crate::view::HeaderFileCount::Streaming
+    );
+    assert_eq!(state.file_badge(0).total, None);
     let streaming = state.render_frame(120, 20);
     assert!(
         !streaming.contains("2 files") && !streaming.contains("1 file"),
         "a growing total is not announced:\n{streaming}"
     );
+    assert!(
+        streaming.contains("? files"),
+        "initial streaming displays '? files':\n{streaming}"
+    );
+
+    // Single-file re-streaming retains the constant file badge.
+    state.loading_files.insert(0);
+    assert_eq!(
+        state.header_file_count(),
+        crate::view::HeaderFileCount::Exact(2)
+    );
+    assert_eq!(state.file_badge(0).total, Some(2));
+    let single_file_streaming = state.render_frame(120, 20);
+    assert!(
+        single_file_streaming.contains("2 files"),
+        "single-file streaming preserves exact file badge:\n{single_file_streaming}"
+    );
+    assert!(
+        !single_file_streaming.contains("? files"),
+        "single-file streaming does not show '? files':\n{single_file_streaming}"
+    );
+    state.loading_files.clear();
 
     state.is_streaming = false;
+    assert_eq!(
+        state.header_file_count(),
+        crate::view::HeaderFileCount::Exact(2)
+    );
+    assert_eq!(state.file_badge(0).total, Some(2));
     let loaded = state.render_frame(120, 20);
     assert!(
         loaded.contains("2 files"),
         "the loaded total is announced:\n{loaded}"
+    );
+
+    let empty_output = PipelineOutput {
+        files: Vec::new(),
+        branch: "main".into(),
+        untracked_skipped: Vec::new(),
+    };
+    let empty_state = AppState::new(
+        empty_output,
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    assert_eq!(
+        empty_state.header_file_count(),
+        crate::view::HeaderFileCount::None
     );
 }

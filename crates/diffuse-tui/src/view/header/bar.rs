@@ -8,6 +8,51 @@ use ratatui::{
     text::{Line, Span},
 };
 
+/// File count badge in the primary header bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeaderFileCount {
+    /// Exact count of reviewed files (e.g. `4 files` or `1 file`).
+    Exact(usize),
+    /// Count is unknown while streaming the diff (`? files`).
+    Streaming,
+    /// Count badge is omitted (e.g. empty diff or dropped on narrow screens).
+    None,
+}
+
+impl HeaderFileCount {
+    /// Whether any file count badge is presented.
+    #[must_use]
+    pub fn is_some(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Format the badge text (e.g. `" 4 files"`, `" 1 file"`, `" ? files"`), or
+    /// `None` if omitted.
+    #[must_use]
+    pub fn badge_text(&self) -> Option<String> {
+        match *self {
+            Self::Exact(n) => Some(format!(" {n} {}", if n == 1 { "file" } else { "files" })),
+            Self::Streaming => Some(" ? files".to_string()),
+            Self::None => None,
+        }
+    }
+}
+
+impl From<usize> for HeaderFileCount {
+    fn from(n: usize) -> Self {
+        Self::Exact(n)
+    }
+}
+
+impl From<Option<usize>> for HeaderFileCount {
+    fn from(opt: Option<usize>) -> Self {
+        match opt {
+            Some(n) => Self::Exact(n),
+            None => Self::None,
+        }
+    }
+}
+
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
 /// support: repo name, branch/commit-range glyph, the number of reviewed
 /// files, and global counts.
@@ -19,9 +64,10 @@ pub fn header_bar_line(
     branch: Option<&str>,
     commit_range: Option<&str>,
     is_staged: bool,
-    total_files: Option<usize>,
+    total_files: impl Into<HeaderFileCount>,
     width: usize,
 ) -> Line<'static> {
+    let file_count = total_files.into();
     let mut spans = header_bar_spans(
         repo,
         theme,
@@ -29,11 +75,11 @@ pub fn header_bar_line(
         branch,
         commit_range,
         is_staged,
-        total_files,
+        file_count,
     );
     // The change counts say more than the file count, so the file count is what
     // gives way first when the bar cannot hold the whole header.
-    if total_files.is_some() && spans_width(&spans) > width {
+    if file_count.is_some() && spans_width(&spans) > width {
         spans = header_bar_spans(
             repo,
             theme,
@@ -41,7 +87,7 @@ pub fn header_bar_line(
             branch,
             commit_range,
             is_staged,
-            None,
+            HeaderFileCount::None,
         );
     }
     let bg = crate::view::to_color(theme.palette.ui.header_bar_bg);
@@ -62,7 +108,7 @@ fn header_bar_spans(
     branch: Option<&str>,
     commit_range: Option<&str>,
     is_staged: bool,
-    total_files: Option<usize>,
+    file_count: HeaderFileCount,
 ) -> Vec<Span<'static>> {
     let mut spans = vec![
         Span::raw(" "),
@@ -135,11 +181,9 @@ fn header_bar_spans(
         ));
     }
 
-    // The count is omitted while the diff is streaming, where the files seen so
-    // far are not the files under review.
-    if let Some(n) = total_files {
+    if let Some(text) = file_count.badge_text() {
         spans.push(Span::styled(
-            format!(" {n} {}", if n == 1 { "file" } else { "files" }),
+            text,
             Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
     }

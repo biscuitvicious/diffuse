@@ -13,8 +13,8 @@ pub use diff_grid::{
     hunk_divider_segment_line, hunk_divider_text, wrapped_glyph_hit,
 };
 pub use header::{
-    StatusBarContext, bottom_ribbon_lines, header_bar_line, status_bar_line, truncate_pad,
-    visible_width, wrap_text_by_visual_width,
+    HeaderFileCount, StatusBarContext, bottom_ribbon_lines, header_bar_line, status_bar_line,
+    truncate_pad, visible_width, wrap_text_by_visual_width,
 };
 pub use modals::{
     HELP_ENTRIES, finder_modal_area, help_modal_area, render_finder_modal_widget,

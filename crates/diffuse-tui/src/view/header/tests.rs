@@ -1429,6 +1429,45 @@ fn test_header_bar_carries_the_file_count() {
         !unknown.contains("file"),
         "an unknown count is omitted: {unknown}"
     );
+
+    let streaming = header_bar_line(
+        "diffuse",
+        &theme,
+        None,
+        Some("work"),
+        None,
+        false,
+        HeaderFileCount::Streaming,
+        usize::MAX,
+    )
+    .to_string();
+    assert!(
+        streaming.contains("? files"),
+        "streaming renders '? files': {streaming}"
+    );
+}
+
+#[test]
+fn test_header_file_count_from_conversions() {
+    assert_eq!(HeaderFileCount::from(5), HeaderFileCount::Exact(5));
+    assert_eq!(HeaderFileCount::from(Some(3)), HeaderFileCount::Exact(3));
+    assert_eq!(HeaderFileCount::from(None), HeaderFileCount::None);
+    assert!(HeaderFileCount::Exact(5).is_some());
+    assert!(HeaderFileCount::Streaming.is_some());
+    assert!(!HeaderFileCount::None.is_some());
+    assert_eq!(
+        HeaderFileCount::Exact(1).badge_text(),
+        Some(" 1 file".to_string())
+    );
+    assert_eq!(
+        HeaderFileCount::Exact(4).badge_text(),
+        Some(" 4 files".to_string())
+    );
+    assert_eq!(
+        HeaderFileCount::Streaming.badge_text(),
+        Some(" ? files".to_string())
+    );
+    assert_eq!(HeaderFileCount::None.badge_text(), None);
 }
 
 #[test]

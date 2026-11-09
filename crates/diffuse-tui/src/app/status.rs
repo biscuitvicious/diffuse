@@ -11,6 +11,36 @@ impl AppState {
         self.last_stream_activity = Some(now);
     }
 
+    /// Whether initial/global diff streaming is currently active (where the
+    /// full file list is still unknown). When just re-streaming an existing
+    /// file on-demand, this returns `false`.
+    #[inline]
+    pub fn is_initial_streaming(&self) -> bool {
+        self.is_streaming && self.loading_files.is_empty()
+    }
+
+    /// Header file count indicator for the top header bar.
+    #[inline]
+    pub fn header_file_count(&self) -> crate::view::HeaderFileCount {
+        if self.is_initial_streaming() {
+            crate::view::HeaderFileCount::Streaming
+        } else if !self.output.files.is_empty() {
+            crate::view::HeaderFileCount::Exact(self.output.files.len())
+        } else {
+            crate::view::HeaderFileCount::None
+        }
+    }
+
+    /// Position badge for a file, carrying the known total unless initial
+    /// streaming is still populating the changeset.
+    #[inline]
+    pub fn file_badge(&self, file_idx: usize) -> crate::render::Badge {
+        crate::render::Badge {
+            idx: file_idx,
+            total: (!self.is_initial_streaming()).then_some(self.output.files.len()),
+        }
+    }
+
     pub fn streaming_dot(&self) -> &'static str {
         self.streaming_dot_at(Instant::now())
     }

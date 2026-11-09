@@ -117,7 +117,7 @@ impl AppState {
             Some(&self.output.branch),
             self.commit_range.as_deref(),
             self.target.is_staged(),
-            (!self.is_streaming).then_some(self.output.files.len()),
+            self.header_file_count(),
             main_width,
         );
         let header_bg = to_color(self.theme.palette.ui.header_bar_bg);

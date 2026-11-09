@@ -5,7 +5,7 @@ pub mod counts;
 pub mod status;
 pub mod text;
 
-pub use bar::{bottom_ribbon_lines, header_bar_line};
+pub use bar::{HeaderFileCount, bottom_ribbon_lines, header_bar_line};
 pub use counts::{CountCell, count_cells, count_color, format_counts_plain, format_counts_spans};
 pub use status::{StatusBarContext, padded_line, status_bar_line};
 #[cfg(test)]
