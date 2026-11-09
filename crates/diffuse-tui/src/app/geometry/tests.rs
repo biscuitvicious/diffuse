@@ -184,9 +184,10 @@ index 1111111..2222222 100644
         raw_line.contains("\x1b[38;5;120m"),
         "marker and text must render green: {raw_line:?}"
     );
+    let expected_gutter = " ".repeat(state.gutter_width());
     assert!(
-        frame.contains("\x1b[38;5;242m      \x1b[38;5;120m"),
-        "continuation segments must start with 6-space gutter and green foreground"
+        frame.contains(&format!("\x1b[38;5;242m{expected_gutter}\x1b[38;5;120m")),
+        "continuation segments must start with gutter and green foreground"
     );
 }
 

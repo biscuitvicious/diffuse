@@ -59,6 +59,7 @@ impl AppState {
         self.hunk_starts = hunk_starts;
         let was_raw = self.raw_diff;
         self.raw_diff = !self.raw_diff;
+        self.recalculate_line_num_width();
         self.anchor = None;
 
         let mut idx = None;

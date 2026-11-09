@@ -838,3 +838,111 @@ fn test_perf_big_hunk_scrolled_frames() {
         assert!(!frame.is_empty());
     }
 }
+
+fn load_scrollbar_grab_drag() -> Option<PipelineOutput> {
+    let base =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/scrollbar-grab-drag");
+    let patch_path = base.join("diff.patch");
+    if !patch_path.is_file() {
+        return None;
+    }
+    let patch = std::fs::read_to_string(&patch_path).ok()?;
+    let meta_raw = std::fs::read_to_string(base.join("meta.json")).ok()?;
+    let meta: serde_json::Value = serde_json::from_str(&meta_raw).ok()?;
+    let mut new_content = std::collections::HashMap::new();
+    let mut old_content = std::collections::HashMap::new();
+    for rec in meta["files"].as_array()? {
+        let p = rec["path"].as_str()?.to_string();
+        if let Some(n) = rec["new"].as_str() {
+            let s = std::fs::read_to_string(base.join("files").join(n)).ok()?;
+            new_content.insert(p.clone(), s);
+        }
+        if let Some(o) = rec["old"].as_str() {
+            let s = std::fs::read_to_string(base.join("files").join(o)).ok()?;
+            old_content.insert(p, s);
+        }
+    }
+    Some(run_pipeline_full(
+        &patch,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    ))
+}
+
+#[test]
+fn test_reproduce_expand_file5_scrollbar_grab_drag() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::dark(),
+    );
+
+    // Initial state: all files expanded, max_line_num is in 2000s, width 4
+    assert_eq!(state.output.files.len(), 7);
+    assert_eq!(state.line_num_width, 4);
+
+    // Collapse File 4 (File 5/7 · app/tests.rs)
+    state.toggle_file_collapse(4);
+    assert_eq!(
+        state.line_num_width, 3,
+        "with file 4 collapsed, max line is < 1000"
+    );
+
+    let width: u16 = 120;
+    let height: u16 = 40;
+
+    // Position cursor on File 4's header
+    let file4_flat = state.first_row_of_file(4);
+    state.row_idx = file4_flat;
+    state.vis_line = 0;
+
+    // Render buffer with file 4 collapsed
+    let buf_collapsed = state.render_to_buffer(width, height);
+
+    let find_header_y = |buf: &ratatui::buffer::Buffer| -> Option<u16> {
+        for y in 0..buf.area().height {
+            let mut line = String::new();
+            for x in 0..buf.area().width {
+                line.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            if line.contains("File 5/7") || line.contains("app/tests.rs") {
+                return Some(y);
+            }
+        }
+        None
+    };
+
+    let y_before = find_header_y(&buf_collapsed).expect("file 4 header should be visible");
+
+    // Now expand File 4
+    state.toggle_file_collapse(4);
+    assert_eq!(state.line_num_width, 4, "expanding file 4 restores width 4");
+
+    let buf_expanded = state.render_to_buffer(width, height);
+    let y_after = find_header_y(&buf_expanded).expect("file 4 header should still be visible");
+
+    assert_eq!(
+        y_after, y_before,
+        "File header visual Y must be preserved across expand (expected {y_before}, got {y_after})"
+    );
+
+    // Collapsing File 4 again adapts width back to 3 and must also preserve visual
+    // Y
+    state.toggle_file_collapse(4);
+    assert_eq!(
+        state.line_num_width, 3,
+        "re-collapsing file 4 restores width 3"
+    );
+    let buf_recollapsed = state.render_to_buffer(width, height);
+    let y_recollapsed =
+        find_header_y(&buf_recollapsed).expect("file 4 header should still be visible");
+    assert_eq!(
+        y_recollapsed, y_before,
+        "File header visual Y must be preserved across re-collapse (expected {y_before}, got {y_recollapsed})"
+    );
+}

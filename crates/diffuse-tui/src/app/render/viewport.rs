@@ -10,8 +10,8 @@ use crate::{
     app::{AppState, notes::NoteRowFocus},
     core::parse::RowKind,
     render::{
-        continuation_prefix_spans_with_mod_side, raw_row_spans, row_segment_spans,
-        slice_by_visual_width, styled_prefix_spans,
+        continuation_prefix_spans_with_mod_side_and_width, raw_row_spans, row_segment_spans,
+        slice_by_visual_width, styled_prefix_spans_with_width,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
@@ -207,6 +207,7 @@ impl AppState {
         } else {
             width.saturating_sub(1)
         };
+        self.assert_content_width_fits_gutter(est_content_width);
         let mut geo = self.cached_geometry(est_content_width);
 
         let has_scrollbar = !self.raw_diff && geo.total_vis_lines > vh && vh > 2;
@@ -215,6 +216,7 @@ impl AppState {
         } else {
             width
         };
+        self.assert_content_width_fits_gutter(content_width);
         self.terminal_width = width;
         self.last_content_width = content_width;
 
@@ -474,12 +476,13 @@ impl AppState {
                         None => r.text(),
                     };
                     let seg_count = seg_counts[idx];
+
                     for s_idx in 0..seg_count {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected =
                                 idx == self.row_idx && self.vis_line == div_segs + s_idx;
                             let prefix = if s_idx == 0 {
-                                styled_prefix_spans(
+                                styled_prefix_spans_with_width(
                                     r.kind,
                                     r.mov_side,
                                     mod_side,
@@ -491,17 +494,20 @@ impl AppState {
                                     in_hunk_extent,
                                     None,
                                     &self.theme,
+                                    self.line_num_width,
                                 )
                             } else {
-                                continuation_prefix_spans_with_mod_side(
+                                continuation_prefix_spans_with_mod_side_and_width(
                                     mod_side,
                                     mod_glyph,
                                     &self.theme,
                                     None,
+                                    self.line_num_width,
                                 )
                             };
                             let rendered_row = if self.raw_diff {
-                                let text_cols = content_width.saturating_sub(6).max(1);
+                                let text_cols =
+                                    content_width.saturating_sub(self.gutter_width()).max(1);
                                 let piece =
                                     slice_by_visual_width(&row_text, s_idx * text_cols, text_cols);
                                 let is_last_seg = s_idx + 1 == seg_count;
@@ -516,7 +522,8 @@ impl AppState {
                                 );
                                 fit_line(raw.spans, content_width, raw.line_bg)
                             } else {
-                                let text_cols = content_width.saturating_sub(6).max(1);
+                                let text_cols =
+                                    content_width.saturating_sub(self.gutter_width()).max(1);
                                 let seg_start = s_idx * text_cols;
                                 let seg_end = seg_start + text_cols;
                                 let row = row_segment_spans(

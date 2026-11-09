@@ -2067,3 +2067,86 @@ fn test_styled_prefix_spans_with_mod_glyph() {
     assert_eq!(bottom_add[1].fg, Some(mod_gutter.icon.color));
     assert_eq!(bottom_add[2].text, "+");
 }
+
+#[test]
+fn test_styled_prefix_spans_with_custom_line_num_width() {
+    let theme = DiffuseTheme::dark();
+
+    // width = 0: line numbers hidden, only 2-character gutter
+    let spans_w0 = styled_prefix_spans_with_width(
+        RowKind::Add,
+        None,
+        None,
+        None,
+        None,
+        Some(42),
+        None,
+        &[],
+        true,
+        None,
+        &theme,
+        0,
+    );
+    let total_w0: usize = spans_w0.iter().map(|s| s.text.len()).sum();
+    assert_eq!(total_w0, 2);
+    let full_w0: String = spans_w0.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(full_w0, " +");
+
+    // width = 1: single digit
+    let spans_w1 = styled_prefix_spans_with_width(
+        RowKind::Add,
+        None,
+        None,
+        None,
+        None,
+        Some(7),
+        None,
+        &[],
+        true,
+        None,
+        &theme,
+        1,
+    );
+    let full_w1: String = spans_w1.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(full_w1, "7 +");
+
+    // width = 2: 2 digits
+    let spans_w2 = styled_prefix_spans_with_width(
+        RowKind::Del,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(3),
+        &[],
+        true,
+        None,
+        &theme,
+        2,
+    );
+    let full_w2: String = spans_w2.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(full_w2, " 3 -");
+
+    // width = 0 continuation line
+    let cont_w0 = continuation_prefix_spans_with_mod_side_and_width(
+        Some(ModSide::Del),
+        Some(ModGlyph::Top),
+        &theme,
+        None,
+        0,
+    );
+    let full_cont_w0: String = cont_w0.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(full_cont_w0, "│ ");
+
+    // width = 2 continuation line
+    let cont_w2 = continuation_prefix_spans_with_mod_side_and_width(
+        Some(ModSide::Del),
+        Some(ModGlyph::Top),
+        &theme,
+        None,
+        2,
+    );
+    let full_cont_w2: String = cont_w2.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(full_cont_w2, "  │ ");
+}

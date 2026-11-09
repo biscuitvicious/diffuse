@@ -93,6 +93,8 @@ impl AppState {
             collapsed_files,
             expanded_mods: HashSet::new(),
             expand_mods: Some(false),
+            line_num_width: 0,
+            max_line_num: 0,
             loading_files: HashSet::new(),
             on_demand_tx: None,
             on_demand_rx: None,
@@ -113,6 +115,7 @@ impl AppState {
             geo_cache: Default::default(),
         };
         state.sync_all_notes();
+        state.recalculate_line_num_width();
         state
     }
 

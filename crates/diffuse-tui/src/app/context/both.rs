@@ -157,6 +157,7 @@ impl AppState {
             DividerFallback::BelowRow
         };
         self.restore_divider_pivot(anchors, fi, hi + 1, fallback);
+        self.recalculate_line_num_width();
         true
     }
 }

@@ -5814,3 +5814,147 @@ fn test_flat_coord_for_expanded_mod() {
     assert_eq!(AppState::flat_coord(&output, false, &fr_del), Some(1));
     assert_eq!(AppState::flat_coord(&output, false, &fr_add), Some(1));
 }
+
+#[test]
+fn test_adaptive_line_number_width_from_hunk_headers() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let x = 1;
++    let x = "this is a string";
+ }
+"#;
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+
+    let state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Initial state calculated directly from hunk header: max 3, width 1
+    assert_eq!(state.max_line_num, 3);
+    assert_eq!(state.line_num_width, 1);
+
+    // Now test with larger line numbers (e.g. line 42)
+    let diff_large = r#"diff --git a/big.rs b/big.rs
+--- a/big.rs
++++ b/big.rs
+@@ -40,3 +40,3 @@
+ fn large() {
+-    let old = 1;
++    let new = 2;
+ }
+"#;
+    let output_large = crate::core::pipeline::run_pipeline_full(
+        diff_large,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let state_large = AppState::new(
+        output_large,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    assert_eq!(state_large.max_line_num, 42);
+    assert_eq!(state_large.line_num_width, 2);
+}
+
+#[test]
+fn test_adaptive_width_on_file_expand_reload_and_append() {
+    let diff_small = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,3 @@\n line 1\n-line 2\n+line 2b\n line 3\n";
+    let output_small = crate::core::pipeline::run_pipeline_full(
+        diff_small,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        output_small,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    assert_eq!(state.max_line_num, 3);
+    assert_eq!(state.line_num_width, 1);
+
+    // Append file with line numbers in the thousands
+    let diff_huge = "diff --git a/huge.rs b/huge.rs\n--- a/huge.rs\n+++ b/huge.rs\n@@ -1000,3 +1000,3 @@\n line 1000\n-line 1001\n+line 1001b\n line 1002\n";
+    let output_huge = crate::core::pipeline::run_pipeline_full(
+        diff_huge,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    state.append_file(output_huge.files[0].clone());
+
+    // Immediately adapted from the appended file's final hunk header
+    assert_eq!(state.max_line_num, 1002);
+    assert_eq!(state.line_num_width, 4);
+
+    // Collapsing file 1 should adapt width back down to 1
+    state.toggle_file_collapse(1);
+    assert_eq!(state.max_line_num, 3);
+    assert_eq!(state.line_num_width, 1);
+
+    // Uncollapsing file 1 adapts width back up to 4
+    state.toggle_file_collapse(1);
+    assert_eq!(state.max_line_num, 1002);
+    assert_eq!(state.line_num_width, 4);
+
+    // Reloading diff back to a small file adapts back down
+    let diff_reload = "diff --git a/c.rs b/c.rs\n--- a/c.rs\n+++ b/c.rs\n@@ -1,2 +1,2 @@\n-line 1\n+line 1b\n line 2\n";
+    let output_reload = crate::core::pipeline::run_pipeline_full(
+        diff_reload,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    state.reload(output_reload);
+    assert_eq!(state.max_line_num, 2);
+    assert_eq!(state.line_num_width, 1);
+}
+
+#[test]
+#[should_panic(
+    expected = "terminal content width (4) is too narrow: line number gutter requires 6 columns"
+)]
+fn test_content_width_less_than_or_equal_to_gutter_width_fails_with_informative_error() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1000,1 +1000,1 @@
+-old
++new
+"#;
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Max line number 1000 -> line_num_width = 4 -> gutter_width = 6.
+    assert_eq!(state.gutter_width(), 6);
+
+    // Call render_diff_viewport_lines with width 5 (which is <= gutter_width 6)
+    let _ = state.render_diff_viewport_lines(5, 10, 10);
+}

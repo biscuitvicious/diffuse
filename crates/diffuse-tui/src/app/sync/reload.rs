@@ -21,6 +21,8 @@ impl AppState {
         }
 
         self.output = output;
+        self.max_line_num = 0;
+        self.line_num_width = 0;
         if self.output.files.is_empty() {
             self.flat.clear();
             self.hunk_starts.clear();
@@ -32,6 +34,7 @@ impl AppState {
             self.populate_all_expanded_mods();
         }
         self.rebuild_flat_preserving_snapshot(&snapshot);
+        self.recalculate_line_num_width();
     }
 
     /// Update or remove specific files in `self.output.files` without reloading
@@ -68,6 +71,7 @@ impl AppState {
             self.populate_all_expanded_mods();
         }
         self.rebuild_flat_preserving_snapshot(&snapshot);
+        self.recalculate_line_num_width();
     }
 
     /// Replace an existing file in `self.output.files` or insert a new file in
@@ -90,6 +94,7 @@ impl AppState {
             self.populate_all_expanded_mods();
         }
         self.rebuild_flat_preserving_snapshot(snapshot);
+        self.recalculate_line_num_width();
     }
 
     /// Drop all current diff output and state back to a clean starting baseline
@@ -107,6 +112,8 @@ impl AppState {
         self.vis_line = 0;
         self.scroll = 0;
         self.col_offset = 0;
+        self.max_line_num = 0;
+        self.line_num_width = 0;
         self.anchor = None;
         self.confirmed_sel = None;
         self.scroll_pin = None;

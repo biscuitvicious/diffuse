@@ -63,6 +63,7 @@ impl AppState {
             }
             if !self.collapsed_files.contains(&fi) {
                 self.rebuild_flat_preserving_cursor(fi);
+                self.recalculate_line_num_width();
                 if let Some((target_fi, expected_row, expected_scroll)) = self.auto_scroll_on_load
                     && target_fi == fi
                     && self.row_idx == expected_row
@@ -136,6 +137,7 @@ impl AppState {
             }
             if !self.collapsed_files.contains(&fi) {
                 self.rebuild_flat_preserving_cursor(fi);
+                self.recalculate_line_num_width();
                 if let Some((target_fi, expected_row, expected_scroll)) = self.auto_scroll_on_load
                     && target_fi == fi
                     && self.row_idx == expected_row

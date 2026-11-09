@@ -101,6 +101,7 @@ impl AppState {
 
         self.output.files.push(file);
         self.sync_file_notes(fi);
+        self.recalculate_line_num_width();
 
         if self.flat.len() == 1
             && self.flat[0].is_file_header()

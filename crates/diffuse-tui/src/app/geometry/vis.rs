@@ -4,12 +4,12 @@
 use std::{collections::HashMap, panic::Location, time::Instant, vec::Vec};
 
 use crate::{
+    app::AppState,
+    core::wire::OutputFile,
     render::{display_text, width::display_width},
     types::FlatRowKind,
 };
 use diffuse_core::ModSide;
-
-use crate::app::AppState;
 
 /// Cached visual layout: prefix sums of per-row visual heights plus the
 /// note callouts folded into them. Any mutation of diff content, flat
@@ -19,6 +19,7 @@ use crate::app::AppState;
 #[derive(Clone, Default)]
 pub(crate) struct CachedGeometry {
     pub(crate) content_width: usize,
+    pub(crate) line_num_width: usize,
     pub(crate) raw_diff: bool,
     pub(crate) col_offset: usize,
     pub(crate) word_diff: bool,
@@ -66,6 +67,106 @@ impl AppState {
             }
         } else {
             80
+        }
+    }
+
+    /// Visual width of the line number prefix gutter (`line_num_width + 2`).
+    #[inline]
+    pub fn gutter_width(&self) -> usize {
+        self.line_num_width + 2
+    }
+
+    /// Assert that `content_width` can accommodate the line number prefix
+    /// gutter plus at least one column of code text; fails fast with an
+    /// informative error otherwise.
+    #[inline]
+    pub fn assert_content_width_fits_gutter(&self, content_width: usize) {
+        let gutter_w = self.gutter_width();
+        if content_width <= gutter_w {
+            panic!(
+                "terminal content width ({content_width}) is too narrow: line number gutter requires {gutter_w} columns (max line number is {}, width is {})",
+                self.max_line_num, self.line_num_width
+            );
+        }
+    }
+
+    /// Recalculates the maximum line number across all loaded/uncollapsed files
+    /// in the grid by inspecting the tail of each file (O(files)).
+    pub fn recalculate_line_num_width(&mut self) {
+        let mut max_num: u32 = 0;
+        for (fi, file) in self.output.files.iter().enumerate() {
+            if self.collapsed_files.contains(&fi) {
+                continue;
+            }
+            let file_max = Self::file_max_line_num(file, self.raw_diff);
+            if file_max > max_num {
+                max_num = file_max;
+            }
+        }
+        self.max_line_num = max_num;
+        let new_width = if max_num > 0 {
+            (max_num.ilog10() as usize) + 1
+        } else {
+            0
+        };
+        if new_width != self.line_num_width {
+            let cw = self.effective_content_width();
+            let cursor_screen_y = if !self.flat.is_empty() {
+                let old_geo = self.cached_geometry(cw);
+                let old_min_vis = old_geo.starts.get(self.row_idx).copied().unwrap_or(0);
+                let old_nav = old_geo.nav_counts.get(self.row_idx).copied().unwrap_or(1);
+                let old_cursor_vis = old_min_vis + self.vis_line.min(old_nav.saturating_sub(1));
+                Some((old_cursor_vis as isize) - (self.scroll as isize))
+            } else {
+                None
+            };
+            self.line_num_width = new_width;
+            self.bump_content();
+            if let Some(screen_y) = cursor_screen_y {
+                let new_geo = self.cached_geometry(cw);
+                let new_min_vis = new_geo.starts.get(self.row_idx).copied().unwrap_or(0);
+                let new_nav = new_geo.nav_counts.get(self.row_idx).copied().unwrap_or(1);
+                let new_cursor_vis = new_min_vis + self.vis_line.min(new_nav.saturating_sub(1));
+                let new_scroll = ((new_cursor_vis as isize) - screen_y).max(0) as usize;
+                let max_rows = self.viewport_height.max(1);
+                let max_scroll = new_geo.total_vis_lines.saturating_sub(max_rows);
+                self.scroll = new_scroll.min(max_scroll);
+            }
+        }
+    }
+
+    /// Inspect the tail hunk header of a single file to determine its highest
+    /// line number directly without scanning any rows.
+    pub fn file_max_line_num(file: &OutputFile, raw_diff: bool) -> u32 {
+        let hunks = if raw_diff && !file.raw_hunks.is_empty() {
+            &file.raw_hunks
+        } else {
+            &file.hunks
+        };
+        if let Some(last_hunk) = hunks.last() {
+            let old_max = if last_hunk.old_count > 0 {
+                last_hunk.old_start + last_hunk.old_count - 1
+            } else {
+                0
+            };
+            let new_max = if last_hunk.new_count > 0 {
+                last_hunk.new_start + last_hunk.new_count - 1
+            } else {
+                0
+            };
+            old_max.max(new_max)
+        } else {
+            let count_max = file.new_line_count.max(file.old_line_count) as u32;
+            if count_max > 0 {
+                count_max
+            } else if let Some(last_row) = file.rows.last() {
+                last_row
+                    .new_line
+                    .unwrap_or(0)
+                    .max(last_row.old_line.unwrap_or(0))
+            } else {
+                0
+            }
         }
     }
 
@@ -123,13 +224,14 @@ impl AppState {
                     } => r.new_text(),
                     _ => r.text(),
                 };
+                let gutter_w = self.gutter_width();
                 if self.raw_diff {
-                    let text_cols = content_width.saturating_sub(6).max(1);
+                    let text_cols = content_width.saturating_sub(gutter_w).max(1);
                     let exp = crate::render::expand_tabs(&text, 4);
                     let len = display_width(exp);
                     if len == 0 { 1 } else { len.div_ceil(text_cols) }
                 } else {
-                    let text_cols = content_width.saturating_sub(6).max(1);
+                    let text_cols = content_width.saturating_sub(gutter_w).max(1);
                     let disp = display_text(
                         &text,
                         r.is_aux(),
@@ -173,6 +275,7 @@ impl AppState {
         if let Some(hit) = self.geo_cache.iter().find_map(|slot| {
             slot.as_ref().filter(|g| {
                 g.content_width == content_width
+                    && g.line_num_width == self.line_num_width
                     && g.raw_diff == self.raw_diff
                     && g.col_offset == self.col_offset
                     && g.word_diff == self.word_diff
@@ -195,6 +298,7 @@ impl AppState {
         );
         let geo = CachedGeometry {
             content_width,
+            line_num_width: self.line_num_width,
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             word_diff: self.word_diff,
@@ -228,6 +332,8 @@ impl AppState {
         content_width: usize,
         callouts: &HashMap<usize, Vec<ratatui::text::Line<'static>>>,
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>, usize) {
+        self.assert_content_width_fits_gutter(content_width);
+
         let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
             HashMap::new()
         } else {

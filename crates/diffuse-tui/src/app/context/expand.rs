@@ -168,6 +168,7 @@ impl AppState {
             f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
         }
 
+        self.recalculate_line_num_width();
         true
     }
 
@@ -355,6 +356,7 @@ impl AppState {
             f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
         }
 
+        self.recalculate_line_num_width();
         true
     }
 }

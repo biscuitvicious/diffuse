@@ -78,6 +78,11 @@ pub struct AppState {
     /// Global modification row expansion state (Some(true) = expanded,
     /// Some(false) = collapsed, None = mode ignores mod expansion).
     pub expand_mods: Option<bool>,
+    /// Adaptive line number width in columns (0 hides line numbers, >0 formats
+    /// numbers right-aligned).
+    pub line_num_width: usize,
+    /// Maximum line number across all currently uncollapsed files in the grid.
+    pub max_line_num: u32,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,

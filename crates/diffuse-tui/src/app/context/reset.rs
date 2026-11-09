@@ -30,6 +30,7 @@ impl AppState {
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;
+        self.recalculate_line_num_width();
         self.retain_cursor_visual_position(cursor_screen_y);
     }
 
@@ -98,6 +99,7 @@ impl AppState {
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;
+        self.recalculate_line_num_width();
         self.retain_cursor_visual_position(cursor_screen_y);
     }
 
