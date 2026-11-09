@@ -58,6 +58,15 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
 
     if ctx.raw_diff {
         trailing.push((Cow::Borrowed("raw diff"), p.status_bar_accent, true));
+    } else if ctx.expanded_mods_count > 0 {
+        let label = if ctx.total_mods > 0 && ctx.expanded_mods_count == ctx.total_mods {
+            Cow::Borrowed("expanded mods")
+        } else if ctx.expanded_mods_count == 1 {
+            Cow::Borrowed("1 expanded mod")
+        } else {
+            Cow::Owned(format!("{} expanded mods", ctx.expanded_mods_count))
+        };
+        trailing.push((label, p.status_bar_accent, true));
     }
     if ctx.col_offset > 0 {
         trailing.push((
@@ -205,6 +214,8 @@ mod tests {
                 cur_hunk: 0,
                 total_hunks: 1,
                 raw_diff: false,
+                expanded_mods_count: 0,
+                total_mods: 0,
                 col_offset: 0,
                 num_buffer: "",
                 common_prefix: None,
@@ -385,6 +396,32 @@ mod tests {
             "crates/ · raw diff · col 8+ · go 10 · note saved"
         );
     }
+
+    #[test]
+    fn test_status_bar_expanded_mods_badges() {
+        let (mut c, _file) = ctx(120, "short.rs");
+        c.total_mods = 3;
+        c.expanded_mods_count = 0;
+        let layout = status_layout(&c);
+        assert!(!plain(&layout).contains("expanded mod"));
+
+        c.expanded_mods_count = 1;
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "1 expanded mod");
+
+        c.expanded_mods_count = 2;
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "2 expanded mods");
+
+        c.expanded_mods_count = 3;
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "expanded mods");
+
+        // When in raw mode, expanded mods badge is suppressed in favor of raw diff
+        c.raw_diff = true;
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "raw diff");
+    }
 }
 
 #[cfg(test)]
@@ -398,6 +435,8 @@ mod empty_state_tests {
             cur_hunk: 0,
             total_hunks: 0,
             raw_diff: false,
+            expanded_mods_count: 0,
+            total_mods: 0,
             col_offset: 0,
             num_buffer: "",
             common_prefix: None,

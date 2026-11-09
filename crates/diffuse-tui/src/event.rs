@@ -227,6 +227,9 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('w')) => {
             state.execute(TuiCommand::ToggleWordDiff);
         }
+        (KeyModifiers::NONE, KeyCode::Char('e')) => {
+            state.execute(TuiCommand::ToggleExpandAllMods);
+        }
         (KeyModifiers::NONE, KeyCode::Char('a'))
         | (KeyModifiers::SHIFT, KeyCode::Char('A'))
         | (KeyModifiers::NONE, KeyCode::Char('+'))

@@ -620,3 +620,54 @@ fn test_palette_rs_commit_hunk_starts_not_interleaved() {
         expected_flat += hunk.rows.len();
     }
 }
+
+#[test]
+fn test_flat_and_hunk_starts_with_expanded_mods() {
+    let diff_str = r#"diff --git a/f1.rs b/f1.rs
+index 1111111..2222222 100644
+--- a/f1.rs
++++ b/f1.rs
+@@ -1,3 +1,3 @@
+ fn f1() {
+-    let val_a = 1;
++    let val_a = 2;
+ }
+diff --git a/f2.rs b/f2.rs
+index 3333333..4444444 100644
+--- a/f2.rs
++++ b/f2.rs
+@@ -1,3 +1,3 @@
+ fn f2() {
+-    let val_b = 3;
++    let val_b = 4;
+ }
+"#;
+    let pipeline_out = run_pipeline_full(diff_str, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        pipeline_out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    assert_eq!(state.hunk_starts.len(), 2);
+    let f1_hunk_start_initial = state.hunk_starts[1].flat;
+
+    // Expand all mod rows
+    state.execute(crate::command::TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 2);
+
+    // File 0 has one expanded mod (which added 1 extra flat row)
+    // Therefore File 1's hunk start must have shifted by +1
+    assert_eq!(state.hunk_starts[1].flat, f1_hunk_start_initial + 1);
+
+    // Check flat rows in file 0
+    let file0_rows: Vec<_> = state
+        .flat
+        .iter()
+        .filter(|r| r.file_idx == 0 && r.is_diff_row())
+        .collect();
+    assert_eq!(file0_rows.len(), 4); // Ctx, Del, Add, Ctx
+    assert_eq!(file0_rows[1].mod_side(), Some(diffuse_core::ModSide::Del));
+    assert_eq!(file0_rows[2].mod_side(), Some(diffuse_core::ModSide::Add));
+}

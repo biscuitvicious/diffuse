@@ -127,11 +127,14 @@ impl AppState {
                 } else if let Some(fi) = self.is_cursor_on_bottom_divider() {
                     let last_hi = self.output.files[fi].hunks.len().saturating_sub(1);
                     let _ = self.expand_hunk_below(fi, last_hi);
+                } else if self.is_cursor_on_mod_row() {
+                    self.toggle_current_mod_row();
                 } else {
                     self.goto_opposing_move();
                 }
             }
             TuiCommand::ToggleCollapseFile(Some(fi)) => self.toggle_file_collapse(fi),
+            TuiCommand::ToggleExpandAllMods => self.toggle_expand_all_mods(),
             TuiCommand::OpenFileFinder => self.open_file_finder(),
             TuiCommand::CloseFileFinder => self.cancel_file_finder(),
             TuiCommand::ConfirmFileFinder => self.confirm_file_finder(),

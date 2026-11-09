@@ -769,3 +769,140 @@ index 1111111..2222222 100644
         "cursor must remain on the second row of the file header after expanding"
     );
 }
+
+#[test]
+fn test_toggle_mod_row_expand_and_collapse_with_enter() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+index 1111111..2222222 100644
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let x = 1;
++    let x = 2;
+ }
+"#;
+    let mut state = AppState::new(
+        run_pipeline_full(diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Find the mod row index
+    let mod_idx = state
+        .flat
+        .iter()
+        .position(|fr| {
+            state
+                .row_of(fr)
+                .is_some_and(|r| r.kind == crate::core::parse::RowKind::Mod)
+        })
+        .expect("must find mod row");
+
+    state.row_idx = mod_idx;
+    assert!(!state.flat[state.row_idx].is_expanded_mod());
+    assert!(state.is_cursor_on_mod_row());
+
+    // Press Enter to expand the mod row
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+
+    // Cursor must land on the Del row (first row of the expanded pair)
+    assert!(state.flat[state.row_idx].is_expanded_mod());
+    assert_eq!(
+        state.flat[state.row_idx].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(state.row_idx, mod_idx);
+
+    // Next row in flat list must be the Add row
+    let add_row = state.flat[mod_idx + 1];
+    assert!(add_row.is_expanded_mod());
+    assert_eq!(add_row.mod_side(), Some(diffuse_core::ModSide::Add));
+
+    // Press Enter to collapse from the Del row
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert!(!state.flat[state.row_idx].is_expanded_mod());
+    assert_eq!(state.row_idx, mod_idx);
+
+    // Expand again, move down to Add row, and collapse from Add row
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert_eq!(
+        state.flat[state.row_idx].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    state.execute(TuiCommand::MoveDown(1));
+    assert_eq!(
+        state.flat[state.row_idx].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(state.row_idx, mod_idx + 1);
+
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert!(!state.flat[state.row_idx].is_expanded_mod());
+    assert_eq!(state.row_idx, mod_idx);
+}
+
+#[test]
+fn test_toggle_expand_all_mods_global_cycle() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+index 1111111..2222222 100644
+--- a/test.rs
++++ b/test.rs
+@@ -1,5 +1,5 @@
+ fn main() {
+-    let a = 1;
++    let a = 10;
+     let mid = 2;
+-    let b = 3;
++    let b = 30;
+ }
+"#;
+    let mut state = AppState::new(
+        run_pipeline_full(diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    assert_eq!(state.total_mod_rows(), 2);
+    assert_eq!(state.expanded_mods.len(), 0);
+
+    // Position cursor on the first mod row
+    let first_mod = state
+        .flat
+        .iter()
+        .position(|fr| {
+            state
+                .row_of(fr)
+                .is_some_and(|r| r.kind == crate::core::parse::RowKind::Mod)
+        })
+        .expect("must find mod row");
+    state.row_idx = first_mod;
+
+    // Press 'e' -> Expand all mod rows
+    state.execute(TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 2);
+    // Cursor on a mod row lands on Del row
+    assert_eq!(
+        state.flat[state.row_idx].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+
+    // Press 'e' -> Collapse all mod rows
+    state.execute(TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 0);
+    assert_eq!(state.row_idx, first_mod);
+
+    // Expand only one mod row with Enter
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert_eq!(state.expanded_mods.len(), 1);
+
+    // Partial state: pressing 'e' expands all mod rows
+    state.execute(TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 2);
+
+    // Pressing 'e' again collapses all mod rows
+    state.execute(TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 0);
+}

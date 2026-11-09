@@ -123,7 +123,7 @@ impl AppState {
                     });
                 }
             }
-            FlatRowKind::DiffRow { .. } => {
+            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
                 let segs = self.row_seg_count(row_idx, cw);
                 if vis_line < div_segs + segs {
                     return Some(VisualTarget::DiffRow {

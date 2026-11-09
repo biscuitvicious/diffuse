@@ -2,10 +2,11 @@
 
 use crate::{
     core::{
+        parse::RowKind,
         pipeline::context_line_runs,
         wire::{OutputFile, OutputRow, OutputRun, PipelineOutput},
     },
-    types::{FlatRow, FlatRowKind},
+    types::{FlatRow, FlatRowKind, ModRowKey},
 };
 
 use super::AppState;
@@ -20,8 +21,12 @@ impl AppState {
         raw_diff: bool,
         fr: &FlatRow,
     ) -> Option<&'a OutputRow> {
-        let FlatRowKind::DiffRow { hunk_idx, row_idx } = fr.kind else {
-            return None;
+        let (hunk_idx, row_idx) = match fr.kind {
+            FlatRowKind::DiffRow { hunk_idx, row_idx }
+            | FlatRowKind::ExpandedMod {
+                hunk_idx, row_idx, ..
+            } => (hunk_idx, row_idx),
+            _ => return None,
         };
         let file = output.files.get(fr.file_idx)?;
         if raw_diff {
@@ -78,11 +83,22 @@ impl AppState {
     }
 
     pub fn flat_coord(output: &PipelineOutput, raw_diff: bool, fr: &FlatRow) -> Option<u32> {
-        Self::row_from_output(output, raw_diff, fr).and_then(Self::row_coord)
+        let row = Self::row_from_output(output, raw_diff, fr)?;
+        match fr.kind {
+            FlatRowKind::ExpandedMod {
+                side: diffuse_core::ModSide::Del,
+                ..
+            } => row.old_line,
+            FlatRowKind::ExpandedMod {
+                side: diffuse_core::ModSide::Add,
+                ..
+            } => row.new_line,
+            _ => Self::row_coord(row),
+        }
     }
 
     pub fn flat_row_coord(&self, fr: &FlatRow) -> Option<u32> {
-        self.row_of(fr).and_then(Self::row_coord)
+        Self::flat_coord(&self.output, self.raw_diff, fr)
     }
 
     pub fn row_coord(row: &OutputRow) -> Option<u32> {
@@ -138,5 +154,29 @@ impl AppState {
             }
         }
         from
+    }
+
+    #[inline]
+    pub fn total_mod_rows(&self) -> usize {
+        self.output.total_counts().mods
+    }
+
+    #[inline]
+    pub fn is_mod_expanded(&self, file_idx: usize, row: &OutputRow) -> bool {
+        self.expanded_mods.contains(&ModRowKey::new(file_idx, row))
+    }
+
+    #[inline]
+    pub fn is_cursor_on_mod_row(&self) -> bool {
+        let Some(item) = self.flat.get(self.row_idx) else {
+            return false;
+        };
+        if item.is_expanded_mod() {
+            return true;
+        }
+        if !item.is_diff_row() {
+            return false;
+        }
+        self.row_of(item).is_some_and(|r| r.kind == RowKind::Mod)
     }
 }

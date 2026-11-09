@@ -4,10 +4,11 @@ use std::collections::HashSet;
 
 use crate::{
     core::{
+        ModSide,
         parse::RowKind,
         wire::{OutputFile, PipelineOutput},
     },
-    types::{FlatRow, HunkMeta, HunkStart},
+    types::{FlatRow, HunkMeta, HunkStart, ModRowKey},
 };
 
 use super::AppState;
@@ -16,8 +17,9 @@ impl AppState {
     pub(crate) fn build_visual_flat(
         output: &PipelineOutput,
         collapsed_files: &HashSet<usize>,
+        expanded_mods: &HashSet<ModRowKey>,
     ) -> (Vec<FlatRow>, Vec<HunkStart>) {
-        let flat = Self::build_flat(output, collapsed_files);
+        let flat = Self::build_flat(output, collapsed_files, expanded_mods);
         let hunk_starts = Self::build_hunk_starts(output, &flat);
         (flat, hunk_starts)
     }
@@ -61,6 +63,7 @@ impl AppState {
     pub(crate) fn build_flat(
         output: &PipelineOutput,
         collapsed_files: &HashSet<usize>,
+        expanded_mods: &HashSet<ModRowKey>,
     ) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
@@ -74,19 +77,40 @@ impl AppState {
                 for (hi, h) in f.hunks.iter().enumerate() {
                     for _ in 0..h.rows.len() {
                         if ri < f.rows.len() {
-                            flat.push(FlatRow::diff_row(fi, hi, ri));
+                            let r = &f.rows[ri];
+                            if r.kind == RowKind::Mod
+                                && expanded_mods.contains(&ModRowKey::new(fi, r))
+                            {
+                                flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
+                                flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
+                            } else {
+                                flat.push(FlatRow::diff_row(fi, hi, ri));
+                            }
                             ri += 1;
                         }
                     }
                 }
                 while ri < f.rows.len() {
-                    flat.push(FlatRow::diff_row(fi, hunk_count.saturating_sub(1), ri));
+                    let hi = hunk_count.saturating_sub(1);
+                    let r = &f.rows[ri];
+                    if r.kind == RowKind::Mod && expanded_mods.contains(&ModRowKey::new(fi, r)) {
+                        flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
+                        flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
+                    } else {
+                        flat.push(FlatRow::diff_row(fi, hi, ri));
+                    }
                     ri += 1;
                 }
             } else {
                 for (hi, h) in f.hunks.iter().enumerate() {
-                    for ri in 0..h.rows.len() {
-                        flat.push(FlatRow::diff_row(fi, hi, ri));
+                    for (ri, r) in h.rows.iter().enumerate() {
+                        if r.kind == RowKind::Mod && expanded_mods.contains(&ModRowKey::new(fi, r))
+                        {
+                            flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
+                            flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
+                        } else {
+                            flat.push(FlatRow::diff_row(fi, hi, ri));
+                        }
                     }
                 }
             }
@@ -113,17 +137,18 @@ impl AppState {
         if search_from >= flat.len() || flat[search_from].file_idx != fi {
             return starts;
         }
-        let mut offset = 0;
-        for (hi, h) in f.hunks.iter().enumerate() {
-            let hunk_flat_idx = search_from + offset;
-            if hunk_flat_idx < flat.len() && flat[hunk_flat_idx].file_idx == fi {
+        let mut cur = search_from;
+        for (hi, _) in f.hunks.iter().enumerate() {
+            while cur < flat.len() && flat[cur].file_idx == fi && flat[cur].hunk_idx() < Some(hi) {
+                cur += 1;
+            }
+            if cur < flat.len() && flat[cur].file_idx == fi && flat[cur].hunk_idx() == Some(hi) {
                 starts.push(HunkStart {
-                    flat: hunk_flat_idx,
+                    flat: cur,
                     file: fi,
                     hunk: hi,
                 });
             }
-            offset += h.rows.len();
         }
         starts
     }

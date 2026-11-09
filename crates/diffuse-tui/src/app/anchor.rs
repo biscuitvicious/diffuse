@@ -141,7 +141,7 @@ impl AppState {
         let (flat, hunk_starts) = if self.raw_diff {
             Self::build_raw_flat(&self.output, &self.collapsed_files)
         } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files)
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
         };
         self.flat = flat;
         self.bump_content();

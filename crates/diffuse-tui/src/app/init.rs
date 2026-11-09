@@ -25,7 +25,8 @@ impl AppState {
             }
         }
 
-        let (flat, hunk_starts) = Self::build_visual_flat(&output, &collapsed_files);
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&output, &collapsed_files, &HashSet::new());
 
         // Start on first coordinate row if available, or first row (e.g.
         // header)
@@ -90,6 +91,7 @@ impl AppState {
             pending_editor: None,
             file_finder: None,
             collapsed_files,
+            expanded_mods: HashSet::new(),
             loading_files: HashSet::new(),
             on_demand_tx: None,
             on_demand_rx: None,

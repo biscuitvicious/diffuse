@@ -7,6 +7,7 @@ use crate::{
     render::{display_text, width::display_width},
     types::FlatRowKind,
 };
+use diffuse_core::ModSide;
 
 use crate::app::AppState;
 
@@ -109,11 +110,19 @@ impl AppState {
             FlatRowKind::BottomGapDivider { .. } => {
                 self.bottom_gap_seg_count(item.file_idx, content_width)
             }
-            FlatRowKind::DiffRow { .. } => {
+            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
                 let Some(r) = self.row_of(item) else {
                     return 1;
                 };
-                let text = r.text();
+                let text = match item.kind {
+                    FlatRowKind::ExpandedMod {
+                        side: ModSide::Del, ..
+                    } => r.old_text(),
+                    FlatRowKind::ExpandedMod {
+                        side: ModSide::Add, ..
+                    } => r.new_text(),
+                    _ => r.text(),
+                };
                 if self.raw_diff {
                     let text_cols = content_width.saturating_sub(6).max(1);
                     let exp = crate::render::expand_tabs(&text, 4);

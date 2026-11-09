@@ -303,7 +303,8 @@ pub fn render_raw_file_diff_with_width(
 
         for r in &h.rows {
             let pfx = styled_prefix_spans(
-                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, None, theme,
+                r.kind, r.mov_side, None, r.group, r.new_line, r.old_line, &r.runs, true, None,
+                theme,
             );
             let text = r.text();
             let _ = write_raw_row(&mut out, r.kind, &pfx, &text, false, false, true, theme);

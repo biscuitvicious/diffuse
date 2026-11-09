@@ -8,7 +8,7 @@ impl AppState {
         let (flat, hunk_starts) = if self.raw_diff {
             Self::build_raw_flat(&self.output, &self.collapsed_files)
         } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files)
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
         };
         self.flat = flat;
         self.hunk_starts = hunk_starts;
@@ -57,7 +57,17 @@ impl AppState {
             && let Some(r) = self.row_of(fr)
             && (r.new_line.is_some() || r.old_line.is_some())
         {
-            (r.new_line, r.old_line)
+            match fr.kind {
+                crate::types::FlatRowKind::ExpandedMod {
+                    side: diffuse_core::ModSide::Del,
+                    ..
+                } => (None, r.old_line),
+                crate::types::FlatRowKind::ExpandedMod {
+                    side: diffuse_core::ModSide::Add,
+                    ..
+                } => (r.new_line, None),
+                _ => (r.new_line, r.old_line),
+            }
         } else {
             let mut neighbor_coord = None;
             for offset in 1..self.flat.len() {
@@ -112,7 +122,7 @@ impl AppState {
         let (flat, hunk_starts) = if self.raw_diff {
             Self::build_raw_flat(&self.output, &self.collapsed_files)
         } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files)
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
         };
         self.flat = flat;
         self.hunk_starts = hunk_starts;
@@ -194,6 +204,7 @@ impl AppState {
         {
             for (i, item) in self.flat.iter().enumerate() {
                 if item.file_idx == target_fi
+                    && item.mod_side() != Some(diffuse_core::ModSide::Del)
                     && self.row_of(item).and_then(|r| r.new_line) == Some(target_nl)
                 {
                     idx = Some(i);
@@ -208,6 +219,7 @@ impl AppState {
         {
             for (i, item) in self.flat.iter().enumerate() {
                 if item.file_idx == target_fi
+                    && item.mod_side() != Some(diffuse_core::ModSide::Add)
                     && self.row_of(item).and_then(|r| r.old_line) == Some(target_ol)
                 {
                     idx = Some(i);

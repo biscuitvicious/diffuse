@@ -1,7 +1,7 @@
 //! TUI Domain Types — selection, navigation coordinates, and flat visual row
 //! models.
 
-use diffuse_core::{notes::DiffCoord, wire::OutputRow};
+use diffuse_core::{ModSide, notes::DiffCoord, wire::OutputRow};
 
 /// A contiguous line selection within a file, bounded by diff-row
 /// coordinates in display order. Each bound carries both the old and new
@@ -11,6 +11,26 @@ pub struct Selection {
     pub file_idx: usize,
     pub start: DiffCoord,
     pub end: DiffCoord,
+}
+
+/// Unique identifier for a modified row within a file, stable across
+/// context expansions and collapses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ModRowKey {
+    pub file_idx: usize,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+}
+
+impl ModRowKey {
+    #[inline]
+    pub fn new(file_idx: usize, row: &OutputRow) -> Self {
+        Self {
+            file_idx,
+            old_line: row.old_line,
+            new_line: row.new_line,
+        }
+    }
 }
 
 impl Selection {
@@ -76,6 +96,13 @@ pub enum FlatRowKind {
     HunkDivider { hunk_idx: usize },
     /// Diff modification or context line within a hunk.
     DiffRow { hunk_idx: usize, row_idx: usize },
+    /// An expanded modification line half (either Del pre-image or Add
+    /// post-image).
+    ExpandedMod {
+        hunk_idx: usize,
+        row_idx: usize,
+        side: ModSide,
+    },
     /// Trailing gap divider (`──── N more lines: ▲ ────`) at the end of a file.
     BottomGapDivider { hunk_idx: usize },
 }
@@ -113,6 +140,18 @@ impl FlatRow {
     }
 
     #[inline]
+    pub fn expanded_mod(file_idx: usize, hunk_idx: usize, row_idx: usize, side: ModSide) -> Self {
+        Self {
+            file_idx,
+            kind: FlatRowKind::ExpandedMod {
+                hunk_idx,
+                row_idx,
+                side,
+            },
+        }
+    }
+
+    #[inline]
     pub fn bottom_gap(file_idx: usize, hunk_idx: usize) -> Self {
         Self {
             file_idx,
@@ -126,6 +165,7 @@ impl FlatRow {
             FlatRowKind::FileHeader => None,
             FlatRowKind::HunkDivider { hunk_idx }
             | FlatRowKind::DiffRow { hunk_idx, .. }
+            | FlatRowKind::ExpandedMod { hunk_idx, .. }
             | FlatRowKind::BottomGapDivider { hunk_idx } => Some(hunk_idx),
         }
     }
@@ -133,7 +173,17 @@ impl FlatRow {
     #[inline]
     pub fn diff_row_idx(&self) -> Option<usize> {
         match self.kind {
-            FlatRowKind::DiffRow { row_idx, .. } => Some(row_idx),
+            FlatRowKind::DiffRow { row_idx, .. } | FlatRowKind::ExpandedMod { row_idx, .. } => {
+                Some(row_idx)
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn mod_side(&self) -> Option<ModSide> {
+        match self.kind {
+            FlatRowKind::ExpandedMod { side, .. } => Some(side),
             _ => None,
         }
     }
@@ -155,7 +205,15 @@ impl FlatRow {
 
     #[inline]
     pub fn is_diff_row(&self) -> bool {
-        matches!(self.kind, FlatRowKind::DiffRow { .. })
+        matches!(
+            self.kind,
+            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. }
+        )
+    }
+
+    #[inline]
+    pub fn is_expanded_mod(&self) -> bool {
+        matches!(self.kind, FlatRowKind::ExpandedMod { .. })
     }
 }
 
@@ -201,5 +259,33 @@ impl StickyHeaderInfo {
         } else {
             self.total_sticky_lines()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expanded_mod_flat_row_methods() {
+        let del = FlatRow::expanded_mod(1, 2, 3, ModSide::Del);
+        assert!(del.is_diff_row());
+        assert!(del.is_expanded_mod());
+        assert!(!del.is_file_header());
+        assert!(!del.is_hunk_divider());
+        assert!(!del.is_bottom_gap_divider());
+        assert_eq!(del.hunk_idx(), Some(2));
+        assert_eq!(del.diff_row_idx(), Some(3));
+        assert_eq!(del.mod_side(), Some(ModSide::Del));
+
+        let add = FlatRow::expanded_mod(1, 2, 3, ModSide::Add);
+        assert!(add.is_diff_row());
+        assert!(add.is_expanded_mod());
+        assert_eq!(add.mod_side(), Some(ModSide::Add));
+
+        let diff = FlatRow::diff_row(1, 2, 3);
+        assert!(diff.is_diff_row());
+        assert!(!diff.is_expanded_mod());
+        assert_eq!(diff.mod_side(), None);
     }
 }

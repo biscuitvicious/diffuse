@@ -8,7 +8,7 @@ use crate::{
         wire::{OutputFile, PipelineOutput},
     },
     render::DiffuseTheme,
-    types::{FlatRow, HunkMeta, HunkStart, Selection},
+    types::{FlatRow, HunkMeta, HunkStart, ModRowKey, Selection},
 };
 
 mod anchor;
@@ -74,6 +74,7 @@ pub struct AppState {
     pub pending_editor: Option<crate::editor::EditorRequest>,
     pub file_finder: Option<crate::finder::FileFinderState>,
     pub collapsed_files: HashSet<usize>,
+    pub expanded_mods: HashSet<ModRowKey>,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,

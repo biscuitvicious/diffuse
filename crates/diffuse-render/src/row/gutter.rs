@@ -10,7 +10,7 @@ use crate::{
     ansi::Color,
     core::{
         parse::{RowGroup, RowKind},
-        wire::{MovSide, OutputRun},
+        wire::{ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
     theme::{Cursor, DiffKind, DiffuseTheme, FG_RESET, StyledColor},
@@ -96,6 +96,7 @@ pub fn prefix_of(
 pub fn styled_prefix_spans(
     kind: RowKind,
     mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
     group: Option<RowGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
@@ -117,6 +118,26 @@ pub fn styled_prefix_spans(
     let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
     let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
+    if let Some(side) = mod_side {
+        return match side {
+            ModSide::Del => {
+                let pad = pad4_bytes(old_line, &mut buf);
+                vec![
+                    del.num.span(pad, bg),
+                    r#mod.icon.span("┌", bg),
+                    del.icon.span("-", bg),
+                ]
+            }
+            ModSide::Add => {
+                let pad = pad4_bytes(new_line, &mut buf);
+                vec![
+                    add.num.span(pad, bg),
+                    r#mod.icon.span("└", bg),
+                    add.icon.span("+", bg),
+                ]
+            }
+        };
+    }
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
             let pad = pad4_bytes(new_line, &mut buf);

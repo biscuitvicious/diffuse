@@ -462,9 +462,15 @@ impl AppState {
                         vis_i += 1;
                     }
                 }
-                FlatRowKind::DiffRow { .. } => {
+                FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
                     let Some(r) = self.row_of(item) else {
                         continue;
+                    };
+                    let mod_side = item.mod_side();
+                    let row_text = match mod_side {
+                        Some(diffuse_core::ModSide::Del) => r.old_text(),
+                        Some(diffuse_core::ModSide::Add) => r.new_text(),
+                        None => r.text(),
                     };
                     let seg_count = seg_counts[idx];
                     for s_idx in 0..seg_count {
@@ -475,6 +481,7 @@ impl AppState {
                                 styled_prefix_spans(
                                     r.kind,
                                     r.mov_side,
+                                    mod_side,
                                     r.group,
                                     r.new_line,
                                     r.old_line,
@@ -486,7 +493,6 @@ impl AppState {
                             } else {
                                 continuation_prefix_spans(None)
                             };
-                            let row_text = r.text();
                             let rendered_row = if self.raw_diff {
                                 let text_cols = content_width.saturating_sub(6).max(1);
                                 let piece =
@@ -511,6 +517,7 @@ impl AppState {
                                     r.is_aux(),
                                     r.kind,
                                     r.mov_side,
+                                    mod_side,
                                     &r.runs,
                                     seg_start,
                                     seg_end,

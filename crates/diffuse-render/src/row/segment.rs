@@ -14,7 +14,7 @@ use crate::{
         lcs::char_slice,
         merge::RunKind,
         parse::{RowKind, Spans},
-        wire::{MovSide, OutputRun},
+        wire::{ModSide, MovSide, OutputRun},
     },
     span::{StyledSpan, write_span_token},
     theme::{Cursor, DiffKind, DiffuseTheme},
@@ -62,6 +62,7 @@ pub fn write_row_segment<W: Write>(
     is_aux_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
@@ -79,6 +80,7 @@ pub fn write_row_segment<W: Write>(
         is_aux_row,
         kind,
         mov_side,
+        mod_side,
         runs,
         seg_start,
         seg_end,
@@ -174,6 +176,49 @@ pub fn render_row_segment(
         is_aux_row,
         kind,
         mov_side,
+        None,
+        runs,
+        seg_start,
+        seg_end,
+        prefix,
+        is_continuation,
+        selected,
+        band,
+        col_offset,
+        word_diff,
+        syntax_on,
+        theme,
+    );
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_row_segment_with_mod_side(
+    text: &str,
+    is_aux_row: bool,
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    runs: &[OutputRun],
+    seg_start: usize,
+    seg_end: usize,
+    prefix: &[StyledSpan],
+    is_continuation: bool,
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    let _ = write_row_segment(
+        &mut out,
+        text,
+        is_aux_row,
+        kind,
+        mov_side,
+        mod_side,
         runs,
         seg_start,
         seg_end,
@@ -213,6 +258,7 @@ pub fn row_segment_spans(
     is_aux_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
@@ -226,8 +272,8 @@ pub fn row_segment_spans(
 ) -> RowSegmentLine {
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_mov_src = mov_side == Some(MovSide::Src);
-    let is_del_row = kind == RowKind::Del || is_mov_src;
-    let is_mod_row = kind == RowKind::Mod;
+    let is_del_row = kind == RowKind::Del || is_mov_src || mod_side == Some(ModSide::Del);
+    let is_mod_row = kind == RowKind::Mod && mod_side.is_none();
 
     let band_bg = theme.palette[Cursor::Row].band.bg;
     let ctx_cursor_bg = theme.palette[Cursor::Row][DiffKind::Ctx].surface.bg;
@@ -287,8 +333,8 @@ pub fn row_segment_spans(
     let is_expansion_add = kind == RowKind::Add && is_aux_row;
 
     let filtered_runs: Vec<OutputRun>;
-    let runs: &[OutputRun] = match mov_side {
-        Some(MovSide::Src) => {
+    let runs: &[OutputRun] = match (mov_side, mod_side) {
+        (Some(MovSide::Src), _) | (_, Some(ModSide::Del)) => {
             filtered_runs = runs
                 .iter()
                 .filter(|t| !t.kind.is_add_like() && t.kind != RunKind::MovedSrc)
@@ -296,7 +342,7 @@ pub fn row_segment_spans(
                 .collect();
             &filtered_runs
         }
-        Some(MovSide::Tgt) => {
+        (Some(MovSide::Tgt), _) | (_, Some(ModSide::Add)) => {
             filtered_runs = runs
                 .iter()
                 .filter(|t| !t.kind.is_del_like())
@@ -320,7 +366,9 @@ pub fn row_segment_spans(
             line_bg
         } else if tok_kind == RunKind::Del {
             del_bg
-        } else if tok_kind == RunKind::Add && (is_mod_row || has_subwords || is_expansion_add) {
+        } else if tok_kind == RunKind::Add
+            && (is_mod_row || has_subwords || is_expansion_add || mod_side == Some(ModSide::Add))
+        {
             word_bg
         } else if matches!(tok_kind, RunKind::Ctx | RunKind::MovedTgt | RunKind::Add) {
             line_bg
@@ -347,8 +395,9 @@ pub fn row_segment_spans(
     };
     let text = exp_text.as_ref();
 
-    let is_plain_del =
-        kind == RowKind::Del || (is_mov_src && !runs.iter().any(|t| t.kind == RunKind::Ctx));
+    let is_plain_del = kind == RowKind::Del
+        || ((is_mov_src || mod_side == Some(ModSide::Del))
+            && !runs.iter().any(|t| t.kind == RunKind::Ctx));
     if is_plain_del {
         let body = if is_full_row {
             text.to_string()

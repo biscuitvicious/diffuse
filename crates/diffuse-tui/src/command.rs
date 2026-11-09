@@ -37,6 +37,7 @@ pub enum TuiCommand {
     ForceReload,
 
     ToggleCollapseFile(Option<usize>),
+    ToggleExpandAllMods,
     ExpandAllHidden,
     ResetCurrentHunkContext,
     ResetAllContext,

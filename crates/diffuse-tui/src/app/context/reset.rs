@@ -25,7 +25,8 @@ impl AppState {
                 }
             }
         }
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;
@@ -74,7 +75,8 @@ impl AppState {
             self.hunk_meta[fi] = new_meta;
         }
 
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;
@@ -91,7 +93,8 @@ impl AppState {
                 self.reset_hunk_at(fi, hi);
             }
         }
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
+        let (flat, hunk_starts) =
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;

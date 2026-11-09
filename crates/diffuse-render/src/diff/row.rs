@@ -24,7 +24,8 @@ pub(crate) fn render_row_line(
     let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
         (
             styled_prefix_spans(
-                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, None, theme,
+                r.kind, r.mov_side, None, r.group, r.new_line, r.old_line, &r.runs, false, None,
+                theme,
             ),
             continuation_prefix_spans(None),
         )
@@ -46,6 +47,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
+            None,
             &r.runs,
             0,
             usize::MAX,
@@ -78,6 +80,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
+            None,
             &r.runs,
             0,
             usize::MAX,
@@ -119,6 +122,7 @@ pub(crate) fn render_row_line(
             r.is_aux(),
             r.kind,
             r.mov_side,
+            None,
             &r.runs,
             seg_start,
             seg_end,

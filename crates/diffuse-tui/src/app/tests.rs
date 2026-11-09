@@ -5787,3 +5787,18 @@ fn test_header_file_count_waits_for_the_stream() {
         crate::view::HeaderFileCount::None
     );
 }
+
+#[test]
+fn test_flat_coord_for_expanded_mod() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-hello old world\n+hello new world\n";
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let fr_del = FlatRow::expanded_mod(0, 0, 0, diffuse_core::ModSide::Del);
+    let fr_add = FlatRow::expanded_mod(0, 0, 0, diffuse_core::ModSide::Add);
+    assert_eq!(AppState::flat_coord(&output, false, &fr_del), Some(1));
+    assert_eq!(AppState::flat_coord(&output, false, &fr_add), Some(1));
+}

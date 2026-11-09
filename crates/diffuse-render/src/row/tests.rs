@@ -25,7 +25,7 @@ fn emitted_prefix(
     theme: &DiffuseTheme,
 ) -> String {
     let spans = styled_prefix_spans(
-        kind, mov_side, group, new_line, old_line, runs, in_hunk, None, theme,
+        kind, mov_side, None, group, new_line, old_line, runs, in_hunk, None, theme,
     );
     let mut out = String::new();
     let is_mov_src = mov_side == Some(MovSide::Src);
@@ -923,6 +923,7 @@ fn test_write_row_segment_direct_buffer() {
         false,
         RowKind::Add,
         None,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -1391,6 +1392,7 @@ fn test_styled_prefix_spans_match_ansi_prefix_text() {
         let spans = styled_prefix_spans(
             kind,
             mov_side,
+            None,
             group,
             new_line,
             old_line,
@@ -1417,6 +1419,7 @@ fn test_styled_prefix_spans_carry_gutter_colors() {
     let gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
     let spans = styled_prefix_spans(
         RowKind::Mod,
+        None,
         None,
         None,
         Some(55),
@@ -1452,6 +1455,7 @@ fn test_mov_row_prefix_line_number_colors() {
         Some(MovSide::Src),
         None,
         None,
+        None,
         Some(42),
         &[],
         true,
@@ -1470,6 +1474,7 @@ fn test_mov_row_prefix_line_number_colors() {
     let tgt_spans = styled_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Tgt),
+        None,
         None,
         Some(99),
         None,
@@ -1512,6 +1517,7 @@ fn test_row_segment_spans_match_ansi_text_across_matrix() {
                         kind,
                         None,
                         None,
+                        None,
                         Some(3),
                         Some(2),
                         &runs,
@@ -1524,8 +1530,8 @@ fn test_row_segment_spans_match_ansi_text_across_matrix() {
                         selected, band, 0, true, syntax_on, &theme,
                     );
                     let line = row_segment_spans(
-                        text, false, kind, None, &runs, seg_start, seg_end, prefix, selected, band,
-                        0, true, syntax_on, &theme,
+                        text, false, kind, None, None, &runs, seg_start, seg_end, prefix, selected,
+                        band, 0, true, syntax_on, &theme,
                     );
                     assert_eq!(
                         span_text(&line.spans),
@@ -1551,6 +1557,7 @@ fn test_row_segment_spans_carry_del_strike_and_fill() {
         RowKind::Mod,
         None,
         None,
+        None,
         Some(15),
         Some(14),
         &runs,
@@ -1562,6 +1569,7 @@ fn test_row_segment_spans_carry_del_strike_and_fill() {
         "foo bar",
         false,
         RowKind::Mod,
+        None,
         None,
         &runs,
         0,
@@ -1609,6 +1617,7 @@ fn test_row_segment_spans_carry_word_fill_and_cursor() {
         RowKind::Add,
         None,
         None,
+        None,
         Some(8),
         None,
         &runs,
@@ -1620,6 +1629,7 @@ fn test_row_segment_spans_carry_word_fill_and_cursor() {
         "let x",
         false,
         RowKind::Add,
+        None,
         None,
         &runs,
         0,
@@ -1653,6 +1663,7 @@ fn test_raw_row_spans_match_ansi_text_and_trailing_fill() {
     let theme = DiffuseTheme::dark();
     let prefix = styled_prefix_spans(
         RowKind::Add,
+        None,
         None,
         None,
         Some(8),
@@ -1720,4 +1731,122 @@ fn test_aux_add_row_use_merged_display_text() {
     // With is_aux_row = false, display_text does not merge; returns text.
     let disp_plain = display_text("new_part", false, RowKind::Add, &runs, 0, true);
     assert_eq!(disp_plain, "new_part");
+}
+
+#[test]
+fn test_expanded_mod_prefix_spans_and_row_segment_spans() {
+    use diffuse_core::ModSide;
+    let theme = DiffuseTheme::dark();
+    let mod_gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+    let del_gutter = &theme.palette[Cursor::Rest][DiffKind::Del].gutter;
+    let add_gutter = &theme.palette[Cursor::Rest][DiffKind::Add].gutter;
+    let s_del = theme.row_style(RowKind::Del);
+    let s_add = theme.row_style(RowKind::Add);
+    let s_mod = theme.row_style(RowKind::Mod);
+
+    let runs = vec![
+        span_run(RunKind::Ctx, TokenColor::Keyword, None, "let "),
+        span_run(RunKind::Del, TokenColor::Default, None, "old"),
+        span_run(RunKind::Add, TokenColor::Default, None, "new"),
+        span_run(RunKind::Ctx, TokenColor::Default, None, " = 1;"),
+    ];
+
+    // 1. Del half: old_line, ┌ (mod orange) and - (del icon color)
+    let del_prefix = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        None,
+        Some(20),
+        Some(10),
+        &runs,
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(del_prefix[0].fg, Some(del_gutter.num.color));
+    assert!(del_prefix[0].text.contains("10"));
+    assert_eq!(del_prefix[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(del_prefix[1].text, "┌");
+    assert_eq!(del_prefix[2].fg, Some(del_gutter.icon.color));
+    assert_eq!(del_prefix[2].text, "-");
+
+    // 2. Add half: new_line, └ (mod orange) and + (add icon color)
+    let add_prefix = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Add),
+        None,
+        Some(20),
+        Some(10),
+        &runs,
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(add_prefix[0].fg, Some(add_gutter.num.color));
+    assert!(add_prefix[0].text.contains("20"));
+    assert_eq!(add_prefix[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(add_prefix[1].text, "└");
+    assert_eq!(add_prefix[2].fg, Some(add_gutter.icon.color));
+    assert_eq!(add_prefix[2].text, "+");
+
+    // 3. Del row segment: filters out "new", styles "old" with del_bg &
+    //    strikethrough
+    let del_line = row_segment_spans(
+        "let old = 1;",
+        false,
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        &runs,
+        0,
+        usize::MAX,
+        del_prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert_eq!(del_line.line_bg, Some(s_del.tint_bg));
+    let has_new_in_del = del_line.spans.iter().any(|s| s.text.contains("new"));
+    assert!(!has_new_in_del, "del half must not contain add spans");
+    let old_span = del_line
+        .spans
+        .iter()
+        .find(|s| s.text == "old")
+        .expect("old span");
+    assert!(old_span.strikethrough);
+    assert_eq!(old_span.bg, s_del.fill_bg);
+
+    // 4. Add row segment: filters out "old", styles "new" with word_bg
+    let add_line = row_segment_spans(
+        "let new = 1;",
+        false,
+        RowKind::Mod,
+        None,
+        Some(ModSide::Add),
+        &runs,
+        0,
+        usize::MAX,
+        add_prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert_eq!(add_line.line_bg, Some(s_add.tint_bg));
+    let has_old_in_add = add_line.spans.iter().any(|s| s.text.contains("old"));
+    assert!(!has_old_in_add, "add half must not contain del spans");
+    let new_span = add_line
+        .spans
+        .iter()
+        .find(|s| s.text == "new")
+        .expect("new span");
+    assert!(!new_span.strikethrough);
+    assert_eq!(new_span.bg, s_mod.fill_bg);
 }

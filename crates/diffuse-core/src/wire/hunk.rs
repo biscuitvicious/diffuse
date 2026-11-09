@@ -22,6 +22,17 @@ pub enum MovSide {
     Tgt,
 }
 
+/// Identifies which side of an expanded modification line an expanded row
+/// represents.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ModSide {
+    /// Pre-image side (deletion half displaying old line/text).
+    Del,
+    /// Post-image side (addition half displaying new line/text).
+    Add,
+}
+
 /// A hunk in the wire contract: change coordinates and its collapsed rows.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

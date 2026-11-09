@@ -249,8 +249,8 @@ pub fn render_finder_modal_widget(
                         break 'outer;
                     }
                     let prefix = styled_prefix_spans(
-                        r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, None,
-                        theme,
+                        r.kind, r.mov_side, None, r.group, r.new_line, r.old_line, &r.runs, true,
+                        None, theme,
                     );
                     let text = r.text();
                     let row = row_segment_spans(
@@ -258,6 +258,7 @@ pub fn render_finder_modal_widget(
                         r.is_aux(),
                         r.kind,
                         r.mov_side,
+                        None,
                         &r.runs,
                         0,
                         text_cols,
