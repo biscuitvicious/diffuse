@@ -17,9 +17,10 @@ pub fn display_text(
     col_offset: usize,
     word_diff: bool,
 ) -> String {
-    let use_merged = (kind == RowKind::Mod || (kind == RowKind::Add && is_aux_row))
-        && word_diff
-        && !runs.is_empty();
+    let use_merged =
+        (kind == RowKind::Mod || kind == RowKind::Mov || (kind == RowKind::Add && is_aux_row))
+            && word_diff
+            && !runs.is_empty();
 
     // Measure what renders: moved-out source text is skipped by the
     // renderer, so counting it here would wrap rows onto blank corpse

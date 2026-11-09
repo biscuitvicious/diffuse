@@ -119,16 +119,17 @@ pub fn write_row_segment<W: Write>(
         !is_continuation,
     )?;
     let body = &row.spans[prefix.len()..];
-    // Fast-path conditions mirror `row_segment_spans`: deletion rows and
+    // Fast-path conditions mirror `row_segment_spans`: plain deletion rows and
     // run-less rows render one body span with no trailing background.
     let is_mov_src = mov_side == Some(MovSide::Src);
-    let is_del_row = kind == RowKind::Del || is_mov_src;
+    let is_plain_del =
+        kind == RowKind::Del || (is_mov_src && !runs.iter().any(|t| t.kind == RunKind::Ctx));
     let body_empty = if runs.iter().any(|tok| tok.kind == RunKind::MovedSrc) {
         runs.iter().all(|tok| tok.kind == RunKind::MovedSrc)
     } else {
         runs.is_empty()
     };
-    if is_del_row || body_empty {
+    if is_plain_del || body_empty {
         if let Some(span) = body.first() {
             out.write_str(&bg_code(span.bg))?;
             write_span_token(out, span)?;
@@ -289,15 +290,32 @@ pub fn row_segment_spans(
     let is_expansion_add = kind == RowKind::Add && is_aux_row;
 
     let filtered_runs: Vec<OutputRun>;
-    let runs: &[OutputRun] = if runs.iter().any(|t| t.kind == RunKind::MovedSrc) {
-        filtered_runs = runs
-            .iter()
-            .filter(|t| t.kind != RunKind::MovedSrc)
-            .cloned()
-            .collect();
-        &filtered_runs
-    } else {
-        runs
+    let runs: &[OutputRun] = match mov_side {
+        Some(MovSide::Src) => {
+            filtered_runs = runs
+                .iter()
+                .filter(|t| !t.kind.is_add_like() && t.kind != RunKind::MovedSrc)
+                .cloned()
+                .collect();
+            &filtered_runs
+        }
+        Some(MovSide::Tgt) => {
+            filtered_runs = runs
+                .iter()
+                .filter(|t| !t.kind.is_del_like())
+                .cloned()
+                .collect();
+            &filtered_runs
+        }
+        _ if runs.iter().any(|t| t.kind == RunKind::MovedSrc) => {
+            filtered_runs = runs
+                .iter()
+                .filter(|t| t.kind != RunKind::MovedSrc)
+                .cloned()
+                .collect();
+            &filtered_runs
+        }
+        _ => runs,
     };
 
     let base_bg = |tok_kind: RunKind| -> Option<Color> {
@@ -332,7 +350,9 @@ pub fn row_segment_spans(
     };
     let text = exp_text.as_ref();
 
-    if is_del_row {
+    let is_plain_del =
+        kind == RowKind::Del || (is_mov_src && !runs.iter().any(|t| t.kind == RunKind::Ctx));
+    if is_plain_del {
         let body = if is_full_row {
             text.to_string()
         } else {

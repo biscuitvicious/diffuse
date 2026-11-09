@@ -848,7 +848,9 @@ fn test_theme_char_literal_rendering() {
 #[test]
 fn test_env_indicators_apply_to_piped_output() {
     let _guard = ENV_MUTEX.lock().unwrap();
+    let prev_term = env::var_os("TERM");
     unsafe {
+        env::set_var("TERM", "xterm");
         env::remove_var("DIFFUSE_THEME");
         env::remove_var("COLORFGBG");
         env::set_var("TERM_BACKGROUND", "light");
@@ -865,6 +867,11 @@ fn test_env_indicators_apply_to_piped_output() {
         assert_eq!(DiffuseTheme::auto_detect(), DiffuseTheme::dark());
 
         env::remove_var("COLORFGBG");
+        if let Some(t) = prev_term {
+            env::set_var("TERM", t);
+        } else {
+            env::remove_var("TERM");
+        }
     }
 }
 
@@ -873,7 +880,9 @@ fn test_env_indicators_apply_to_piped_output() {
 #[test]
 fn test_theme_auto_pager_matches_env_tiers() {
     let _guard = ENV_MUTEX.lock().unwrap();
+    let prev_term = env::var_os("TERM");
     unsafe {
+        env::set_var("TERM", "xterm");
         env::remove_var("DIFFUSE_THEME");
         env::remove_var("COLORFGBG");
         env::set_var("TERM_BACKGROUND", "light");
@@ -883,6 +892,11 @@ fn test_theme_auto_pager_matches_env_tiers() {
         assert_eq!(DiffuseTheme::from_env_pager(), DiffuseTheme::dark());
         env::remove_var("DIFFUSE_THEME");
         env::remove_var("TERM_BACKGROUND");
+        if let Some(t) = prev_term {
+            env::set_var("TERM", t);
+        } else {
+            env::remove_var("TERM");
+        }
     }
 }
 

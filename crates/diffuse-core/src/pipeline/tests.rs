@@ -2639,3 +2639,58 @@ fn test_reflow_head_anchors_split_declaration() {
         "moved-down value line must attach as aux"
     );
 }
+
+#[test]
+fn test_pipeline_mov_src_and_tgt_carry_matching_runs() {
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,3 +10,2 @@
+ fn alpha() {
+-        calculate_total(items);
+     remain_a();
+ }
+@@ -50,2 +49,3 @@
+ fn beta() {
++    calculate_total(items);
+     remain_b();
+ }
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows: Vec<_> = output.files[0]
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .filter(|r| r.kind == crate::parse::RowKind::Mov)
+        .collect();
+    assert_eq!(rows.len(), 2);
+    let src = rows
+        .iter()
+        .find(|r| r.mov_side == Some(crate::wire::MovSide::Src))
+        .unwrap();
+    let tgt = rows
+        .iter()
+        .find(|r| r.mov_side == Some(crate::wire::MovSide::Tgt))
+        .unwrap();
+
+    assert_eq!(src.old_line, Some(11));
+    assert_eq!(src.new_line, None);
+    assert_eq!(tgt.old_line, None);
+    assert_eq!(tgt.new_line, Some(50));
+
+    assert_eq!(src.text(), "        calculate_total(items);");
+    assert_eq!(tgt.text(), "    calculate_total(items);");
+
+    assert_eq!(
+        src.runs, tgt.runs,
+        "MovSrc and MovTgt must carry identical runs on wire"
+    );
+    assert!(
+        src.runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::Del),
+        "Runs must include deleted indentation"
+    );
+}

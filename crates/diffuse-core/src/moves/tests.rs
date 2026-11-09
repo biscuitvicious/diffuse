@@ -385,3 +385,32 @@ fn test_shell_closing_delimiter_move_is_trivial() {
     assert!(!f.hunks[0].rows[0].is_moved());
     assert!(!f.hunks[1].rows[0].is_moved());
 }
+
+#[test]
+fn test_move_with_changed_indentation_populates_runs_on_both_source_and_target() {
+    let mut f = file(vec![
+        hunk(vec![del(10, "        calculate_total(items);")]),
+        hunk(vec![add(90, "    calculate_total(items);")]),
+    ]);
+    mark_moves(&mut f);
+
+    let src = &f.hunks[0].rows[0];
+    let tgt = &f.hunks[1].rows[0];
+
+    assert!(src.is_moved());
+    assert!(tgt.is_moved());
+
+    assert!(
+        !src.cached_runs().is_empty(),
+        "MovSrc must carry cached_runs"
+    );
+    assert!(
+        !tgt.cached_runs().is_empty(),
+        "MovTgt must carry cached_runs"
+    );
+    assert_eq!(
+        src.cached_runs(),
+        tgt.cached_runs(),
+        "MovSrc and MovTgt must carry identical cached_runs"
+    );
+}

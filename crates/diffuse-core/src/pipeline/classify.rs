@@ -115,11 +115,24 @@ pub fn colored_runs_with_next(
         static CTX_SCRATCH: std::cell::RefCell<Vec<ClassifiedToken<'static>>> = const { std::cell::RefCell::new(Vec::new()) };
     }
 
+    let target_text: Cow<'_, str> =
+        if matches!(r, Row::MovSrc { .. }) && !r.cached_runs().is_empty() {
+            let mut s = String::new();
+            for (kind, t) in r.cached_runs() {
+                if !kind.is_del_like() {
+                    s.push_str(t);
+                }
+            }
+            Cow::Owned(s)
+        } else {
+            Cow::Borrowed(r.text())
+        };
+
     CTX_SCRATCH.with(|cell| {
         let mut full_tokens = cell.borrow_mut();
         full_tokens.clear();
-        for_each_ctx_line_token(r.text(), new_line, next_line, profile, regions, |t| {
-            // Safety: tokens are only accessed within this block while r.text()
+        for_each_ctx_line_token(&target_text, new_line, next_line, profile, regions, |t| {
+            // Safety: tokens are only accessed within this block while target_text
             // is alive.
             let tok_static =
                 unsafe { mem::transmute::<ClassifiedToken<'_>, ClassifiedToken<'static>>(t) };

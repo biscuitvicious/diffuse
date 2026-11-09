@@ -1976,6 +1976,7 @@ fn piped_output_uses_the_background_the_environment_declares() {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("TERM", "xterm")
         .env("TERM_BACKGROUND", "light")
         .env_remove("DIFFUSE_THEME")
         .env_remove("COLORFGBG")

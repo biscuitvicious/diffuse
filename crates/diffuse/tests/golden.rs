@@ -1821,6 +1821,12 @@ fn run_bin_leg(name: &str, num_files: usize) {
         if let Some(ref rev_key) = fixture.rev_key {
             cmd.arg("--rev-key").arg(rev_key);
         }
+        if let Some(ref old_dir) = fixture.old_dir {
+            cmd.arg("--old-dir").arg(old_dir);
+        }
+        if let Some(ref new_dir) = fixture.new_dir {
+            cmd.arg("--new-dir").arg(new_dir);
+        }
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

@@ -134,10 +134,14 @@ pub fn mark_moves_with_profile(
         };
         f.hunks[ah].rows[ar] = Row::MovTgt {
             line: add_line,
+            spans: spans.clone(),
+            cached_runs: cached_runs.clone(),
+        };
+        f.hunks[hi].rows[ri] = Row::MovSrc {
+            line: del_line,
             spans,
             cached_runs,
         };
-        f.hunks[hi].rows[ri] = Row::mov_src(del_line);
         move_count += 1;
     }
 
@@ -145,13 +149,13 @@ pub fn mark_moves_with_profile(
 
     crate::ensure!(
         f.hunks.iter().flat_map(|h| &h.rows).all(|r| {
-            if let Row::MovTgt { line, .. } = r {
-                r.text() == line.text
-            } else {
-                true
+            match r {
+                Row::MovTgt { line, .. } => r.text() == line.text,
+                Row::MovSrc { line, .. } => r.text() == line.text,
+                _ => true,
             }
         }),
-        "Every Row::MovTgt must have matching line text"
+        "Every Row::MovTgt and Row::MovSrc must have matching line text"
     );
 }
 

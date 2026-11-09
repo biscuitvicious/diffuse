@@ -148,14 +148,6 @@ impl OutputHunk {
                                 r.new_line, r.old_line
                             ));
                         }
-                        if r.runs
-                            .iter()
-                            .any(|run| run.kind != RunKind::Del && run.kind != RunKind::MovedSrc)
-                        {
-                            return Err(format!(
-                                "Hunk row {row_idx}: MovSrc row has non-del-like runs"
-                            ));
-                        }
                     } else if r.new_line.is_none() || r.old_line.is_some() {
                         return Err(format!(
                             "Hunk row {row_idx}: MovTgt row invalid line numbers (new={:?}, old={:?})",

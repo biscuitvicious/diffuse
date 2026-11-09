@@ -718,6 +718,148 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
 }
 
 #[test]
+fn test_mov_src_with_del_and_ctx_runs_renders_strikethrough_del() {
+    let theme = DiffuseTheme::dark();
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let prefix = "  15≈- ";
+    let rendered = render_row_segment(
+        "    foo()",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Src),
+        &runs,
+        0,
+        usize::MAX,
+        &[StyledSpan::plain(prefix)],
+        false,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  15≈- "));
+    assert!(
+        rendered.contains("\x1b[9m"),
+        "mov src with Del run must have strikethrough styling on deleted run"
+    );
+    assert!(
+        rendered.contains("\x1b[29m"),
+        "mov src must turn off strikethrough after deleted run"
+    );
+}
+
+#[test]
+fn test_mov_tgt_filters_out_del_runs_no_strikethrough() {
+    let theme = DiffuseTheme::dark();
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let prefix = "  20≈+ ";
+    let rendered = render_row_segment(
+        "foo()",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        &runs,
+        0,
+        usize::MAX,
+        &[StyledSpan::plain(prefix)],
+        false,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  20≈+ "));
+    assert!(
+        !rendered.contains("\x1b[9m"),
+        "mov tgt must NOT have strikethrough styling (del run should be filtered out)"
+    );
+    assert!(
+        !rendered.contains("    foo()"),
+        "mov tgt must not contain deleted spaces"
+    );
+    assert!(
+        rendered.contains("foo()"),
+        "mov tgt must contain target text"
+    );
+}
+
+#[test]
+fn test_mov_src_filters_out_add_runs() {
+    let theme = DiffuseTheme::dark();
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let prefix = "  15≈- ";
+    let rendered = render_row_segment(
+        "foo()",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Src),
+        &runs,
+        0,
+        usize::MAX,
+        &[StyledSpan::plain(prefix)],
+        false,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  15≈- "));
+    assert!(
+        !rendered.contains("    foo()"),
+        "mov src must NOT contain added text"
+    );
+    assert!(
+        rendered.contains("foo()"),
+        "mov src must contain source text"
+    );
+}
+
+#[test]
 fn test_mod_row_del_span_uses_del_fill_background() {
     let theme = DiffuseTheme::dark();
     let s_del = theme.row_style(RowKind::Del);
