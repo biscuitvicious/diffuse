@@ -6,7 +6,7 @@ use crate::{
     Badge,
     ansi::{SGR_RESET, optimize_ansi},
     core::{
-        ModSide,
+        ModGlyph, ModSide,
         notes::{ReviewNote, note_anchors_in_rows},
         parse::RowKind,
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
@@ -196,12 +196,57 @@ pub fn render_file_diff_with_options(
         out.push('\n');
     };
 
-    let emit_row = |r: &OutputRow, out: &mut String| {
-        if expand_mods == Some(true) && r.kind == RowKind::Mod {
-            render_row_line(out, r, theme, width, styled_prefixes, Some(ModSide::Del));
-            render_row_line(out, r, theme, width, styled_prefixes, Some(ModSide::Add));
-        } else {
-            render_row_line(out, r, theme, width, styled_prefixes, None);
+    let emit_slice = |rows: &[OutputRow], start_idx: usize, out: &mut String| {
+        let mut i = 0;
+        while i < rows.len() {
+            let r = &rows[i];
+            if expand_mods == Some(true) && r.kind == RowKind::Mod {
+                let mut j = i + 1;
+                while j < rows.len() && rows[j].kind == RowKind::Mod {
+                    j += 1;
+                }
+                let k = j - i;
+                for (idx, row) in rows[i..j].iter().enumerate() {
+                    let glyph = ModGlyph::for_cluster(ModSide::Del, idx, k);
+                    render_row_line(
+                        out,
+                        row,
+                        theme,
+                        width,
+                        styled_prefixes,
+                        Some(ModSide::Del),
+                        Some(glyph),
+                    );
+                }
+                for (idx, row) in rows[i..j].iter().enumerate() {
+                    let glyph = ModGlyph::for_cluster(ModSide::Add, idx, k);
+                    render_row_line(
+                        out,
+                        row,
+                        theme,
+                        width,
+                        styled_prefixes,
+                        Some(ModSide::Add),
+                        Some(glyph),
+                    );
+                }
+                for row_idx in (start_idx + i)..(start_idx + j) {
+                    if let Some(notes) = row_notes.get(&row_idx) {
+                        for note in notes {
+                            emit_note(note, out);
+                        }
+                    }
+                }
+                i = j;
+            } else {
+                render_row_line(out, r, theme, width, styled_prefixes, None, None);
+                if let Some(notes) = row_notes.get(&(start_idx + i)) {
+                    for note in notes {
+                        emit_note(note, out);
+                    }
+                }
+                i += 1;
+            }
         }
     };
 
@@ -209,55 +254,26 @@ pub fn render_file_diff_with_options(
         emit_note(note, &mut out);
     }
 
-    let mut row_idx = 0;
     if !file.rows.is_empty() && !file.hunks.is_empty() {
+        let mut row_idx = 0;
         for (hi, h) in file.hunks.iter().enumerate() {
             emit_hunk_divider(hi, h, &mut out);
-            for _ in 0..h.rows.len() {
-                if row_idx < file.rows.len() {
-                    let r = &file.rows[row_idx];
-                    emit_row(r, &mut out);
-                    if let Some(notes) = row_notes.get(&row_idx) {
-                        for note in notes {
-                            emit_note(note, &mut out);
-                        }
-                    }
-                    row_idx += 1;
-                }
-            }
+            let hunk_len = h.rows.len();
+            let end_idx = (row_idx + hunk_len).min(file.rows.len());
+            emit_slice(&file.rows[row_idx..end_idx], row_idx, &mut out);
+            row_idx = end_idx;
         }
-        while row_idx < file.rows.len() {
-            let r = &file.rows[row_idx];
-            emit_row(r, &mut out);
-            if let Some(notes) = row_notes.get(&row_idx) {
-                for note in notes {
-                    emit_note(note, &mut out);
-                }
-            }
-            row_idx += 1;
+        if row_idx < file.rows.len() {
+            emit_slice(&file.rows[row_idx..], row_idx, &mut out);
         }
     } else if !file.rows.is_empty() {
-        for r in &file.rows {
-            emit_row(r, &mut out);
-            if let Some(notes) = row_notes.get(&row_idx) {
-                for note in notes {
-                    emit_note(note, &mut out);
-                }
-            }
-            row_idx += 1;
-        }
+        emit_slice(&file.rows, 0, &mut out);
     } else {
+        let mut row_idx = 0;
         for (hi, h) in file.hunks.iter().enumerate() {
             emit_hunk_divider(hi, h, &mut out);
-            for r in &h.rows {
-                emit_row(r, &mut out);
-                if let Some(notes) = row_notes.get(&row_idx) {
-                    for note in notes {
-                        emit_note(note, &mut out);
-                    }
-                }
-                row_idx += 1;
-            }
+            emit_slice(&h.rows, row_idx, &mut out);
+            row_idx += h.rows.len();
         }
     }
 
@@ -346,8 +362,8 @@ pub fn render_raw_file_diff_with_width(
 
         for r in &h.rows {
             let pfx = styled_prefix_spans(
-                r.kind, r.mov_side, None, r.group, r.new_line, r.old_line, &r.runs, true, None,
-                theme,
+                r.kind, r.mov_side, None, None, r.group, r.new_line, r.old_line, &r.runs, true,
+                None, theme,
             );
             let text = r.text();
             let _ = write_raw_row(&mut out, r.kind, &pfx, &text, false, false, true, theme);

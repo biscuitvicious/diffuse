@@ -14,7 +14,7 @@ pub use repo::{
     Repo, ReviewTarget, ReviewTargetNotesExt, RevisionRange, parse_git_rev_and_pathspecs,
 };
 pub use token::{TokenClass, WhitespaceKind};
-pub use wire::ModSide;
+pub use wire::{ModGlyph, ModSide};
 pub mod apply;
 pub mod cluster;
 pub mod collapse;

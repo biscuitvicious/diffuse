@@ -222,6 +222,7 @@ fn render_note_source_spans(
             row.kind,
             row.mov_side,
             None,
+            None,
             row.group,
             row.new_line,
             row.old_line,

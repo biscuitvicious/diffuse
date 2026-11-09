@@ -33,6 +33,77 @@ pub enum ModSide {
     Add,
 }
 
+/// Identifies the box border glyph position within an expanded modification
+/// cluster.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModGlyph {
+    /// Top corner of the box ("┌") - first line in an expanded cluster.
+    #[default]
+    Top,
+    /// Vertical edge of the box ("│") - intermediate lines in an expanded
+    /// cluster.
+    Mid,
+    /// Bottom corner of the box ("└") - last line in an expanded cluster.
+    Bottom,
+}
+
+impl ModGlyph {
+    /// The box border glyph character.
+    #[inline]
+    pub const fn as_char(self) -> char {
+        match self {
+            Self::Top => '┌',
+            Self::Mid => '│',
+            Self::Bottom => '└',
+        }
+    }
+
+    /// The box border glyph string slice.
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "┌",
+            Self::Mid => "│",
+            Self::Bottom => "└",
+        }
+    }
+
+    /// Returns true if this is the bottom of the box, terminating the cluster.
+    #[inline]
+    pub const fn is_bottom(self) -> bool {
+        matches!(self, Self::Bottom)
+    }
+
+    /// Default glyph for an isolated (single-row) modification side.
+    #[inline]
+    pub const fn for_side(side: ModSide) -> Self {
+        Self::for_cluster(side, 0, 1)
+    }
+
+    /// Glyph for a modification row at offset `idx` (0..total) within a cluster
+    /// of `total` rows on the given side.
+    #[inline]
+    pub const fn for_cluster(side: ModSide, idx: usize, total: usize) -> Self {
+        match side {
+            ModSide::Del => {
+                if idx == 0 {
+                    Self::Top
+                } else {
+                    Self::Mid
+                }
+            }
+            ModSide::Add => {
+                if idx + 1 >= total {
+                    Self::Bottom
+                } else {
+                    Self::Mid
+                }
+            }
+        }
+    }
+}
+
 /// A hunk in the wire contract: change coordinates and its collapsed rows.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

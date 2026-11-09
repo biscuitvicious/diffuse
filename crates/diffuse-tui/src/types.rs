@@ -1,7 +1,7 @@
 //! TUI Domain Types — selection, navigation coordinates, and flat visual row
 //! models.
 
-use diffuse_core::{ModSide, notes::DiffCoord, wire::OutputRow};
+use diffuse_core::{ModGlyph, ModSide, notes::DiffCoord, wire::OutputRow};
 
 /// A contiguous line selection within a file, bounded by diff-row
 /// coordinates in display order. Each bound carries both the old and new
@@ -97,11 +97,12 @@ pub enum FlatRowKind {
     /// Diff modification or context line within a hunk.
     DiffRow { hunk_idx: usize, row_idx: usize },
     /// An expanded modification line half (either Del pre-image or Add
-    /// post-image).
+    /// post-image) with its cluster box glyph.
     ExpandedMod {
         hunk_idx: usize,
         row_idx: usize,
         side: ModSide,
+        glyph: ModGlyph,
     },
     /// Trailing gap divider (`──── N more lines: ▲ ────`) at the end of a file.
     BottomGapDivider { hunk_idx: usize },
@@ -140,13 +141,20 @@ impl FlatRow {
     }
 
     #[inline]
-    pub fn expanded_mod(file_idx: usize, hunk_idx: usize, row_idx: usize, side: ModSide) -> Self {
+    pub fn expanded_mod(
+        file_idx: usize,
+        hunk_idx: usize,
+        row_idx: usize,
+        side: ModSide,
+        glyph: ModGlyph,
+    ) -> Self {
         Self {
             file_idx,
             kind: FlatRowKind::ExpandedMod {
                 hunk_idx,
                 row_idx,
                 side,
+                glyph,
             },
         }
     }
@@ -184,6 +192,14 @@ impl FlatRow {
     pub fn mod_side(&self) -> Option<ModSide> {
         match self.kind {
             FlatRowKind::ExpandedMod { side, .. } => Some(side),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn mod_glyph(&self) -> Option<ModGlyph> {
+        match self.kind {
+            FlatRowKind::ExpandedMod { glyph, .. } => Some(glyph),
             _ => None,
         }
     }
@@ -268,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_expanded_mod_flat_row_methods() {
-        let del = FlatRow::expanded_mod(1, 2, 3, ModSide::Del);
+        let del = FlatRow::expanded_mod(1, 2, 3, ModSide::Del, ModGlyph::Top);
         assert!(del.is_diff_row());
         assert!(del.is_expanded_mod());
         assert!(!del.is_file_header());
@@ -277,15 +293,18 @@ mod tests {
         assert_eq!(del.hunk_idx(), Some(2));
         assert_eq!(del.diff_row_idx(), Some(3));
         assert_eq!(del.mod_side(), Some(ModSide::Del));
+        assert_eq!(del.mod_glyph(), Some(ModGlyph::Top));
 
-        let add = FlatRow::expanded_mod(1, 2, 3, ModSide::Add);
+        let add = FlatRow::expanded_mod(1, 2, 3, ModSide::Add, ModGlyph::Bottom);
         assert!(add.is_diff_row());
         assert!(add.is_expanded_mod());
         assert_eq!(add.mod_side(), Some(ModSide::Add));
+        assert_eq!(add.mod_glyph(), Some(ModGlyph::Bottom));
 
         let diff = FlatRow::diff_row(1, 2, 3);
         assert!(diff.is_diff_row());
         assert!(!diff.is_expanded_mod());
         assert_eq!(diff.mod_side(), None);
+        assert_eq!(diff.mod_glyph(), None);
     }
 }

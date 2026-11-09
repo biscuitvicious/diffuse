@@ -467,6 +467,7 @@ impl AppState {
                         continue;
                     };
                     let mod_side = item.mod_side();
+                    let mod_glyph = item.mod_glyph();
                     let row_text = match mod_side {
                         Some(diffuse_core::ModSide::Del) => r.old_text(),
                         Some(diffuse_core::ModSide::Add) => r.new_text(),
@@ -482,6 +483,7 @@ impl AppState {
                                     r.kind,
                                     r.mov_side,
                                     mod_side,
+                                    mod_glyph,
                                     r.group,
                                     r.new_line,
                                     r.old_line,
@@ -491,7 +493,12 @@ impl AppState {
                                     &self.theme,
                                 )
                             } else {
-                                continuation_prefix_spans_with_mod_side(mod_side, &self.theme, None)
+                                continuation_prefix_spans_with_mod_side(
+                                    mod_side,
+                                    mod_glyph,
+                                    &self.theme,
+                                    None,
+                                )
                             };
                             let rendered_row = if self.raw_diff {
                                 let text_cols = content_width.saturating_sub(6).max(1);

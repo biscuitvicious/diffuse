@@ -5797,8 +5797,20 @@ fn test_flat_coord_for_expanded_mod() {
         None,
         crate::core::PipelineOptions::default(),
     );
-    let fr_del = FlatRow::expanded_mod(0, 0, 0, diffuse_core::ModSide::Del);
-    let fr_add = FlatRow::expanded_mod(0, 0, 0, diffuse_core::ModSide::Add);
+    let fr_del = FlatRow::expanded_mod(
+        0,
+        0,
+        0,
+        diffuse_core::ModSide::Del,
+        diffuse_core::ModGlyph::Top,
+    );
+    let fr_add = FlatRow::expanded_mod(
+        0,
+        0,
+        0,
+        diffuse_core::ModSide::Add,
+        diffuse_core::ModGlyph::Bottom,
+    );
     assert_eq!(AppState::flat_coord(&output, false, &fr_del), Some(1));
     assert_eq!(AppState::flat_coord(&output, false, &fr_add), Some(1));
 }

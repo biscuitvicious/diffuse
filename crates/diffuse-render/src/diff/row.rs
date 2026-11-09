@@ -2,7 +2,7 @@
 
 use crate::{
     ansi::{SGR_RESET, strip_ansi},
-    core::{ModSide, wire::OutputRow},
+    core::{ModGlyph, ModSide, wire::OutputRow},
     row::{
         continuation_prefix_plain_with_mod_side, continuation_prefix_spans_with_mod_side,
         display_text, expand_tabs, prefix_of_with_mod_side, styled_prefix_spans, write_row_segment,
@@ -21,23 +21,24 @@ pub(crate) fn render_row_line(
     width: usize,
     styled_prefixes: bool,
     mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
 ) {
     let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
         (
             styled_prefix_spans(
-                r.kind, r.mov_side, mod_side, r.group, r.new_line, r.old_line, &r.runs, false,
-                None, theme,
+                r.kind, r.mov_side, mod_side, mod_glyph, r.group, r.new_line, r.old_line, &r.runs,
+                false, None, theme,
             ),
-            continuation_prefix_spans_with_mod_side(mod_side, theme, None),
+            continuation_prefix_spans_with_mod_side(mod_side, mod_glyph, theme, None),
         )
     } else {
         let plain = prefix_of_with_mod_side(
-            r.kind, r.mov_side, mod_side, r.group, r.new_line, r.old_line, &r.runs,
+            r.kind, r.mov_side, mod_side, mod_glyph, r.group, r.new_line, r.old_line, &r.runs,
         );
         (
             vec![StyledSpan::plain(format!("{plain} "))],
             vec![StyledSpan::plain(continuation_prefix_plain_with_mod_side(
-                mod_side,
+                mod_side, mod_glyph,
             ))],
         )
     };
@@ -173,7 +174,7 @@ pub fn render_source_rows(
 ) -> Vec<String> {
     let mut out = String::with_capacity(rows.len() * 128);
     for r in rows {
-        render_row_line(&mut out, r, theme, width, styled_prefixes, None);
+        render_row_line(&mut out, r, theme, width, styled_prefixes, None, None);
     }
     out.trim_end_matches('\n')
         .split('\n')

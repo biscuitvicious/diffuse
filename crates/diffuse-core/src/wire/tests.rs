@@ -18,6 +18,37 @@ fn make_run(kind: RunKind, text: &str) -> OutputRun {
 }
 
 #[test]
+fn test_mod_glyph_variants_and_helpers() {
+    assert_eq!(ModGlyph::Top.as_char(), '┌');
+    assert_eq!(ModGlyph::Top.as_str(), "┌");
+    assert!(!ModGlyph::Top.is_bottom());
+
+    assert_eq!(ModGlyph::Mid.as_char(), '│');
+    assert_eq!(ModGlyph::Mid.as_str(), "│");
+    assert!(!ModGlyph::Mid.is_bottom());
+
+    assert_eq!(ModGlyph::Bottom.as_char(), '└');
+    assert_eq!(ModGlyph::Bottom.as_str(), "└");
+    assert!(ModGlyph::Bottom.is_bottom());
+
+    // Isolated (single row) side glyphs
+    assert_eq!(ModGlyph::for_side(ModSide::Del), ModGlyph::Top);
+    assert_eq!(ModGlyph::for_side(ModSide::Add), ModGlyph::Bottom);
+
+    // Single-row cluster (total = 1)
+    assert_eq!(ModGlyph::for_cluster(ModSide::Del, 0, 1), ModGlyph::Top);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Add, 0, 1), ModGlyph::Bottom);
+
+    // Multi-row cluster (total = 3)
+    assert_eq!(ModGlyph::for_cluster(ModSide::Del, 0, 3), ModGlyph::Top);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Del, 1, 3), ModGlyph::Mid);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Del, 2, 3), ModGlyph::Mid);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Add, 0, 3), ModGlyph::Mid);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Add, 1, 3), ModGlyph::Mid);
+    assert_eq!(ModGlyph::for_cluster(ModSide::Add, 2, 3), ModGlyph::Bottom);
+}
+
+#[test]
 fn test_output_hunk_valid_invariants() {
     let hunk = OutputHunk {
         old_start: 1,

@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use crate::{
     core::{
-        ModSide,
+        ModGlyph, ModSide,
         parse::RowKind,
-        wire::{OutputFile, PipelineOutput},
+        wire::{OutputFile, OutputRow, PipelineOutput},
     },
     types::{FlatRow, HunkMeta, HunkStart, ModRowKey},
 };
@@ -71,49 +71,7 @@ impl AppState {
             if collapsed_files.contains(&fi) {
                 continue;
             }
-            if !f.rows.is_empty() {
-                let hunk_count = f.hunks.len();
-                let mut ri = 0;
-                for (hi, h) in f.hunks.iter().enumerate() {
-                    for _ in 0..h.rows.len() {
-                        if ri < f.rows.len() {
-                            let r = &f.rows[ri];
-                            if r.kind == RowKind::Mod
-                                && expanded_mods.contains(&ModRowKey::new(fi, r))
-                            {
-                                flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                                flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                            } else {
-                                flat.push(FlatRow::diff_row(fi, hi, ri));
-                            }
-                            ri += 1;
-                        }
-                    }
-                }
-                while ri < f.rows.len() {
-                    let hi = hunk_count.saturating_sub(1);
-                    let r = &f.rows[ri];
-                    if r.kind == RowKind::Mod && expanded_mods.contains(&ModRowKey::new(fi, r)) {
-                        flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                        flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                    } else {
-                        flat.push(FlatRow::diff_row(fi, hi, ri));
-                    }
-                    ri += 1;
-                }
-            } else {
-                for (hi, h) in f.hunks.iter().enumerate() {
-                    for (ri, r) in h.rows.iter().enumerate() {
-                        if r.kind == RowKind::Mod && expanded_mods.contains(&ModRowKey::new(fi, r))
-                        {
-                            flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                            flat.push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                        } else {
-                            flat.push(FlatRow::diff_row(fi, hi, ri));
-                        }
-                    }
-                }
-            }
+            push_file_content_rows(&mut flat, fi, f, expanded_mods);
             if file_trailing_gap(f) > 0 {
                 flat.push(FlatRow::bottom_gap(fi, f.hunks.len().saturating_sub(1)));
             }
@@ -264,6 +222,75 @@ pub fn file_trailing_gap(f: &OutputFile) -> usize {
     let new_gap = (f.new_line_count as u32).saturating_sub(last_new) as usize;
     let old_gap = (f.old_line_count as u32).saturating_sub(last_old) as usize;
     new_gap.min(old_gap)
+}
+
+/// Push all content rows of a file onto `flat`, honoring hunk boundaries.
+pub(crate) fn push_file_content_rows(
+    flat: &mut Vec<FlatRow>,
+    fi: usize,
+    f: &OutputFile,
+    expanded_mods: &HashSet<ModRowKey>,
+) {
+    if !f.rows.is_empty() {
+        let hunk_count = f.hunks.len();
+        let mut ri = 0;
+        for (hi, h) in f.hunks.iter().enumerate() {
+            let hunk_len = h.rows.len();
+            let end_ri = (ri + hunk_len).min(f.rows.len());
+            push_hunk_rows(flat, fi, hi, &f.rows[ri..end_ri], ri, expanded_mods);
+            ri = end_ri;
+        }
+        if ri < f.rows.len() {
+            let hi = hunk_count.saturating_sub(1);
+            push_hunk_rows(flat, fi, hi, &f.rows[ri..], ri, expanded_mods);
+        }
+    } else {
+        for (hi, h) in f.hunks.iter().enumerate() {
+            push_hunk_rows(flat, fi, hi, &h.rows, 0, expanded_mods);
+        }
+    }
+}
+
+/// Push rows for a hunk onto `flat`, merging contiguous expanded modification
+/// rows into unified clusters of `n` deletions followed by `n` additions with
+/// connected box glyphs (`┌`, `│`, `└`).
+pub(crate) fn push_hunk_rows(
+    flat: &mut Vec<FlatRow>,
+    fi: usize,
+    hi: usize,
+    rows: &[OutputRow],
+    start_ri: usize,
+    expanded_mods: &HashSet<ModRowKey>,
+) {
+    let mut i = 0;
+    while i < rows.len() {
+        let r = &rows[i];
+        let r_ri = start_ri + i;
+        if r.kind == RowKind::Mod && expanded_mods.contains(&ModRowKey::new(fi, r)) {
+            let mut j = i + 1;
+            while j < rows.len()
+                && rows[j].kind == RowKind::Mod
+                && expanded_mods.contains(&ModRowKey::new(fi, &rows[j]))
+            {
+                j += 1;
+            }
+            let k = j - i;
+            for idx in 0..k {
+                let row_idx = start_ri + i + idx;
+                let glyph = ModGlyph::for_cluster(ModSide::Del, idx, k);
+                flat.push(FlatRow::expanded_mod(fi, hi, row_idx, ModSide::Del, glyph));
+            }
+            for idx in 0..k {
+                let row_idx = start_ri + i + idx;
+                let glyph = ModGlyph::for_cluster(ModSide::Add, idx, k);
+                flat.push(FlatRow::expanded_mod(fi, hi, row_idx, ModSide::Add, glyph));
+            }
+            i = j;
+        } else {
+            flat.push(FlatRow::diff_row(fi, hi, r_ri));
+            i += 1;
+        }
+    }
 }
 
 #[cfg(test)]

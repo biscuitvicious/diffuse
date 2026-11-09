@@ -1,6 +1,6 @@
 use crate::{
     app::AppState,
-    core::{ModSide, parse::RowKind, wire::OutputFile},
+    core::{parse::RowKind, wire::OutputFile},
     types::{FlatRow, HunkStart, ModRowKey},
 };
 
@@ -62,40 +62,12 @@ impl AppState {
                     }
                 }
             } else if !file.rows.is_empty() {
-                let hunk_count = file.hunks.len();
-                let mut ri = 0;
-                for (hi, h) in file.hunks.iter().enumerate() {
-                    for _ in 0..h.rows.len() {
-                        if ri < file.rows.len() {
-                            let r = &file.rows[ri];
-                            if r.kind == RowKind::Mod
-                                && self.expanded_mods.contains(&ModRowKey::new(fi, r))
-                            {
-                                self.flat
-                                    .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                                self.flat
-                                    .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                            } else {
-                                self.flat.push(FlatRow::diff_row(fi, hi, ri));
-                            }
-                            ri += 1;
-                        }
-                    }
-                }
-                while ri < file.rows.len() {
-                    let hi = hunk_count.saturating_sub(1);
-                    let r = &file.rows[ri];
-                    if r.kind == RowKind::Mod && self.expanded_mods.contains(&ModRowKey::new(fi, r))
-                    {
-                        self.flat
-                            .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                        self.flat
-                            .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                    } else {
-                        self.flat.push(FlatRow::diff_row(fi, hi, ri));
-                    }
-                    ri += 1;
-                }
+                crate::app::flat::push_file_content_rows(
+                    &mut self.flat,
+                    fi,
+                    &file,
+                    &self.expanded_mods,
+                );
                 self.hunk_starts
                     .extend(Self::build_file_hunk_starts_for_file(
                         &self.flat,
@@ -111,18 +83,14 @@ impl AppState {
                         file: fi,
                         hunk: hi,
                     });
-                    for (ri, r) in h.rows.iter().enumerate() {
-                        if r.kind == RowKind::Mod
-                            && self.expanded_mods.contains(&ModRowKey::new(fi, r))
-                        {
-                            self.flat
-                                .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Del));
-                            self.flat
-                                .push(FlatRow::expanded_mod(fi, hi, ri, ModSide::Add));
-                        } else {
-                            self.flat.push(FlatRow::diff_row(fi, hi, ri));
-                        }
-                    }
+                    crate::app::flat::push_hunk_rows(
+                        &mut self.flat,
+                        fi,
+                        hi,
+                        &h.rows,
+                        0,
+                        &self.expanded_mods,
+                    );
                 }
             }
             if !self.raw_diff && crate::app::flat::file_trailing_gap(&file) > 0 {

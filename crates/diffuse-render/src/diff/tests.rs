@@ -894,6 +894,92 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
 }
 
 #[test]
+fn test_render_file_diff_adjacent_expanded_mods_merged_into_unified_cluster() {
+    let diff = r#"diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1,3 +1,3 @@
+-let val_one = 1;
+-let val_two = 2;
+-let val_three = 3;
++let val_one = 10;
++let val_two = 20;
++let val_three = 30;
+"#;
+    let new_content = Some(
+        [(
+            "a.txt".to_string(),
+            "let val_one = 10;\nlet val_two = 20;\nlet val_three = 30;\n".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let old_content = Some(
+        [(
+            "a.txt".to_string(),
+            "let val_one = 1;\nlet val_two = 2;\nlet val_three = 3;\n".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+
+    let width = 80;
+    let theme = DiffuseTheme::dark();
+    let rendered =
+        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true));
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    let diff_lines: Vec<&str> = lines
+        .into_iter()
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
+        .collect();
+
+    // 3 dels followed by 3 adds: 6 lines total
+    assert_eq!(
+        diff_lines.len(),
+        6,
+        "expected 6 lines for 3 merged adjacent mod rows: {diff_lines:#?}"
+    );
+
+    // 3 deletions first
+    let p0: String = strip_ansi(diff_lines[0]).chars().take(6).collect();
+    let p1: String = strip_ansi(diff_lines[1]).chars().take(6).collect();
+    let p2: String = strip_ansi(diff_lines[2]).chars().take(6).collect();
+    assert_eq!(p0, "   1┌-");
+    assert_eq!(p1, "   2│-");
+    assert_eq!(p2, "   3│-");
+
+    // 3 additions second
+    let p3: String = strip_ansi(diff_lines[3]).chars().take(6).collect();
+    let p4: String = strip_ansi(diff_lines[4]).chars().take(6).collect();
+    let p5: String = strip_ansi(diff_lines[5]).chars().take(6).collect();
+    assert_eq!(p3, "   1│+");
+    assert_eq!(p4, "   2│+");
+    assert_eq!(p5, "   3└+");
+
+    // Verify text correspondence
+    assert!(diff_lines[0].contains("val_one"));
+    assert!(diff_lines[0].contains("1"));
+    assert!(diff_lines[1].contains("val_two"));
+    assert!(diff_lines[1].contains("2"));
+    assert!(diff_lines[2].contains("val_three"));
+    assert!(diff_lines[2].contains("3"));
+
+    assert!(diff_lines[3].contains("val_one"));
+    assert!(diff_lines[3].contains("10"));
+    assert!(diff_lines[4].contains("val_two"));
+    assert!(diff_lines[4].contains("20"));
+    assert!(diff_lines[5].contains("val_three"));
+    assert!(diff_lines[5].contains("30"));
+}
+
+#[test]
 fn test_render_source_rows_mirrors_grid_rendering() {
     let theme = DiffuseTheme::dark();
     let rows = vec![

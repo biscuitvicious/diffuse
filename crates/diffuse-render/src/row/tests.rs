@@ -4,7 +4,7 @@ use crate::{
     core::{
         merge::RunKind,
         parse::{RowGroup, RowKind, Spans},
-        wire::{ModSide, MovSide, OutputRun},
+        wire::{ModGlyph, ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
     theme::{Cursor, DiffKind, DiffuseTheme},
@@ -25,7 +25,7 @@ fn emitted_prefix(
     theme: &DiffuseTheme,
 ) -> String {
     let spans = styled_prefix_spans(
-        kind, mov_side, None, group, new_line, old_line, runs, in_hunk, None, theme,
+        kind, mov_side, None, None, group, new_line, old_line, runs, in_hunk, None, theme,
     );
     let mut out = String::new();
     let is_mov_src = mov_side == Some(MovSide::Src);
@@ -1393,6 +1393,7 @@ fn test_styled_prefix_spans_match_ansi_prefix_text() {
             kind,
             mov_side,
             None,
+            None,
             group,
             new_line,
             old_line,
@@ -1419,6 +1420,7 @@ fn test_styled_prefix_spans_carry_gutter_colors() {
     let gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
     let spans = styled_prefix_spans(
         RowKind::Mod,
+        None,
         None,
         None,
         None,
@@ -1456,6 +1458,7 @@ fn test_mov_row_prefix_line_number_colors() {
         None,
         None,
         None,
+        None,
         Some(42),
         &[],
         true,
@@ -1474,6 +1477,7 @@ fn test_mov_row_prefix_line_number_colors() {
     let tgt_spans = styled_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Tgt),
+        None,
         None,
         None,
         Some(99),
@@ -1518,6 +1522,7 @@ fn test_row_segment_spans_match_ansi_text_across_matrix() {
                         None,
                         None,
                         None,
+                        None,
                         Some(3),
                         Some(2),
                         &runs,
@@ -1555,6 +1560,7 @@ fn test_row_segment_spans_carry_del_strike_and_fill() {
     ];
     let prefix = styled_prefix_spans(
         RowKind::Mod,
+        None,
         None,
         None,
         None,
@@ -1618,6 +1624,7 @@ fn test_row_segment_spans_carry_word_fill_and_cursor() {
         None,
         None,
         None,
+        None,
         Some(8),
         None,
         &runs,
@@ -1663,6 +1670,7 @@ fn test_raw_row_spans_match_ansi_text_and_trailing_fill() {
     let theme = DiffuseTheme::dark();
     let prefix = styled_prefix_spans(
         RowKind::Add,
+        None,
         None,
         None,
         None,
@@ -1757,6 +1765,7 @@ fn test_expanded_mod_prefix_spans_and_row_segment_spans() {
         None,
         Some(ModSide::Del),
         None,
+        None,
         Some(20),
         Some(10),
         &runs,
@@ -1776,6 +1785,7 @@ fn test_expanded_mod_prefix_spans_and_row_segment_spans() {
         RowKind::Mod,
         None,
         Some(ModSide::Add),
+        None,
         None,
         Some(20),
         Some(10),
@@ -1863,6 +1873,7 @@ fn test_mod_side_del_prefix_suppresses_italic_on_box_and_icon() {
         None,
         Some(ModSide::Del),
         None,
+        None,
         Some(20),
         Some(10),
         &runs,
@@ -1910,7 +1921,7 @@ fn test_mod_side_del_prefix_suppresses_italic_on_box_and_icon() {
 #[test]
 fn test_continuation_prefix_with_mod_side() {
     let theme = DiffuseTheme::dark();
-    let spans_del = continuation_prefix_spans_with_mod_side(Some(ModSide::Del), &theme, None);
+    let spans_del = continuation_prefix_spans_with_mod_side(Some(ModSide::Del), None, &theme, None);
     assert_eq!(spans_del.len(), 3);
     assert_eq!(spans_del[0].text, "    ");
     assert_eq!(spans_del[1].text, "│");
@@ -1920,21 +1931,139 @@ fn test_continuation_prefix_with_mod_side() {
     );
     assert_eq!(spans_del[2].text, " ");
 
-    let spans_add = continuation_prefix_spans_with_mod_side(Some(ModSide::Add), &theme, None);
+    let spans_add = continuation_prefix_spans_with_mod_side(Some(ModSide::Add), None, &theme, None);
     assert_eq!(spans_add.len(), 1);
     assert_eq!(spans_add[0].text, "      ");
 
-    let spans_none = continuation_prefix_spans_with_mod_side(None, &theme, None);
+    let spans_none = continuation_prefix_spans_with_mod_side(None, None, &theme, None);
     assert_eq!(spans_none.len(), 1);
     assert_eq!(spans_none[0].text, "      ");
 
     assert_eq!(
-        continuation_prefix_plain_with_mod_side(Some(ModSide::Del)),
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Del), None),
         "    │ "
     );
     assert_eq!(
-        continuation_prefix_plain_with_mod_side(Some(ModSide::Add)),
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Add), None),
         "      "
     );
-    assert_eq!(continuation_prefix_plain_with_mod_side(None), "      ");
+    assert_eq!(
+        continuation_prefix_plain_with_mod_side(None, None),
+        "      "
+    );
+
+    // Test with explicit ModGlyph
+    let spans_del_mid = continuation_prefix_spans_with_mod_side(
+        Some(ModSide::Del),
+        Some(ModGlyph::Mid),
+        &theme,
+        None,
+    );
+    assert_eq!(spans_del_mid.len(), 3);
+    assert_eq!(spans_del_mid[1].text, "│");
+
+    let spans_add_mid = continuation_prefix_spans_with_mod_side(
+        Some(ModSide::Add),
+        Some(ModGlyph::Mid),
+        &theme,
+        None,
+    );
+    assert_eq!(spans_add_mid.len(), 3);
+    assert_eq!(spans_add_mid[1].text, "│");
+
+    let spans_add_bottom = continuation_prefix_spans_with_mod_side(
+        Some(ModSide::Add),
+        Some(ModGlyph::Bottom),
+        &theme,
+        None,
+    );
+    assert_eq!(spans_add_bottom.len(), 1);
+    assert_eq!(spans_add_bottom[0].text, "      ");
+
+    assert_eq!(
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Mid)),
+        "    │ "
+    );
+    assert_eq!(
+        continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Bottom)),
+        "      "
+    );
+}
+
+#[test]
+fn test_styled_prefix_spans_with_mod_glyph() {
+    let theme = DiffuseTheme::dark();
+    let mod_gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+
+    // Top Del
+    let top_del = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        Some(ModGlyph::Top),
+        None,
+        Some(20),
+        Some(10),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(top_del[1].text, "┌");
+    assert_eq!(top_del[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(top_del[2].text, "-");
+
+    // Mid Del
+    let mid_del = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        Some(ModGlyph::Mid),
+        None,
+        Some(21),
+        Some(11),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(mid_del[1].text, "│");
+    assert_eq!(mid_del[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(mid_del[2].text, "-");
+
+    // Mid Add
+    let mid_add = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Add),
+        Some(ModGlyph::Mid),
+        None,
+        Some(20),
+        Some(10),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(mid_add[1].text, "│");
+    assert_eq!(mid_add[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(mid_add[2].text, "+");
+
+    // Bottom Add
+    let bottom_add = styled_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Add),
+        Some(ModGlyph::Bottom),
+        None,
+        Some(21),
+        Some(11),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(bottom_add[1].text, "└");
+    assert_eq!(bottom_add[1].fg, Some(mod_gutter.icon.color));
+    assert_eq!(bottom_add[2].text, "+");
 }

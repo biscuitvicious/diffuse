@@ -671,3 +671,185 @@ index 3333333..4444444 100644
     assert_eq!(file0_rows[1].mod_side(), Some(diffuse_core::ModSide::Del));
     assert_eq!(file0_rows[2].mod_side(), Some(diffuse_core::ModSide::Add));
 }
+
+#[test]
+fn test_adjacent_expanded_mods_merged_cluster_flat_order() {
+    let diff_str = r#"diff --git a/f.rs b/f.rs
+index 1111111..2222222 100644
+--- a/f.rs
++++ b/f.rs
+@@ -1,5 +1,5 @@
+ fn f() {
+-    let a = 1;
+-    let b = 2;
+-    let c = 3;
++    let a = 10;
++    let b = 20;
++    let c = 30;
+ }
+"#;
+    let pipeline_out = run_pipeline_full(diff_str, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        pipeline_out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Initial state: 5 rows (Ctx, Mod 0, Mod 1, Mod 2, Ctx)
+    let diff_rows: Vec<_> = state.flat.iter().filter(|r| r.is_diff_row()).collect();
+    assert_eq!(diff_rows.len(), 5);
+
+    // Expand all mod rows
+    state.execute(crate::command::TuiCommand::ToggleExpandAllMods);
+    assert_eq!(state.expanded_mods.len(), 3);
+
+    // Flat rows should now be: Ctx, Del 0, Del 1, Del 2, Add 0, Add 1, Add 2, Ctx
+    let diff_rows_expanded: Vec<_> = state.flat.iter().filter(|r| r.is_diff_row()).collect();
+    assert_eq!(diff_rows_expanded.len(), 8);
+
+    assert!(!diff_rows_expanded[0].is_expanded_mod()); // Ctx
+
+    // 3 Dels
+    assert_eq!(
+        diff_rows_expanded[1].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(diff_rows_expanded[1].diff_row_idx(), Some(1));
+    assert_eq!(
+        diff_rows_expanded[1].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Top)
+    );
+
+    assert_eq!(
+        diff_rows_expanded[2].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(diff_rows_expanded[2].diff_row_idx(), Some(2));
+    assert_eq!(
+        diff_rows_expanded[2].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Mid)
+    );
+
+    assert_eq!(
+        diff_rows_expanded[3].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(diff_rows_expanded[3].diff_row_idx(), Some(3));
+    assert_eq!(
+        diff_rows_expanded[3].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Mid)
+    );
+
+    // 3 Adds
+    assert_eq!(
+        diff_rows_expanded[4].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(diff_rows_expanded[4].diff_row_idx(), Some(1));
+    assert_eq!(
+        diff_rows_expanded[4].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Mid)
+    );
+
+    assert_eq!(
+        diff_rows_expanded[5].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(diff_rows_expanded[5].diff_row_idx(), Some(2));
+    assert_eq!(
+        diff_rows_expanded[5].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Mid)
+    );
+
+    assert_eq!(
+        diff_rows_expanded[6].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(diff_rows_expanded[6].diff_row_idx(), Some(3));
+    assert_eq!(
+        diff_rows_expanded[6].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Bottom)
+    );
+
+    assert!(!diff_rows_expanded[7].is_expanded_mod()); // Ctx
+
+    // Render viewport lines and verify rendered line prefixes
+    let (rendered_lines, ..) = state.render_diff_viewport_lines(80, 20, 20);
+    let line_texts: Vec<String> = rendered_lines
+        .into_iter()
+        .map(|l| l.spans.into_iter().map(|s| s.content.to_string()).collect())
+        .collect();
+    let mod_lines: Vec<&String> = line_texts
+        .iter()
+        .filter(|t| t.contains("let a") || t.contains("let b") || t.contains("let c"))
+        .collect();
+    assert_eq!(mod_lines.len(), 6);
+    assert!(mod_lines[0].contains("┌-") && mod_lines[0].contains("let a = 1"));
+    assert!(mod_lines[1].contains("│-") && mod_lines[1].contains("let b = 2"));
+    assert!(mod_lines[2].contains("│-") && mod_lines[2].contains("let c = 3"));
+    assert!(mod_lines[3].contains("│+") && mod_lines[3].contains("let a = 10"));
+    assert!(mod_lines[4].contains("│+") && mod_lines[4].contains("let b = 20"));
+    assert!(mod_lines[5].contains("└+") && mod_lines[5].contains("let c = 30"));
+
+    // Toggle collapse on row index 2 (b)
+    state.row_idx = state
+        .flat
+        .iter()
+        .position(|r| {
+            r.diff_row_idx() == Some(2) && r.mod_side() == Some(diffuse_core::ModSide::Del)
+        })
+        .unwrap();
+    state.toggle_current_mod_row();
+    assert_eq!(state.expanded_mods.len(), 2);
+
+    // After collapsing 'b', cluster splits:
+    // Cluster 1 ('a'): Del 0 (Top), Add 0 (Bottom)
+    // Collapsed 'b': Mod 1
+    // Cluster 2 ('c'): Del 2 (Top), Add 2 (Bottom)
+    let diff_rows_partial: Vec<_> = state.flat.iter().filter(|r| r.is_diff_row()).collect();
+    assert_eq!(diff_rows_partial.len(), 7); // Ctx, Del 0, Add 0, Mod 1, Del 2, Add 2, Ctx
+
+    assert_eq!(diff_rows_partial[1].diff_row_idx(), Some(1));
+    assert_eq!(
+        diff_rows_partial[1].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(
+        diff_rows_partial[1].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Top)
+    );
+
+    assert_eq!(diff_rows_partial[2].diff_row_idx(), Some(1));
+    assert_eq!(
+        diff_rows_partial[2].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(
+        diff_rows_partial[2].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Bottom)
+    );
+
+    assert_eq!(diff_rows_partial[3].diff_row_idx(), Some(2));
+    assert!(!diff_rows_partial[3].is_expanded_mod()); // Collapsed
+
+    assert_eq!(diff_rows_partial[4].diff_row_idx(), Some(3));
+    assert_eq!(
+        diff_rows_partial[4].mod_side(),
+        Some(diffuse_core::ModSide::Del)
+    );
+    assert_eq!(
+        diff_rows_partial[4].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Top)
+    );
+
+    assert_eq!(diff_rows_partial[5].diff_row_idx(), Some(3));
+    assert_eq!(
+        diff_rows_partial[5].mod_side(),
+        Some(diffuse_core::ModSide::Add)
+    );
+    assert_eq!(
+        diff_rows_partial[5].mod_glyph(),
+        Some(diffuse_core::ModGlyph::Bottom)
+    );
+}
