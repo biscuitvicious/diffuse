@@ -25,6 +25,7 @@ pub enum TuiCommand {
     JumpFilePrev,
     JumpFileNext,
     JumpToLine(u32),
+    JumpOpposingSide,
 
     // --- Mode Toggles ---
     ToggleSyntax,

@@ -115,6 +115,8 @@ fn test_ratatui_help_modal_visual_layout() {
     assert!(full_text.contains("n · ] · Tab"));
     assert!(full_text.contains("S-Tab"));
     assert!(full_text.contains("next / prev file"));
+    assert!(full_text.contains("M · %"));
+    assert!(full_text.contains("jump to opposing moved"));
     assert!(full_text.contains("Enter"));
     assert!(full_text.contains("toggle file collapse"));
     assert!(full_text.contains("s / u"));

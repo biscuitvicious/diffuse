@@ -71,6 +71,9 @@ impl AppState {
             TuiCommand::JumpFilePrev => self.prev_file(),
             TuiCommand::JumpFileNext => self.next_file(),
             TuiCommand::JumpToLine(line) => self.goto_line(line),
+            TuiCommand::JumpOpposingSide => {
+                self.goto_opposing_move();
+            }
             TuiCommand::ToggleSyntax => self.syntax_on = !self.syntax_on,
             TuiCommand::ToggleWordDiff => self.word_diff = !self.word_diff,
             TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
@@ -124,9 +127,9 @@ impl AppState {
                 } else if let Some(fi) = self.is_cursor_on_bottom_divider() {
                     let last_hi = self.output.files[fi].hunks.len().saturating_sub(1);
                     let _ = self.expand_hunk_below(fi, last_hi);
+                } else {
+                    self.goto_opposing_move();
                 }
-                // Enter on a content row is a no-op: collapsing is reserved
-                // for the file header row.
             }
             TuiCommand::ToggleCollapseFile(Some(fi)) => self.toggle_file_collapse(fi),
             TuiCommand::OpenFileFinder => self.open_file_finder(),

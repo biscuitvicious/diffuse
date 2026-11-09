@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use diffuse::{
     core::{
+        Repo, ReviewTarget,
         apply::apply_hunk_rows,
         lcs::char_len,
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
@@ -49,6 +50,7 @@ use diffuse::{
         DiffuseTheme, default_theme, encode_sgr, render_pipeline_output, render_raw_pipeline_output,
     },
     syntax::{profile::LangProfile, registry::lang_profile},
+    tui::AppState,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -128,8 +130,7 @@ fn write_gz(path: &Path, data: &[u8]) -> io::Result<()> {
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-type RenderCacheMap = HashMap<(String, &'static str), Arc<String>>;
-static EXPECTED_RENDER_CACHE: LazyLock<Mutex<RenderCacheMap>> =
+static EXPECTED_FILE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Deserialize, Serialize)]
@@ -264,56 +265,46 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     arc
 }
 
-fn expected_render_path(name: &str, flavor: &str) -> PathBuf {
+fn expected_pager_render_path(name: &str, flavor: &str) -> PathBuf {
     golden_dir()
         .join(name)
         .join("outputs")
-        .join(format!("render.{flavor}.txt"))
+        .join(format!("pager.render.{flavor}.txt"))
+}
+
+fn expected_tui_render_path(name: &str, screen: &str, dim: &str, flavor: &str) -> PathBuf {
+    golden_dir()
+        .join(name)
+        .join("outputs")
+        .join(format!("tui.{screen}.{dim}.render.{flavor}.txt"))
 }
 
 fn expected_markdown_path(name: &str) -> PathBuf {
     golden_dir().join(name).join("outputs").join("markdown.md")
 }
 
-fn load_expected_render(name: &str, flavor: &'static str) -> Arc<String> {
+fn load_expected_file(path: &Path, desc: &str) -> Arc<String> {
     {
-        let cache = EXPECTED_RENDER_CACHE.lock().unwrap();
-        if let Some(r) = cache.get(&(name.to_string(), flavor)) {
+        let cache = EXPECTED_FILE_CACHE.lock().unwrap();
+        if let Some(r) = cache.get(path) {
             return Arc::clone(r);
         }
     }
-    let render_path = expected_render_path(name, flavor);
-    let expected = if render_path.exists() {
-        fs::read_to_string(&render_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected {flavor} render output for {name} from {}: {e}",
-                render_path.display()
-            )
-        })
-    } else {
-        let gz_path = golden_dir().join(format!("{name}.render.{flavor}.txt.gz"));
-        if gz_path.exists() {
-            let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to read expected {flavor} render output for {name} from {} or {}: {e}",
-                    render_path.display(),
-                    gz_path.display()
-                )
-            });
-            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-            let mut s = String::new();
-            Read::read_to_string(&mut decoder, &mut s).unwrap();
-            s
-        } else {
-            panic!(
-                "Failed to read expected {flavor} render output for {name} from {} (file not found). Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to create/update.",
-                render_path.display()
-            );
-        }
-    };
+    if !path.exists() {
+        panic!(
+            "Failed to read expected {desc} from {} (file not found). Use GEN_GOLDEN=1, UPDATE_RENDER=1, UPDATE_PAGER=1, or UPDATE_TUI=1 to create/update.",
+            path.display()
+        );
+    }
+    let expected = fs::read_to_string(path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected {desc} from {}: {e}",
+            path.display()
+        )
+    });
     let arc = Arc::new(expected);
-    let mut cache = EXPECTED_RENDER_CACHE.lock().unwrap();
-    cache.insert((name.to_string(), flavor), Arc::clone(&arc));
+    let mut cache = EXPECTED_FILE_CACHE.lock().unwrap();
+    cache.insert(path.to_path_buf(), Arc::clone(&arc));
     arc
 }
 
@@ -1366,53 +1357,133 @@ fn print_render_diff(name: &str, actual: &str, expected: &str) {
     eprintln!("----- END RENDER DIFF -----\n");
 }
 
-fn assert_render_flavor_matches(actual_encoded: &str, name: &str, flavor: &'static str) {
-    let render_path = expected_render_path(name, flavor);
-    let gz_render_path = golden_dir().join(format!("{name}.render.{flavor}.txt.gz"));
+fn assert_pager_render_flavor_matches(actual_encoded: &str, name: &str, flavor: &'static str) {
+    let render_path = expected_pager_render_path(name, flavor);
 
     if env::var("GEN_GOLDEN").is_ok()
         || env::var("UPDATE_RENDER").is_ok()
+        || env::var("UPDATE_PAGER").is_ok()
         || (flavor == "raw" && env::var("UPDATE_RAW").is_ok())
     {
-        if gz_render_path.exists() {
-            write_gz(&gz_render_path, actual_encoded.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_render_path.display()));
-        } else {
-            write_file_plain(&render_path, actual_encoded.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
-        }
+        write_file_plain(&render_path, actual_encoded.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
         return;
     }
 
-    let expected_encoded = load_expected_render(name, flavor);
+    let expected_encoded =
+        load_expected_file(&render_path, &format!("{name} {flavor} pager render"));
     if actual_encoded != *expected_encoded.as_ref() {
         print_render_diff(
-            &format!("{name}.render.{flavor}"),
+            &format!("{name}.pager.render.{flavor}"),
             actual_encoded,
             expected_encoded.as_ref(),
         );
         panic!(
-            "[{name}] {flavor} render output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
+            "[{name}] {flavor} pager render output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1, UPDATE_RENDER=1, or UPDATE_PAGER=1 to update.",
             render_path.display()
         );
     }
 }
 
-fn assert_render_matches(output: &PipelineOutput, name: &str) {
+fn assert_pager_render_matches(output: &PipelineOutput, name: &str) {
     let dark_theme = default_theme();
     let actual_dark_raw = render_pipeline_output(output, &dark_theme, true);
     let actual_dark_encoded = encode_sgr(&actual_dark_raw);
-    assert_render_flavor_matches(&actual_dark_encoded, name, "dark");
+    assert_pager_render_flavor_matches(&actual_dark_encoded, name, "dark");
 
     let light_theme = DiffuseTheme::light();
     let actual_light_raw = render_pipeline_output(output, &light_theme, true);
     let actual_light_encoded = encode_sgr(&actual_light_raw);
-    assert_render_flavor_matches(&actual_light_encoded, name, "light");
+    assert_pager_render_flavor_matches(&actual_light_encoded, name, "light");
 
     let raw_theme = DiffuseTheme::dark();
     let actual_raw = render_raw_pipeline_output(output, &raw_theme);
     let actual_raw_encoded = encode_sgr(&actual_raw);
-    assert_render_flavor_matches(&actual_raw_encoded, name, "raw");
+    assert_pager_render_flavor_matches(&actual_raw_encoded, name, "raw");
+}
+
+const TUI_DIMENSIONS: &[(&str, u16, u16)] =
+    &[("48x24", 48, 24), ("120x36", 120, 36), ("200x60", 200, 60)];
+
+fn assert_tui_render_flavor_matches(
+    actual_encoded: &str,
+    name: &str,
+    screen: &str,
+    dim: &str,
+    flavor: &str,
+) {
+    let render_path = expected_tui_render_path(name, screen, dim, flavor);
+
+    if env::var("GEN_GOLDEN").is_ok()
+        || env::var("UPDATE_RENDER").is_ok()
+        || env::var("UPDATE_TUI").is_ok()
+    {
+        write_file_plain(&render_path, actual_encoded.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
+        return;
+    }
+
+    let expected_encoded = load_expected_file(
+        &render_path,
+        &format!("{name} tui.{screen}.{dim}.render.{flavor}"),
+    );
+    if actual_encoded != *expected_encoded.as_ref() {
+        print_render_diff(
+            &format!("{name}.tui.{screen}.{dim}.render.{flavor}"),
+            actual_encoded,
+            expected_encoded.as_ref(),
+        );
+        panic!(
+            "[{name}] tui.{screen}.{dim}.render.{flavor} output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1, UPDATE_RENDER=1, or UPDATE_TUI=1 to update.",
+            render_path.display()
+        );
+    }
+}
+
+fn assert_tui_render_matches(name: &str, fixture: &Fixture, output: &PipelineOutput) {
+    let repo_name = fixture.repo_key.clone().unwrap_or_else(|| name.to_string());
+    let notes_path = fixture
+        .notes_file
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("/nonexistent/notes.json"));
+    let target = ReviewTarget::from_repo(Repo::from_key(repo_name.clone()))
+        .with_rev_key_opt(fixture.rev_key.clone());
+
+    let themes = [("dark", default_theme()), ("light", DiffuseTheme::light())];
+
+    for (flavor, theme) in themes {
+        for (dim_name, width, height) in TUI_DIMENSIONS {
+            let (w, h) = (*width as usize, *height as usize);
+
+            // 1. init: pre-streaming / frame 0 (empty files, is_streaming: true)
+            let init_output = PipelineOutput {
+                files: Vec::new(),
+                branch: output.branch.clone(),
+                untracked_skipped: output.untracked_skipped.clone(),
+            };
+            let mut init_state =
+                AppState::new(init_output, repo_name.clone(), notes_path.clone(), theme)
+                    .with_target(target.clone());
+            init_state.is_streaming = true;
+            let init_raw = init_state.render_frame(w, h);
+            let init_encoded = encode_sgr(&init_raw);
+            assert_tui_render_flavor_matches(&init_encoded, name, "init", dim_name, flavor);
+
+            // 2. top: post-streaming, cursor at top
+            let mut view_state =
+                AppState::new(output.clone(), repo_name.clone(), notes_path.clone(), theme)
+                    .with_target(target.clone());
+            let top_raw = view_state.render_frame(w, h);
+            let top_encoded = encode_sgr(&top_raw);
+            assert_tui_render_flavor_matches(&top_encoded, name, "top", dim_name, flavor);
+
+            // 3. bot: press G -> bottom screen
+            view_state.send_char('G');
+            let bot_raw = view_state.render_frame(w, h);
+            let bot_encoded = encode_sgr(&bot_raw);
+            assert_tui_render_flavor_matches(&bot_encoded, name, "bot", dim_name, flavor);
+        }
+    }
 }
 
 fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
@@ -1662,12 +1733,12 @@ fn run_bin_raw_leg(name: &str) {
     );
     let bin_raw = String::from_utf8_lossy(&out.stdout);
     let actual_encoded = encode_sgr(&bin_raw);
-    let raw_path = expected_render_path(name, "raw");
-    let expected_encoded = load_expected_render(name, "raw");
+    let raw_path = expected_pager_render_path(name, "raw");
+    let expected_encoded = load_expected_file(&raw_path, &format!("{name} raw pager render"));
 
     if actual_encoded != *expected_encoded.as_ref() {
         print_render_diff(
-            &format!("{name}.render.raw (bin)"),
+            &format!("{name}.pager.render.raw (bin)"),
             &actual_encoded,
             expected_encoded.as_ref(),
         );
@@ -1686,9 +1757,17 @@ fn init_test_logging() {
 }
 
 fn is_generating() -> bool {
-    ["GEN_GOLDEN", "UPDATE_WIRE", "UPDATE_RENDER", "UPDATE_RAW"]
-        .iter()
-        .any(|key| env::var(key).is_ok())
+    [
+        "GEN_GOLDEN",
+        "UPDATE_WIRE",
+        "UPDATE_RENDER",
+        "UPDATE_RAW",
+        "UPDATE_PAGER",
+        "UPDATE_TUI",
+        "UPDATE_MARKDOWN",
+    ]
+    .iter()
+    .any(|key| env::var(key).is_ok())
 }
 
 /// Run the pipeline one file at a time so a panic names the offending path.
@@ -2127,7 +2206,8 @@ fn run_acceptance_test_impl(is_inited: bool, name: &str, num_files: usize) -> bo
         return false;
     }
     let (fixture, output) = run_lib_leg(name, num_files);
-    assert_render_matches(&output, name);
+    assert_pager_render_matches(&output, name);
+    assert_tui_render_matches(name, &fixture, &output);
     assert_markdown_matches(&output, name);
     run_oracle_for_corpus(name, &fixture, &output);
     true
@@ -2355,11 +2435,11 @@ fn bin_spawn_ignores_hostile_ambient_env() {
     );
     let bin_raw = String::from_utf8_lossy(&out.stdout);
     let actual_encoded = encode_sgr(&bin_raw);
-    let raw_path = expected_render_path(name, "raw");
-    let expected_encoded = load_expected_render(name, "raw");
+    let raw_path = expected_pager_render_path(name, "raw");
+    let expected_encoded = load_expected_file(&raw_path, &format!("{name} raw pager render"));
     if actual_encoded != *expected_encoded.as_ref() {
         print_render_diff(
-            &format!("{name}.render.raw (hermetic env)"),
+            &format!("{name}.pager.render.raw (hermetic env)"),
             &actual_encoded,
             expected_encoded.as_ref(),
         );

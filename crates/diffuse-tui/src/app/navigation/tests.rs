@@ -290,7 +290,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
 }
 
 #[test]
-fn test_goto_line_centers_when_outside_20_80_percent() {
+fn test_goto_line_places_at_closest_edge_when_outside_view() {
     let mut lines = String::new();
     let mut diff_lines = String::new();
     for i in 1..=50 {
@@ -310,25 +310,26 @@ fn test_goto_line_centers_when_outside_20_80_percent() {
     );
     state.viewport_height = 20;
     // Initial scroll is 0. Target line 30 has target_vis = 30.
-    // Relative to scroll 0, screen row is 30, which is outside 20%..80% (4..16).
-    // It must center line 30 at viewport_height / 2 = 10.
+    // Relative to scroll 0, screen row is 30 >= 20 (below viewport).
+    // Closest edge is bottom (80% of viewport = 16).
     state.goto_line(30);
     let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
     let target_vis = starts[state.row_idx];
+    let band_80 = (state.viewport_height * 80) / 100;
     assert_eq!(
         state.scroll,
-        target_vis.saturating_sub(state.viewport_height / 2),
-        "goto_line outside 20-80% must center target line at middle of screen"
+        target_vis.saturating_sub(band_80),
+        "goto_line jumping downwards outside view places target at 80% (closest edge)"
     );
     assert_eq!(
         target_vis - state.scroll,
-        state.viewport_height / 2,
-        "screen row must be exactly middle of screen"
+        band_80,
+        "screen row must be exactly 80% of screen"
     );
 }
 
 #[test]
-fn test_goto_line_preserves_scroll_when_within_20_80_percent() {
+fn test_goto_line_preserves_scroll_when_visible_anywhere_in_view() {
     let mut lines = String::new();
     let mut diff_lines = String::new();
     for i in 1..=50 {
@@ -348,52 +349,59 @@ fn test_goto_line_preserves_scroll_when_within_20_80_percent() {
     );
     state.viewport_height = 20;
 
-    // First jump to line 30 (target_vis = 31) -> centers at scroll = 31 - 10 = 21
-    // (screen row 10).
+    // First jump to line 30 (target_vis = 31, including file header) ->
+    // jumping down, lands at 80% (scroll = 31 - 16 = 15).
     state.goto_line(30);
-    assert_eq!(state.scroll, 21);
+    assert_eq!(state.scroll, 15);
 
-    // Now jump to line 25 (target_vis 26).
-    // Screen row is 26 - 21 = 5.
-    // 20% of 20 = 4, 80% of 20 = 16. 5 is within 4..=16.
-    // Scroll must NOT change!
-    state.goto_line(25);
+    // Sticky headers take 2 lines (file banner + hunk header).
+    // Visible window below sticky headers is visual rows [17..35).
+    // Line 16 has target_vis 17 (screen row 17 - 15 = 2, first line below sticky
+    // headers). 2 is visible in the view! Scroll must NOT change!
+    state.goto_line(16);
     assert_eq!(
-        state.scroll, 21,
-        "goto_line within 20-80% must not change scroll"
-    );
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-    assert_eq!(starts[state.row_idx], 26);
-
-    // Boundary: line 24 (target_vis 25, screen row 25 - 21 = 4, exactly 20%).
-    state.goto_line(24);
-    assert_eq!(
-        state.scroll, 21,
-        "goto_line at exactly 20% boundary must not change scroll"
+        state.scroll, 15,
+        "goto_line visible below sticky header must preserve scroll"
     );
 
-    // Boundary: line 36 (target_vis 37, screen row 37 - 21 = 16, exactly 80%).
-    state.goto_line(36);
+    // Jump to line 32 (target_vis 33, screen row 33 - 15 = 18).
+    // 18 is visible in the view! Scroll must NOT change!
+    state.goto_line(32);
     assert_eq!(
-        state.scroll, 21,
-        "goto_line at exactly 80% boundary must not change scroll"
+        state.scroll, 15,
+        "goto_line visible near bottom must preserve scroll"
     );
 
-    // Outside lower boundary: line 23 (target_vis 24, screen row would be 24 - 21 =
-    // 3 < 4). Must center line 23 at scroll = 24 - 10 = 14.
-    state.goto_line(23);
+    // Boundary: bottom edge screen row 19 (line 33, target_vis 34).
+    state.goto_line(33);
     assert_eq!(
-        state.scroll, 14,
-        "goto_line below 20% must center target line"
+        state.scroll, 15,
+        "goto_line at bottom screen row 19 must preserve scroll"
     );
 
-    // Outside upper boundary: line 37 (target_vis 38, screen row 38 - 14 = 24 >
-    // 16). Must center line 37 at scroll = 38 - 10 = 28.
-    state.goto_line(37);
+    // Occluded by sticky header: line 15 (target_vis 16 < 15 + 2).
+    // Target is behind sticky header; closest edge is top (20% = 4).
+    // Scroll becomes 16 - 4 = 12.
+    state.goto_line(15);
     assert_eq!(
-        state.scroll, 28,
-        "goto_line above 80% must center target line"
+        state.scroll, 12,
+        "goto_line behind sticky header places target at 20%"
     );
+
+    // Outside lower boundary: line 40 (target_vis 41 >= 12 + 20).
+    // Target is below view; closest edge is bottom (80% = 16).
+    // Scroll becomes 41 - 16 = 25.
+    state.goto_line(40);
+    assert_eq!(
+        state.scroll, 25,
+        "goto_line below view places target at 80%"
+    );
+
+    // Outside upper boundary: line 10 (target_vis 11 < 25).
+    // Target is above view; closest edge is top (20% = 4).
+    // Scroll becomes 11 - 4 = 7.
+    state.goto_line(10);
+    assert_eq!(state.scroll, 7, "goto_line above view places target at 20%");
 }
 
 #[test]
@@ -434,10 +442,11 @@ fn test_jump_to_row_centered_edge_cases() {
     state.jump_to_row_centered(5);
     let (starts, _, _, _) = state.visual_geometry(80);
     let vis_5 = starts[5];
+    let band_20 = (state.viewport_height * 20) / 100;
     assert_eq!(
         state.scroll,
-        vis_5.saturating_sub(state.viewport_height / 2),
-        "target above scroll window centers"
+        vis_5.saturating_sub(band_20),
+        "target above scroll window places target at 20%"
     );
 }
 
@@ -1442,4 +1451,139 @@ index 000..111 100644
         gap_after < gap_before,
         "Enter on bottom divider expands context below"
     );
+}
+
+#[test]
+fn test_jump_to_opposing_move_side() {
+    use crate::core::{parse::RowKind, wire::MovSide};
+
+    let mut old = String::from("fn first() {\n    moved_item();\n}\n");
+    for i in 0..40 {
+        old.push_str(&format!("fn pad_{i}() {{}}\n"));
+    }
+    old.push_str("fn second() {\n}\n");
+
+    let mut new = String::from("fn first() {\n}\n");
+    for i in 0..40 {
+        new.push_str(&format!("fn pad_{i}() {{}}\n"));
+    }
+    new.push_str("fn second() {\n    moved_item();\n}\n");
+
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,4 +1,3 @@
+ fn first() {
+-    moved_item();
+ }
+@@ -42,3 +41,4 @@
+ fn second() {
++    moved_item();
+ }
+"#;
+
+    let output = run_pipeline_full(
+        diff,
+        Some([("test.rs".to_string(), new)].into_iter().collect()),
+        Some([("test.rs".to_string(), old)].into_iter().collect()),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    state.viewport_height = 8;
+    state.last_content_width = 80;
+
+    let src_pos = state
+        .flat
+        .iter()
+        .position(|fr| {
+            state
+                .row_of(fr)
+                .is_some_and(|r| r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Src))
+        })
+        .expect("must have MovSrc row");
+
+    let tgt_pos = state
+        .flat
+        .iter()
+        .position(|fr| {
+            state
+                .row_of(fr)
+                .is_some_and(|r| r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Tgt))
+        })
+        .expect("must have MovTgt row");
+
+    assert_ne!(src_pos, tgt_pos);
+
+    // 1. Position cursor at non-move row (e.g. row 0 header) -> returns false
+    state.row_idx = 0;
+    assert!(!state.goto_opposing_move());
+    assert_eq!(state.row_idx, 0);
+
+    // 2. Position cursor at MovSrc -> jump to MovTgt (outside view: places target
+    //    at 80%)
+    state.row_idx = src_pos;
+    state.scroll = 0;
+    assert!(state.goto_opposing_move());
+    assert_eq!(state.row_idx, tgt_pos, "must jump from MovSrc to MovTgt");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let target_vis = starts[tgt_pos];
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    let band_80 = (state.viewport_height.max(4) * 80) / 100;
+    assert_eq!(
+        state.scroll,
+        target_vis.saturating_sub(band_80).min(max_scroll),
+        "jumping downwards outside view places target at 80% (closest edge)"
+    );
+
+    // 3. Jump from MovTgt back to MovSrc (outside view: places target at 20%)
+    assert!(state.goto_opposing_move());
+    assert_eq!(
+        state.row_idx, src_pos,
+        "must jump from MovTgt back to MovSrc"
+    );
+    let band_20 = (state.viewport_height.max(4) * 20) / 100;
+    assert_eq!(
+        state.scroll,
+        starts[src_pos].saturating_sub(band_20).min(max_scroll),
+        "jumping upwards outside view places target at 20% (closest edge)"
+    );
+
+    // 4. Test visible in-view jump: target is visible in viewport
+    state.viewport_height = 20;
+    state.scroll = 0;
+    // With viewport_height=20, target_vis is ~13, which is visible in [0..20).
+    state.row_idx = src_pos;
+    let pre_scroll = state.scroll;
+    assert!(state.goto_opposing_move());
+    assert_eq!(state.row_idx, tgt_pos);
+    assert_eq!(
+        state.scroll, pre_scroll,
+        "visible in-view jump must preserve scroll"
+    );
+
+    // 5. Test keybindings: Enter on MovTgt jumps to MovSrc
+    state.row_idx = tgt_pos;
+    state.execute(crate::TuiCommand::ToggleCollapseFile(None));
+    assert_eq!(
+        state.row_idx, src_pos,
+        "Enter on move row jumps to opposing side"
+    );
+
+    // 6. Test Shift+M (TuiCommand::JumpOpposingSide)
+    state.row_idx = src_pos;
+    state.send_key_with_modifiers(
+        crossterm::event::KeyCode::Char('M'),
+        crossterm::event::KeyModifiers::SHIFT,
+    );
+    assert_eq!(state.row_idx, tgt_pos, "Shift+M jumps to opposing move");
+
+    // 7. Test '%' (TuiCommand::JumpOpposingSide)
+    state.send_char('%');
+    assert_eq!(state.row_idx, src_pos, "% jumps to opposing move");
 }

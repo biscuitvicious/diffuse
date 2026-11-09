@@ -13,7 +13,7 @@ use diffuse_core::{PipelineOptions, pipeline::run_pipeline_full};
 fn load_render_txt() -> Vec<String> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/diffuse-2026-08/outputs/render.dark.txt"
+        "/../../tests/golden/diffuse-2026-08/outputs/pager.render.dark.txt"
     );
     fs::read_to_string(path)
         .unwrap()

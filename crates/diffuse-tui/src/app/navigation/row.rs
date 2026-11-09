@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use crate::app::AppState;
+use crate::{
+    app::AppState,
+    core::{parse::RowKind, wire::MovSide},
+};
 
 impl AppState {
     /// Viewport jump margin: 1/10 of the viewport height (rounded half-up,
@@ -64,9 +67,106 @@ impl AppState {
         }
     }
 
-    /// Position cursor at `target_row`. If the target row is within 20% to 80%
-    /// of the viewport height, jump without scrolling. Otherwise, center the
-    /// row at the middle of the screen.
+    /// Jump to the opposing side of a moved line (`MovSrc` <-> `MovTgt`).
+    ///
+    /// Reuses [`Self::jump_to_row_centered`] so that if the target row is
+    /// visible anywhere in the view, only the cursor moves; otherwise the view
+    /// is scrolled to 20% or 80% depending on the jump direction. Returns
+    /// `true` if a jump occurred.
+    pub fn goto_opposing_move(&mut self) -> bool {
+        let Some(target_idx) = self.opposing_move_row_idx(self.row_idx) else {
+            return false;
+        };
+        self.jump_to_row_centered(target_idx);
+        true
+    }
+
+    /// Finds the flat index of the opposing moved row for the row at
+    /// `from_idx`.
+    pub fn opposing_move_row_idx(&self, from_idx: usize) -> Option<usize> {
+        let fr = self.flat.get(from_idx)?;
+        let row = self.row_of(fr)?;
+        if row.kind != RowKind::Mov {
+            return None;
+        }
+        let cur_side = row.mov_side?;
+        let target_side = match cur_side {
+            MovSide::Src => MovSide::Tgt,
+            MovSide::Tgt => MovSide::Src,
+        };
+        let cur_fi = fr.file_idx;
+        let cur_key = row.text().trim_start().to_string();
+
+        let mut cur_occ = 0;
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != cur_fi || !item.is_diff_row() {
+                continue;
+            }
+            if let Some(r) = self.row_of(item)
+                && r.kind == RowKind::Mov
+                && r.mov_side == Some(cur_side)
+                && r.text().trim_start() == cur_key
+            {
+                if i == from_idx {
+                    break;
+                }
+                cur_occ += 1;
+            }
+        }
+
+        let mut matching_opposing = Vec::new();
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != cur_fi || !item.is_diff_row() {
+                continue;
+            }
+            if let Some(r) = self.row_of(item)
+                && r.kind == RowKind::Mov
+                && r.mov_side == Some(target_side)
+                && r.text().trim_start() == cur_key
+            {
+                matching_opposing.push(i);
+            }
+        }
+
+        if !matching_opposing.is_empty() {
+            let target_idx = if cur_occ < matching_opposing.len() {
+                matching_opposing[cur_occ]
+            } else {
+                *matching_opposing.last().unwrap()
+            };
+            return Some(target_idx);
+        }
+
+        let mut matching_by_runs = Vec::new();
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != cur_fi || !item.is_diff_row() {
+                continue;
+            }
+            if let Some(r) = self.row_of(item)
+                && r.kind == RowKind::Mov
+                && r.mov_side == Some(target_side)
+                && r.runs == row.runs
+            {
+                matching_by_runs.push(i);
+            }
+        }
+
+        if !matching_by_runs.is_empty() {
+            let target_idx = if cur_occ < matching_by_runs.len() {
+                matching_by_runs[cur_occ]
+            } else {
+                *matching_by_runs.last().unwrap()
+            };
+            return Some(target_idx);
+        }
+
+        None
+    }
+
+    /// Position cursor at `target_row`. If the target row is visible anywhere
+    /// in the viewport (outside sticky headers), jump without scrolling.
+    /// Otherwise, position the row at either 20% or 80% of the viewport height
+    /// depending on the direction of the jump ("closest" edge).
     pub fn jump_to_row_centered(&mut self, target_row: usize) {
         self.scroll_pin = None;
         self.row_idx = target_row.min(self.flat.len().saturating_sub(1));
@@ -78,21 +178,30 @@ impl AppState {
         } else {
             80
         };
-        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(cw);
+        let (starts, _, seg_counts, total_vis_lines) = self.cached_geometry_tuple(cw);
         let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
 
-        let min_band = (max_rows * 20) / 100;
-        let max_band = (max_rows * 80) / 100;
+        let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts, cw);
+        let sticky_count = sticky.map_or(0, |s| {
+            if self.row_idx == s.banner_row {
+                0
+            } else if s.hunk.is_some_and(|h| self.row_idx == h.flat_row) {
+                s.sticky_lines_count
+            } else {
+                s.total_sticky_lines()
+            }
+        });
+        let visible_top = self.scroll + sticky_count;
+        let visible_bottom = self.scroll + max_rows;
 
-        let in_band = if let Some(screen_y) = target_vis.checked_sub(self.scroll) {
-            screen_y >= min_band && screen_y <= max_band
-        } else {
-            false
-        };
+        let band_20 = (max_rows * 20) / 100;
+        let band_80 = (max_rows * 80) / 100;
 
-        if !in_band {
-            self.scroll = target_vis.saturating_sub(max_rows / 2).min(max_scroll);
+        if target_vis < visible_top {
+            self.scroll = target_vis.saturating_sub(band_20).min(max_scroll);
+        } else if target_vis >= visible_bottom {
+            self.scroll = target_vis.saturating_sub(band_80).min(max_scroll);
         } else {
             self.scroll = self.scroll.min(max_scroll);
         }

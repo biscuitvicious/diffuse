@@ -260,6 +260,9 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             state.execute(TuiCommand::StartNoteDraft);
         }
+        (KeyModifiers::SHIFT, KeyCode::Char('M')) | (KeyModifiers::NONE, KeyCode::Char('%')) => {
+            state.execute(TuiCommand::JumpOpposingSide);
+        }
         (KeyModifiers::NONE, KeyCode::Char('v')) | (KeyModifiers::NONE, KeyCode::Char('V')) => {
             state.execute(TuiCommand::StartSelection);
         }
