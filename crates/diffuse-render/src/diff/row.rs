@@ -5,7 +5,7 @@ use crate::{
     core::{ModGlyph, ModSide, wire::OutputRow},
     row::{
         continuation_prefix_plain_with_mod_side_and_width,
-        continuation_prefix_spans_with_mod_side_and_width, display_text, expand_tabs,
+        continuation_prefix_spans_with_mod_side_and_width, display_text, expand_tabs, gutter_width,
         prefix_of_with_mod_side_and_width, styled_prefix_spans_with_width, write_row_segment,
     },
     span::StyledSpan,
@@ -107,11 +107,7 @@ pub(crate) fn render_row_line(
         return;
     }
 
-    let gutter_w = if line_num_width == 0 {
-        2
-    } else {
-        line_num_width + 2
-    };
+    let gutter_w = gutter_width(line_num_width);
     let text_cols = width.saturating_sub(gutter_w).max(1);
     let disp = if mod_side.is_some() {
         text.clone()

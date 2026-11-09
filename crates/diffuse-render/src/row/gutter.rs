@@ -26,6 +26,82 @@ pub const DEFAULT_PAGER_LINE_NUM_WIDTH: usize = 5;
 /// bytes for '…'.
 pub const MAX_LINE_NUM_BUF_LEN: usize = 32;
 
+/// UTF-8 ellipsis character (`…`, U+2026, 3 bytes, 1 visual column).
+pub const ELLIPSIS: &str = "…";
+
+/// Visual width of the gutter prefix for a given line number width
+/// (`line_num_width + 2`).
+#[inline]
+pub const fn gutter_width(line_num_width: usize) -> usize {
+    line_num_width + 2
+}
+
+/// Static space padding matching line number widths `0..=MAX_LINE_NUM_WIDTH` (0
+/// to 16 spaces).
+pub const LINE_NUM_SPACES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
+    "",
+    " ",
+    "  ",
+    "   ",
+    "    ",
+    "     ",
+    "      ",
+    "       ",
+    "        ",
+    "         ",
+    "          ",
+    "           ",
+    "            ",
+    "             ",
+    "              ",
+    "               ",
+    "                ",
+];
+
+/// Static space padding matching full gutter widths (`line_num_width + 2`, 2 to
+/// 18 spaces).
+pub const GUTTER_SPACES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
+    "  ",
+    "   ",
+    "    ",
+    "     ",
+    "      ",
+    "       ",
+    "        ",
+    "         ",
+    "          ",
+    "           ",
+    "            ",
+    "             ",
+    "              ",
+    "               ",
+    "                ",
+    "                 ",
+    "                  ",
+];
+
+/// Static continuation box prefixes matching `line_num_width` spaces followed
+/// by `"│ "`.
+pub const BOX_PREFIXES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
+    "│ ",
+    " │ ",
+    "  │ ",
+    "   │ ",
+    "    │ ",
+    "     │ ",
+    "      │ ",
+    "       │ ",
+    "        │ ",
+    "         │ ",
+    "          │ ",
+    "           │ ",
+    "            │ ",
+    "             │ ",
+    "              │ ",
+    "               │ ",
+    "                │ ",
+];
+
 /// Format variable-width line numbers into a stack buffer without heap
 /// allocation.
 ///
@@ -47,48 +123,33 @@ pub fn format_line_num(
     }
     let w = width.min(MAX_LINE_NUM_WIDTH);
     let Some(n) = num else {
-        buf[..w].fill(b' ');
-        return unsafe { str::from_utf8_unchecked(&buf[..w]) };
+        return LINE_NUM_SPACES[w];
     };
 
     let digits = if n == 0 { 1 } else { (n.ilog10() + 1) as usize };
     if digits <= w {
-        buf[..w].fill(b' ');
+        buf[..w - digits].fill(b' ');
         let mut val = n;
-        let mut idx = w - 1;
-        if val == 0 {
-            buf[idx] = b'0';
-        } else {
-            while val > 0 {
-                buf[idx] = b'0' + (val % 10) as u8;
-                val /= 10;
-                if idx == 0 {
-                    break;
-                }
-                idx -= 1;
-            }
+        for idx in (w - digits..w).rev() {
+            buf[idx] = b'0' + (val % 10) as u8;
+            val /= 10;
         }
         unsafe { str::from_utf8_unchecked(&buf[..w]) }
     } else {
         let target = w - 1;
-        if target == 0 {
-            buf[..3].copy_from_slice("…".as_bytes());
-            unsafe { str::from_utf8_unchecked(&buf[..3]) }
-        } else {
-            let limit = 10_u64.pow(target as u32);
-            let mut rem = n as u64;
-            while rem >= limit {
-                rem /= 10;
-            }
-            let mut val = rem;
-            for idx in (0..target).rev() {
-                buf[idx] = b'0' + (val % 10) as u8;
-                val /= 10;
-            }
-            buf[target..target + 3].copy_from_slice("…".as_bytes());
-            let total_bytes = target + 3;
-            unsafe { str::from_utf8_unchecked(&buf[..total_bytes]) }
+        let limit = 10_u64.pow(target as u32);
+        let mut rem = n as u64;
+        while rem >= limit {
+            rem /= 10;
         }
+        let mut val = rem;
+        for idx in (0..target).rev() {
+            buf[idx] = b'0' + (val % 10) as u8;
+            val /= 10;
+        }
+        buf[target..target + ELLIPSIS.len()].copy_from_slice(ELLIPSIS.as_bytes());
+        let total_bytes = target + ELLIPSIS.len();
+        unsafe { str::from_utf8_unchecked(&buf[..total_bytes]) }
     }
 }
 
@@ -463,30 +524,11 @@ pub fn continuation_prefix_spans_with_width(
     bg: Option<Color>,
     line_num_width: usize,
 ) -> Vec<StyledSpan> {
-    const PADS: [&str; 17] = [
-        "  ",
-        "   ",
-        "    ",
-        "     ",
-        "      ",
-        "       ",
-        "        ",
-        "         ",
-        "          ",
-        "           ",
-        "            ",
-        "             ",
-        "              ",
-        "               ",
-        "                ",
-        "                 ",
-        "                  ",
-    ];
     let pad = if line_num_width <= MAX_LINE_NUM_WIDTH {
-        PADS[line_num_width]
+        GUTTER_SPACES[line_num_width]
     } else {
         return vec![StyledSpan::styled(
-            " ".repeat(line_num_width + 2),
+            " ".repeat(gutter_width(line_num_width)),
             Some(Color::Fixed(242)),
             bg,
         )];
@@ -520,27 +562,8 @@ pub fn continuation_prefix_spans_with_mod_side_and_width(
                 StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
             ]
         } else {
-            const PADS: [&str; 17] = [
-                "",
-                " ",
-                "  ",
-                "   ",
-                "    ",
-                "     ",
-                "      ",
-                "       ",
-                "        ",
-                "         ",
-                "          ",
-                "           ",
-                "            ",
-                "             ",
-                "              ",
-                "               ",
-                "                ",
-            ];
             let pad = if line_num_width <= MAX_LINE_NUM_WIDTH {
-                PADS[line_num_width]
+                LINE_NUM_SPACES[line_num_width]
             } else {
                 return vec![
                     StyledSpan::styled(" ".repeat(line_num_width), Some(Color::Fixed(242)), bg),
@@ -581,50 +604,12 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
     mod_glyph: Option<ModGlyph>,
     line_num_width: usize,
 ) -> &'static str {
-    const BOX_PREFIXES: [&str; 17] = [
-        "│ ",
-        " │ ",
-        "  │ ",
-        "   │ ",
-        "    │ ",
-        "     │ ",
-        "      │ ",
-        "       │ ",
-        "        │ ",
-        "         │ ",
-        "          │ ",
-        "           │ ",
-        "            │ ",
-        "             │ ",
-        "              │ ",
-        "               │ ",
-        "                │ ",
-    ];
-    const PLAIN_PREFIXES: [&str; 17] = [
-        "  ",
-        "   ",
-        "    ",
-        "     ",
-        "      ",
-        "       ",
-        "        ",
-        "         ",
-        "          ",
-        "           ",
-        "            ",
-        "             ",
-        "              ",
-        "               ",
-        "                ",
-        "                 ",
-        "                  ",
-    ];
     let extends_box = mod_row_extends_box(mod_side, mod_glyph);
     let idx = line_num_width.min(MAX_LINE_NUM_WIDTH);
     if extends_box {
         BOX_PREFIXES[idx]
     } else {
-        PLAIN_PREFIXES[idx]
+        GUTTER_SPACES[idx]
     }
 }
 

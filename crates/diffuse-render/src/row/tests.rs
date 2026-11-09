@@ -2167,11 +2167,13 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(format_line_num(None, 5, &mut buf), "     ");
 
     // width = 1
+    assert_eq!(format_line_num(Some(0), 1, &mut buf), "0");
     assert_eq!(format_line_num(Some(5), 1, &mut buf), "5");
     // 12 does not fit in 1: stripped until fits in 0 digits -> just ellipsis
     assert_eq!(format_line_num(Some(12), 1, &mut buf), "…");
 
     // width = 2
+    assert_eq!(format_line_num(Some(0), 2, &mut buf), " 0");
     assert_eq!(format_line_num(Some(7), 2, &mut buf), " 7");
     assert_eq!(format_line_num(Some(42), 2, &mut buf), "42");
     // 100 does not fit in 2: 100 / 10 = 10 / 10 = 1 (fits in 2 - 1 = 1) -> "1…"
@@ -2179,6 +2181,7 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(format_line_num(Some(999), 2, &mut buf), "9…");
 
     // width = 3
+    assert_eq!(format_line_num(Some(0), 3, &mut buf), "  0");
     assert_eq!(format_line_num(Some(42), 3, &mut buf), " 42");
     assert_eq!(format_line_num(Some(123), 3, &mut buf), "123");
     // 12345: repeatedly / 10 -> 1234 -> 123 -> 12 (fits in 3 - 1 = 2) -> "12…"
@@ -2186,6 +2189,7 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(format_line_num(Some(9999), 3, &mut buf), "99…");
 
     // width = 4
+    assert_eq!(format_line_num(Some(0), 4, &mut buf), "   0");
     assert_eq!(format_line_num(Some(1000), 4, &mut buf), "1000");
     assert_eq!(format_line_num(Some(10000), 4, &mut buf), "100…");
     assert_eq!(format_line_num(Some(123456), 4, &mut buf), "123…");
@@ -2194,6 +2198,15 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(format_line_num(Some(12345), 5, &mut buf), "12345");
     assert_eq!(format_line_num(Some(123456), 5, &mut buf), "1234…");
 
-    // Constant verification
+    // Constant verification & gutter_width
     assert_eq!(MAX_LINE_NUM_WIDTH, 16);
+    assert_eq!(super::gutter::gutter_width(0), 2);
+    assert_eq!(super::gutter::gutter_width(5), 7);
+    assert_eq!(super::gutter::gutter_width(16), 18);
+    assert_eq!(super::gutter::GUTTER_SPACES[0], "  ");
+    assert_eq!(super::gutter::GUTTER_SPACES[5], "       ");
+    assert_eq!(super::gutter::LINE_NUM_SPACES[0], "");
+    assert_eq!(super::gutter::LINE_NUM_SPACES[5], "     ");
+    assert_eq!(super::gutter::BOX_PREFIXES[0], "│ ");
+    assert_eq!(super::gutter::BOX_PREFIXES[5], "     │ ");
 }

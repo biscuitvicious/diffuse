@@ -73,7 +73,7 @@ impl AppState {
     /// Visual width of the line number prefix gutter (`line_num_width + 2`).
     #[inline]
     pub fn gutter_width(&self) -> usize {
-        self.line_num_width + 2
+        diffuse_render::gutter_width(self.line_num_width)
     }
 
     /// Assert that `content_width` can accommodate the line number prefix
