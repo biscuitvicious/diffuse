@@ -28,7 +28,9 @@ fn emitted_prefix(
         kind, mov_side, group, new_line, old_line, runs, in_hunk, None, theme,
     );
     let mut out = String::new();
-    write_gutter_prefix(&mut out, &spans, kind == RowKind::Del, true).unwrap();
+    let is_mov_src = mov_side == Some(MovSide::Src);
+    let mid_italic_off = kind == RowKind::Del || is_mov_src;
+    write_gutter_prefix(&mut out, &spans, mid_italic_off, true).unwrap();
     out
 }
 
@@ -1434,6 +1436,54 @@ fn test_styled_prefix_spans_carry_gutter_colors() {
         .find(|span| span.text == "~")
         .expect("icon span");
     assert_eq!(icon.fg, Some(gutter.icon.color));
+}
+
+#[test]
+fn test_mov_row_prefix_line_number_colors() {
+    let theme = DiffuseTheme::dark();
+    let add_gutter = &theme.palette[Cursor::Rest][DiffKind::Add].gutter;
+    let del_gutter = &theme.palette[Cursor::Rest][DiffKind::Del].gutter;
+    let mov_gutter = &theme.palette[Cursor::Rest][DiffKind::Mov].gutter;
+
+    // MovSrc: line number carries Del rendering (red + italic), icons stay mov.icon
+    // and del.icon
+    let src_spans = styled_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Src),
+        None,
+        None,
+        Some(42),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(src_spans[0].fg, Some(del_gutter.num.color));
+    assert_eq!(src_spans[0].italic, del_gutter.num.italic);
+    assert_eq!(src_spans[1].fg, Some(mov_gutter.icon.color));
+    assert_eq!(src_spans[1].text, "≈");
+    assert_eq!(src_spans[2].fg, Some(del_gutter.icon.color));
+    assert_eq!(src_spans[2].text, "-");
+
+    // MovTgt: line number carries Add rendering (green), icons stay mov.icon and
+    // add.icon
+    let tgt_spans = styled_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        Some(99),
+        None,
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(tgt_spans[0].fg, Some(add_gutter.num.color));
+    assert_eq!(tgt_spans[0].italic, add_gutter.num.italic);
+    assert_eq!(tgt_spans[1].fg, Some(mov_gutter.icon.color));
+    assert_eq!(tgt_spans[1].text, "≈");
+    assert_eq!(tgt_spans[2].fg, Some(add_gutter.icon.color));
+    assert_eq!(tgt_spans[2].text, "+");
 }
 
 #[test]

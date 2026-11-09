@@ -112,12 +112,9 @@ pub fn write_row_segment<W: Write>(
         String::new()
     };
     out.write_str(&lead_bg)?;
-    write_gutter_prefix(
-        out,
-        prefix,
-        kind == RowKind::Del && !is_continuation,
-        !is_continuation,
-    )?;
+    let is_mov_src = mov_side == Some(MovSide::Src);
+    let mid_italic_off = (kind == RowKind::Del || is_mov_src) && !is_continuation;
+    write_gutter_prefix(out, prefix, mid_italic_off, !is_continuation)?;
     let body = &row.spans[prefix.len()..];
     // Fast-path conditions mirror `row_segment_spans`: plain deletion rows and
     // run-less rows render one body span with no trailing background.

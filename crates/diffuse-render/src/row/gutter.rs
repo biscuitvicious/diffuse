@@ -176,14 +176,14 @@ pub fn styled_prefix_spans(
                 if mov_side == Some(MovSide::Src) {
                     let pad = pad4_bytes(old_line, &mut buf);
                     vec![
-                        mov.num.span(pad, bg),
+                        del.num.span(pad, bg),
                         mov.icon.span("≈", bg),
                         del.icon.span("-", bg),
                     ]
                 } else {
                     let pad = pad4_bytes(new_line, &mut buf);
                     vec![
-                        mov.num.span(pad, bg),
+                        add.num.span(pad, bg),
                         mov.icon.span("≈", bg),
                         add.icon.span("+", bg),
                     ]
