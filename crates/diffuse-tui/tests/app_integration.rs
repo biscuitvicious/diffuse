@@ -1342,3 +1342,55 @@ fn test_side_by_side_toggle_and_viewport_rendering() {
         }
     }
 }
+
+#[test]
+fn test_side_by_side_diff_layout_and_toggle() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "scrollbar-grab-drag".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    let (w, h) = (120, 36);
+    let buf_unified = state.render_to_buffer(w, h);
+
+    // Toggle side-by-side using TuiCommand::ToggleSideBySide
+    state.execute(TuiCommand::ToggleSideBySide);
+    assert!(state.side_by_side);
+
+    let buf_split = state.render_to_buffer(w, h);
+
+    // Main area width excludes scrollbar column (at x = w - 1)
+    let content_w = (w - 1) as usize;
+    let (left_w, right_w) = diffuse_render::split_pane_widths(content_w);
+    assert_eq!(left_w + 1 + right_w, content_w);
+    let divider_col = left_w as u16;
+
+    // Check that center column divider '│' appears in diff rows in the split buffer
+    let divider_rows: Vec<u16> = (0..buf_split.area().height)
+        .filter(|&y| buf_split[(divider_col, y)].symbol() == "│")
+        .collect();
+    assert!(
+        !divider_rows.is_empty(),
+        "split dual-pane diff must render center divider '│' at column {divider_col}"
+    );
+
+    // Toggle back to unified
+    state.execute(TuiCommand::ToggleSideBySide);
+    assert!(!state.side_by_side);
+
+    let buf_back = state.render_to_buffer(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            assert_eq!(
+                buf_unified[(x, y)].symbol(),
+                buf_back[(x, y)].symbol(),
+                "cell ({x}, {y}) mismatch after toggling back to unified"
+            );
+        }
+    }
+}
