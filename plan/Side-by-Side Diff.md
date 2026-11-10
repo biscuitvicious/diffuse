@@ -4,7 +4,7 @@
 - [x] Phase 2 — Side-by-Side Row Segment and Span Pipeline (`diffuse-render`)
 - [x] Phase 3 — Dual-Pane Visual Line Height and Geometry Caching (`diffuse-tui`)
 - [x] Phase 4 — Viewport Grid Integration and Command Dispatch (`diffuse-tui`)
-- [ ] Phase 5 — CLI Options, Status Bar, Help Modal and Pager Support (`diffuse`)
+- [x] Phase 5 — CLI Options, Status Bar, Help Modal and Pager Support (`diffuse`)
 - [ ] Phase 6 — Integration Testing, Golden Invariants and Sign-Off
 
 ---

@@ -1170,3 +1170,16 @@ fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
     assert!(found_full_row, "must find selected row with counts");
     assert!(found_adds_row, "must find unselected row with counts");
 }
+
+#[test]
+fn test_help_modal_contains_side_by_side() {
+    let entry = HELP_ENTRIES
+        .iter()
+        .find(|(_, d)| d.contains("side-by-side"));
+    assert!(
+        entry.is_some(),
+        "HELP_ENTRIES must contain side-by-side toggle binding"
+    );
+    let (keys, _) = entry.unwrap();
+    assert!(keys.contains('\\') || keys.contains('|'));
+}

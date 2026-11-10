@@ -56,6 +56,9 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     // Collect trailing segments following the common prefix
     let mut trailing: Vec<(Cow<'_, str>, Color, bool)> = Vec::new();
 
+    if ctx.side_by_side {
+        trailing.push((Cow::Borrowed("split"), p.status_bar_accent, true));
+    }
     if ctx.raw_diff {
         trailing.push((Cow::Borrowed("raw diff"), p.status_bar_accent, true));
     } else if ctx.expanded_mods_count > 0 {
@@ -214,6 +217,7 @@ mod tests {
                 cur_hunk: 0,
                 total_hunks: 1,
                 raw_diff: false,
+                side_by_side: false,
                 expanded_mods_count: 0,
                 total_mods: 0,
                 col_offset: 0,
@@ -422,6 +426,14 @@ mod tests {
         let layout = status_layout(&c);
         assert_eq!(plain(&layout), "raw diff");
     }
+
+    #[test]
+    fn test_status_bar_split_badge() {
+        let (mut c, _f) = ctx(100, "");
+        c.side_by_side = true;
+        let layout = status_layout(&c);
+        assert!(plain(&layout).contains("split"));
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +447,7 @@ mod empty_state_tests {
             cur_hunk: 0,
             total_hunks: 0,
             raw_diff: false,
+            side_by_side: false,
             expanded_mods_count: 0,
             total_mods: 0,
             col_offset: 0,

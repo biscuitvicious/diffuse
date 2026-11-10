@@ -15,6 +15,7 @@ pub struct StatusBarContext<'a> {
     pub cur_hunk: usize,
     pub total_hunks: usize,
     pub raw_diff: bool,
+    pub side_by_side: bool,
     pub expanded_mods_count: usize,
     pub total_mods: usize,
     pub col_offset: usize,

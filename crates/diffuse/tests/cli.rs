@@ -2756,3 +2756,60 @@ fn piped_diff_in_git_repo_does_not_synthesize_lines_from_matching_local_git_repo
     assert_eq!(f.counts.adds, 0);
     assert_eq!(f.counts.dels, 0);
 }
+
+#[test]
+fn test_cli_side_by_side_and_unified_args() {
+    let output = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--side-by-side"));
+    assert!(help.contains("--split"));
+    assert!(help.contains("--unified"));
+}
+
+#[test]
+fn test_cli_pager_side_by_side() {
+    let diff_input = r#"diff --git a/hello.rs b/hello.rs
+index 0000000..1111111 100644
+--- a/hello.rs
++++ b/hello.rs
+@@ -1 +1 @@
+-println!("old");
++println!("new");
+"#;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .arg("--side-by-side")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(diff_input.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "diffuse -p --side-by-side must succeed, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains('│'),
+        "must contain side-by-side vertical divider, got: {stdout}"
+    );
+    let plain = diffuse_render::ansi::strip_ansi(&stdout);
+    assert!(plain.contains("println!(\"old\");"));
+    assert!(plain.contains("println!(\"new\");"));
+}

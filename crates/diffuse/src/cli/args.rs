@@ -302,6 +302,32 @@ lines. Relevant only for pager and TUI modes; ignored in raw, markdown, and JSON
     )]
     pub no_expand_mods: bool,
 
+    /// Display diff in side-by-side (split dual-pane) layout (pager and TUI
+    /// only).
+    #[arg(
+        long = "side-by-side",
+        visible_alias = "split",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "unified",
+        global = true,
+        help_heading = "Execution Modes",
+        help = "Display diff in side-by-side (split dual-pane) layout (pager and TUI only)",
+        long_help = "Display diff in side-by-side (split dual-pane) layout, showing pre-image on \
+the left and post-image on the right separated by a vertical border."
+    )]
+    pub side_by_side: bool,
+
+    /// Display diff in unified inline layout (default).
+    #[arg(
+        long = "unified",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "side_by_side",
+        global = true,
+        help_heading = "Execution Modes",
+        help = "Display diff in unified inline layout (default)"
+    )]
+    pub unified: bool,
+
     /// View staged (cached) index changes against HEAD.
     #[arg(
         short = 's',

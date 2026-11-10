@@ -326,6 +326,7 @@ fn dispatch_path_diff(
             false,
             args.resolved_expand_mods(true),
             args.line_number_width,
+            args.side_by_side,
         )?;
         return Ok(());
     }
@@ -435,6 +436,7 @@ fn dispatch_diff_stream(
             false,
             args.resolved_expand_mods(true),
             args.line_number_width,
+            args.side_by_side,
         )?;
         return Ok(());
     }
@@ -540,6 +542,7 @@ fn dispatch_git_review(
             !args.no_watch,
             args.resolved_expand_mods(true),
             args.line_number_width,
+            args.side_by_side,
         )?;
         return Ok(());
     }
@@ -639,7 +642,7 @@ fn dispatch_git_review(
         // the TUI does before the total is known.
         for (idx, file) in consumer.enumerate() {
             let badge = Badge { idx, total: None };
-            let mut rendered = render_file_diff_with_options(
+            let mut rendered = render_file_diff_with_all_options(
                 &file,
                 Some(badge),
                 &theme,
@@ -647,6 +650,7 @@ fn dispatch_git_review(
                 term_width,
                 expand_mods,
                 args.line_number_width,
+                args.side_by_side,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
@@ -772,7 +776,7 @@ fn consume_and_render(
         // the TUI does before the total is known.
         for (idx, file) in consumer.enumerate() {
             let badge = Badge { idx, total: None };
-            let mut rendered = render_file_diff_with_options(
+            let mut rendered = render_file_diff_with_all_options(
                 &file,
                 Some(badge),
                 &theme,
@@ -780,6 +784,7 @@ fn consume_and_render(
                 term_width,
                 expand_mods,
                 args.line_number_width,
+                args.side_by_side,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();

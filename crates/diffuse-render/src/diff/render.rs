@@ -19,7 +19,7 @@ use crate::{
 use super::{
     header::{write_file_header_bar_with_width, write_raw_file_header},
     hunk::render_hunk_divider,
-    row::render_row_line,
+    row::{render_row_line, render_side_by_side_row_line},
 };
 
 pub(crate) fn partition_file_notes<'a>(
@@ -95,6 +95,29 @@ pub fn render_pipeline_output_with_options(
     expand_mods: Option<bool>,
     line_num_width: Option<usize>,
 ) -> String {
+    render_pipeline_output_with_all_options(
+        output,
+        theme,
+        styled_prefixes,
+        width,
+        expand_mods,
+        line_num_width,
+        false,
+    )
+}
+
+/// Render complete pipeline output to terminal ANSI strings with options
+/// including modification row expansion, line number width, and side-by-side
+/// layout.
+pub fn render_pipeline_output_with_all_options(
+    output: &PipelineOutput,
+    theme: &DiffuseTheme,
+    styled_prefixes: bool,
+    width: usize,
+    expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
+    side_by_side: bool,
+) -> String {
     let total_rows: usize = output
         .files
         .iter()
@@ -110,7 +133,7 @@ pub fn render_pipeline_output_with_options(
 
     let total = output.files.len();
     for (fi, f) in output.files.iter().enumerate() {
-        out.push_str(&render_file_diff_with_options(
+        out.push_str(&render_file_diff_with_all_options(
             f,
             Some(Badge {
                 idx: fi,
@@ -121,6 +144,7 @@ pub fn render_pipeline_output_with_options(
             width,
             expand_mods,
             line_num_width,
+            side_by_side,
         ));
     }
 
@@ -173,6 +197,32 @@ pub fn render_file_diff_with_options(
     expand_mods: Option<bool>,
     line_num_width: Option<usize>,
 ) -> String {
+    render_file_diff_with_all_options(
+        file,
+        badge,
+        theme,
+        styled_prefixes,
+        width,
+        expand_mods,
+        line_num_width,
+        false,
+    )
+}
+
+/// Render a single file's header bar and colored hunks with all options
+/// including modification row expansion, line number width, and side-by-side
+/// layout.
+#[allow(clippy::too_many_arguments)]
+pub fn render_file_diff_with_all_options(
+    file: &OutputFile,
+    badge: Option<Badge>,
+    theme: &DiffuseTheme,
+    styled_prefixes: bool,
+    width: usize,
+    expand_mods: Option<bool>,
+    line_num_width: Option<usize>,
+    side_by_side: bool,
+) -> String {
     let ln_w = line_num_width.unwrap_or(crate::row::DEFAULT_PAGER_LINE_NUM_WIDTH);
     let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
@@ -212,7 +262,15 @@ pub fn render_file_diff_with_options(
         let mut i = 0;
         while i < rows.len() {
             let r = &rows[i];
-            if expand_mods == Some(true) && r.kind == RowKind::Mod {
+            if side_by_side {
+                render_side_by_side_row_line(out, r, theme, width, styled_prefixes, ln_w, ln_w);
+                if let Some(notes) = row_notes.get(&(start_idx + i)) {
+                    for note in notes {
+                        emit_note(note, out);
+                    }
+                }
+                i += 1;
+            } else if expand_mods == Some(true) && r.kind == RowKind::Mod {
                 let mut j = i + 1;
                 while j < rows.len() && rows[j].kind == RowKind::Mod {
                     j += 1;

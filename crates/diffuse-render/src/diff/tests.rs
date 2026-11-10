@@ -1268,3 +1268,41 @@ fn test_hunk_divider_text_omits_icons() {
     let text = hunk_divider_text(badge, &hunk, 8);
     assert_eq!(text, "──── Hunk 2/3 · 8 more lines ────");
 }
+
+#[test]
+fn test_render_side_by_side_diff_output() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n ctx line\n-old line\n+new line\n ctx line 2\n";
+    let new_content = [(
+        "a.txt".to_string(),
+        "ctx line\nnew line\nctx line 2\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let old_content = [(
+        "a.txt".to_string(),
+        "ctx line\nold line\nctx line 2\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let theme = DiffuseTheme::dark();
+    let rendered =
+        render_file_diff_with_all_options(&out.files[0], None, &theme, true, 80, None, None, true);
+    let stripped = strip_ansi(&rendered);
+    assert!(
+        stripped.contains('│'),
+        "side-by-side pager output must contain center divider"
+    );
+    assert!(stripped.contains("old line"));
+    assert!(stripped.contains("new line"));
+
+    let pipe_rendered =
+        render_pipeline_output_with_all_options(&out, &theme, true, 80, None, None, true);
+    let pipe_stripped = strip_ansi(&pipe_rendered);
+    assert!(pipe_stripped.contains('│'));
+}

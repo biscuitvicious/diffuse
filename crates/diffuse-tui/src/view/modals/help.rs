@@ -29,6 +29,7 @@ pub const HELP_ENTRIES: &[(&str, &str)] = &[
     ("y", "toggle syntax highlight"),
     ("R", "toggle raw diff view"),
     ("#", "toggle old-line gutter"),
+    (r"\ · |", "toggle side-by-side diff"),
     ("r · Ctrl+r", "force reload diff"),
     ("t", "toggle staged / unstaged"),
     ("s / u", "stage / unstage hunk"),
