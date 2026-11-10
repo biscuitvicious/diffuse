@@ -31,6 +31,9 @@ pub(crate) struct CachedGeometry {
     pub(crate) callouts: HashMap<usize, Vec<ratatui::text::Line<'static>>>,
 }
 
+/// Visual width of the context expansion arrow gutter column in the TUI.
+pub const EXPAND_GUTTER_WIDTH: usize = 1;
+
 impl AppState {
     /// Bump after any mutation of diff content (files, hunks, rows, flat
     /// layout): invalidates cached visual geometry.
@@ -70,10 +73,11 @@ impl AppState {
         }
     }
 
-    /// Visual width of the line number prefix gutter (`line_num_width + 2`).
+    /// Visual width of the line number prefix gutter (`line_num_width + 2 +
+    /// EXPAND_GUTTER_WIDTH`).
     #[inline]
     pub fn gutter_width(&self) -> usize {
-        diffuse_render::gutter_width(self.line_num_width)
+        diffuse_render::gutter_width(self.line_num_width) + EXPAND_GUTTER_WIDTH
     }
 
     /// Assert that `content_width` can accommodate the line number prefix

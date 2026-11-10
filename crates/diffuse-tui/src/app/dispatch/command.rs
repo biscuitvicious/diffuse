@@ -1,10 +1,4 @@
-use std::collections::HashMap;
-
-use crate::{
-    app::AppState,
-    command::TuiCommand,
-    view::{hunk_divider_text, wrapped_glyph_hit},
-};
+use crate::{app::AppState, command::TuiCommand, view::wrapped_glyph_hit};
 
 impl AppState {
     /// Execute a high-level user command to mutate application state.
@@ -259,62 +253,43 @@ impl AppState {
                         let starts = &geo.starts;
                         let counts = &geo.counts;
                         let nav_counts = &geo.nav_counts;
-                        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
-                            HashMap::new()
-                        } else {
-                            self.hunk_starts
-                                .iter()
-                                .map(|h| (h.flat, (h.file, h.hunk)))
-                                .collect()
-                        };
+                        let seg_counts = &geo.seg_counts;
 
                         for (i, &s) in starts.iter().enumerate() {
                             if target_vis >= s && target_vis < s + counts[i] {
-                                let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
-                                    self.hunk_div_seg_count(div_fi, div_hi, cw)
+                                let div_lines = if !self.raw_diff
+                                    && let Some(hs) = self.hunk_starts.iter().find(|h| h.flat == i)
+                                {
+                                    self.hunk_div_seg_count(hs.file, hs.hunk, cw)
                                 } else {
                                     0
                                 };
 
-                                if target_vis < s + div_lines
-                                    && let Some(&(div_fi, div_hi)) = div_at.get(&i)
-                                    && let Some(f) = self.output.files.get(div_fi)
-                                    && let Some(hunk) = f.hunks.get(div_hi)
-                                {
-                                    let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
-                                    if hidden_gap > 0 {
-                                        // The divider may wrap across several
-                                        // visual segments on narrow screens;
-                                        // the
-                                        // hit area is the glyph's screen cells
-                                        // after wrapping.
-                                        let seg_off = target_vis - s;
-                                        let txt = hunk_divider_text(
-                                            crate::render::Badge {
-                                                idx: div_hi,
-                                                total: Some(f.hunks.len()),
-                                            },
-                                            hunk,
-                                            hidden_gap,
-                                        );
-
-                                        let hit = |pat: &str| {
-                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)
-                                        };
-
-                                        let mut handled = true;
-                                        if div_hi == 0 && hit("▼") {
-                                            self.expand_hunk_above(div_fi, 0);
-                                        } else if div_hi > 0 && hit("⬍") {
-                                            self.expand_hunk_both(div_fi, div_hi - 1);
-                                        } else if div_hi > 0 && hit("▲") {
-                                            self.expand_hunk_below(div_fi, div_hi - 1);
-                                        } else if div_hi > 0 && hit("▼") {
-                                            self.expand_hunk_above(div_fi, div_hi);
-                                        } else {
-                                            handled = false;
-                                        }
-                                        if handled {
+                                // Clicking the context expansion arrow in the gutter
+                                // (columns 0 and 1) expands context and swallows the click.
+                                if target_vis >= s + div_lines {
+                                    let r_vis = target_vis - s - div_lines;
+                                    let item_info = self
+                                        .flat
+                                        .get(i)
+                                        .filter(|item| item.is_diff_row())
+                                        .and_then(|item| {
+                                            item.hunk_idx().map(|hi| (item.file_idx, hi))
+                                        });
+                                    if let Some((fi, hi)) = item_info
+                                        && r_vis < seg_counts[i]
+                                        && col <= 1
+                                    {
+                                        let s_idx = r_vis;
+                                        if let Some(icon) =
+                                            self.hunk_expand_icon_for_segment(i, s_idx, seg_counts)
+                                        {
+                                            if icon.expands_below() {
+                                                self.expand_hunk_below(fi, hi);
+                                            }
+                                            if icon.expands_above() {
+                                                self.expand_hunk_above(fi, hi);
+                                            }
                                             break;
                                         }
                                     }

@@ -184,9 +184,9 @@ index 1111111..2222222 100644
         raw_line.contains("\x1b[38;5;120m"),
         "marker and text must render green: {raw_line:?}"
     );
-    let expected_gutter = " ".repeat(state.gutter_width());
+    let render_gutter = " ".repeat(crate::render::gutter_width(state.line_num_width));
     assert!(
-        frame.contains(&format!("\x1b[38;5;242m{expected_gutter}\x1b[38;5;120m")),
+        frame.contains(&format!("\x1b[38;5;242m{render_gutter}\x1b[38;5;120m")),
         "continuation segments must start with gutter and green foreground"
     );
 }
@@ -274,9 +274,9 @@ fn test_current_line_highlight_covers_gutter() {
     );
 
     // Unselected addition row starts with addition background before the gutter
-    // numbers
+    // expand column / numbers
     assert!(
-        frame_ctx.contains("\x1b[48;2;28;50;30m\x1b[38;5;120m"),
+        frame_ctx.contains("\x1b[48;2;28;50;30m\x1b[38;5;"),
         "addition row must start with green tint before gutter numbers"
     );
 }
@@ -816,4 +816,322 @@ fn test_scrollbar_subcell_to_ratatui_line_and_edge_branches() {
 
     // Track cell way past track height
     assert_eq!(sub_single.cell_at(99), ScrollbarCell::Track);
+}
+
+#[test]
+fn test_hunk_expand_icon_for_segment_branches() {
+    use crate::types::HunkExpandIcon;
+
+    // 1. Single-line hunk with context above and below (lines 10..10 in 20-line
+    //    file)
+    let diff_mid =
+        "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -10,1 +10,1 @@\n-old 10\n+new 10\n";
+    let mut old_lines = (1..=20).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    old_lines[9] = "old 10\n".into();
+    let mut new_lines = (1..=20).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    new_lines[9] = "new 10\n".into();
+    let new_mid: std::collections::HashMap<_, _> =
+        [("f.rs".into(), new_lines.concat())].into_iter().collect();
+    let old_mid: std::collections::HashMap<_, _> =
+        [("f.rs".into(), old_lines.concat())].into_iter().collect();
+    let opts_u0 = crate::core::PipelineOptions {
+        visual_context: 0,
+        ..Default::default()
+    };
+    let out_mid = crate::core::pipeline::run_pipeline_full(
+        diff_mid,
+        Some(new_mid),
+        Some(old_mid),
+        opts_u0.clone(),
+    );
+    let state_mid = AppState::new(
+        out_mid,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // In visual flat, row 0 is file header, row 1 is the diff row
+    let diff_row_idx = state_mid
+        .flat
+        .iter()
+        .position(|r| r.is_diff_row())
+        .expect("diff row");
+
+    // When seg_count == 1: collapses to Both
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 0, &[1]),
+        Some(HunkExpandIcon::Both)
+    );
+
+    // When seg_count == 3 (wrapped): s_idx 0 is Up, s_idx 1 is None, s_idx 2 is
+    // Down (not space for both stems)
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 0, &[3]),
+        Some(HunkExpandIcon::Up)
+    );
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 1, &[3]),
+        None
+    );
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 2, &[3]),
+        Some(HunkExpandIcon::Down)
+    );
+
+    // When seg_count == 4 (wrapped): s_idx 0 is Up, s_idx 1 is UpStem, s_idx 2 is
+    // DownStem, s_idx 3 is Down (space for both stems!)
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 0, &[4]),
+        Some(HunkExpandIcon::Up)
+    );
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 1, &[4]),
+        Some(HunkExpandIcon::UpStem)
+    );
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 2, &[4]),
+        Some(HunkExpandIcon::DownStem)
+    );
+    assert_eq!(
+        state_mid.hunk_expand_icon_for_segment(diff_row_idx, 3, &[4]),
+        Some(HunkExpandIcon::Down)
+    );
+
+    // 2. 1-line file with no context in either direction
+    let diff_1line =
+        "diff --git a/one.rs b/one.rs\n--- a/one.rs\n+++ b/one.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+    let new_1line: std::collections::HashMap<_, _> =
+        [("one.rs".into(), "new\n".into())].into_iter().collect();
+    let old_1line: std::collections::HashMap<_, _> =
+        [("one.rs".into(), "old\n".into())].into_iter().collect();
+    let out_1line = crate::core::pipeline::run_pipeline_full(
+        diff_1line,
+        Some(new_1line),
+        Some(old_1line),
+        opts_u0.clone(),
+    );
+    let state_1line = AppState::new(
+        out_1line,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let row_1line = state_1line
+        .flat
+        .iter()
+        .position(|r| r.is_diff_row())
+        .expect("diff row");
+    assert_eq!(
+        state_1line.hunk_expand_icon_for_segment(row_1line, 0, &[1]),
+        None
+    );
+
+    // 3. 1-line hunk at top of file (context below only: 1 line added at top of
+    //    10-line file)
+    let diff_top =
+        "diff --git a/top.rs b/top.rs\n--- a/top.rs\n+++ b/top.rs\n@@ -1,0 +1,1 @@\n+new 1\n";
+    let old_top = (2..=10).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    let mut new_top = vec!["new 1\n".to_string()];
+    new_top.extend((2..=10).map(|i| format!("line {i}\n")));
+    let new_top_m: std::collections::HashMap<_, _> =
+        [("top.rs".into(), new_top.concat())].into_iter().collect();
+    let old_top_m: std::collections::HashMap<_, _> =
+        [("top.rs".into(), old_top.concat())].into_iter().collect();
+    let out_top = crate::core::pipeline::run_pipeline_full(
+        diff_top,
+        Some(new_top_m),
+        Some(old_top_m),
+        opts_u0.clone(),
+    );
+    let state_top = AppState::new(
+        out_top,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let row_top = state_top
+        .flat
+        .iter()
+        .position(|r| r.is_diff_row())
+        .expect("diff row");
+    assert_eq!(
+        state_top.hunk_expand_icon_for_segment(row_top, 0, &[1]),
+        Some(HunkExpandIcon::Down)
+    );
+    // When wrapped into 4 visual segments, segment 2 is DownStem and segment 3 is
+    // Down
+    assert_eq!(
+        state_top.hunk_expand_icon_for_segment(row_top, 2, &[4]),
+        Some(HunkExpandIcon::DownStem)
+    );
+    assert_eq!(
+        state_top.hunk_expand_icon_for_segment(row_top, 3, &[4]),
+        Some(HunkExpandIcon::Down)
+    );
+
+    // 4. 1-line hunk at bottom of file (context above only: 1 line added at bottom
+    //    of 10-line file)
+    let diff_bot =
+        "diff --git a/bot.rs b/bot.rs\n--- a/bot.rs\n+++ b/bot.rs\n@@ -10,0 +10,1 @@\n+new 10\n";
+    let old_bot = (1..=9).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    let mut new_bot = (1..=9).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    new_bot.push("new 10\n".to_string());
+    let new_bot_m: std::collections::HashMap<_, _> =
+        [("bot.rs".into(), new_bot.concat())].into_iter().collect();
+    let old_bot_m: std::collections::HashMap<_, _> =
+        [("bot.rs".into(), old_bot.concat())].into_iter().collect();
+    let out_bot = crate::core::pipeline::run_pipeline_full(
+        diff_bot,
+        Some(new_bot_m),
+        Some(old_bot_m),
+        opts_u0.clone(),
+    );
+    let state_bot = AppState::new(
+        out_bot,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let row_bot = state_bot
+        .flat
+        .iter()
+        .position(|r| r.is_diff_row())
+        .expect("diff row");
+    assert_eq!(
+        state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[1]),
+        Some(HunkExpandIcon::Up)
+    );
+    // When wrapped into 4 visual segments, segment 0 is Up and segment 1 is UpStem
+    assert_eq!(
+        state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[4]),
+        Some(HunkExpandIcon::Up)
+    );
+    assert_eq!(
+        state_bot.hunk_expand_icon_for_segment(row_bot, 1, &[4]),
+        Some(HunkExpandIcon::UpStem)
+    );
+
+    // 5. Multi-line hunk in middle of file
+    let diff_multi = "diff --git a/m.rs b/m.rs\n--- a/m.rs\n+++ b/m.rs\n@@ -5,3 +5,3 @@\n-old 5\n-old 6\n-old 7\n+new 5\n+new 6\n+new 7\n";
+    let mut old_m = (1..=15).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    old_m[4] = "old 5\n".into();
+    old_m[5] = "old 6\n".into();
+    old_m[6] = "old 7\n".into();
+    let mut new_m = (1..=15).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    new_m[4] = "new 5\n".into();
+    new_m[5] = "new 6\n".into();
+    new_m[6] = "new 7\n".into();
+    let new_mm: std::collections::HashMap<_, _> =
+        [("m.rs".into(), new_m.concat())].into_iter().collect();
+    let old_mm: std::collections::HashMap<_, _> =
+        [("m.rs".into(), old_m.concat())].into_iter().collect();
+    let out_multi = crate::core::pipeline::run_pipeline_full(
+        diff_multi,
+        Some(new_mm),
+        Some(old_mm),
+        opts_u0.clone(),
+    );
+    let state_multi = AppState::new(
+        out_multi,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let multi_rows: Vec<_> = state_multi
+        .flat
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_diff_row())
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(multi_rows.len(), 6);
+
+    let first_row = multi_rows[0];
+    let stem_up_row = multi_rows[1];
+    let mid_row = multi_rows[2];
+    let stem_down_row = multi_rows[4];
+    let last_row = multi_rows[5];
+    let flat_segs = vec![1; state_multi.flat.len()];
+
+    // First row: s_idx 0 is Up
+    assert_eq!(
+        state_multi.hunk_expand_icon_for_segment(first_row, 0, &flat_segs),
+        Some(HunkExpandIcon::Up)
+    );
+
+    // Row 1 (visual line 1): UpStem because total_vis >= 4 and both contexts exist
+    assert_eq!(
+        state_multi.hunk_expand_icon_for_segment(stem_up_row, 0, &flat_segs),
+        Some(HunkExpandIcon::UpStem)
+    );
+
+    // Row 2 (visual line 2): None (interior line between stems)
+    assert_eq!(
+        state_multi.hunk_expand_icon_for_segment(mid_row, 0, &flat_segs),
+        None
+    );
+
+    // Row 4 (visual line 4 = 6 - 2): DownStem
+    assert_eq!(
+        state_multi.hunk_expand_icon_for_segment(stem_down_row, 0, &flat_segs),
+        Some(HunkExpandIcon::DownStem)
+    );
+
+    // Last row (visual line 5 = 6 - 1): Down
+    assert_eq!(
+        state_multi.hunk_expand_icon_for_segment(last_row, 0, &flat_segs),
+        Some(HunkExpandIcon::Down)
+    );
+
+    // 6. Exactly 3 visual lines: no stems (not enough space for both)
+    let diff_3 = "diff --git a/three.rs b/three.rs\n--- a/three.rs\n+++ b/three.rs\n@@ -5,3 +5,0 @@\n-old 5\n-old 6\n-old 7\n";
+    let mut old_3 = (1..=15).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
+    old_3[4] = "old 5\n".into();
+    old_3[5] = "old 6\n".into();
+    old_3[6] = "old 7\n".into();
+    let old_3m: std::collections::HashMap<_, _> =
+        [("three.rs".into(), old_3.concat())].into_iter().collect();
+    let new_3m: std::collections::HashMap<_, _> = [(
+        "three.rs".into(),
+        (1..=12)
+            .map(|i| format!("line {i}\n"))
+            .collect::<Vec<_>>()
+            .concat(),
+    )]
+    .into_iter()
+    .collect();
+    let out_3 =
+        crate::core::pipeline::run_pipeline_full(diff_3, Some(new_3m), Some(old_3m), opts_u0);
+    let state_3 = AppState::new(
+        out_3,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let three_rows: Vec<_> = state_3
+        .flat
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_diff_row())
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(three_rows.len(), 3);
+    let segs_3 = vec![1; state_3.flat.len()];
+    assert_eq!(
+        state_3.hunk_expand_icon_for_segment(three_rows[0], 0, &segs_3),
+        Some(HunkExpandIcon::Up)
+    );
+    assert_eq!(
+        state_3.hunk_expand_icon_for_segment(three_rows[1], 0, &segs_3),
+        None
+    );
+    assert_eq!(
+        state_3.hunk_expand_icon_for_segment(three_rows[2], 0, &segs_3),
+        Some(HunkExpandIcon::Down)
+    );
+
+    // Non-diff row and out of bounds
+    assert_eq!(state_mid.hunk_expand_icon_for_segment(0, 0, &[1]), None);
+    assert_eq!(state_mid.hunk_expand_icon_for_segment(999, 0, &[1]), None);
 }

@@ -73,12 +73,7 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
 
     let gap_part = if hidden_gap > 0 {
         let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };
-        let arrows = if badge.idx == 0 {
-            "▼"
-        } else {
-            "⬍ · ▲ · ▼"
-        };
-        format!(" · {hidden_gap} more {gap_unit}: {arrows}")
+        format!(" · {hidden_gap} more {gap_unit}")
     } else {
         String::new()
     };

@@ -26,8 +26,8 @@ pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::{PollOutcome, TerminalGuard};
 pub use types::{
-    CursorSnapshot, FlatRow, FlatRowKind, HunkMeta, HunkStart, ModRowKey, Selection,
-    StickyHeaderInfo, StickyHunkInfo,
+    CursorSnapshot, FlatRow, FlatRowKind, HunkExpandIcon, HunkMeta, HunkStart, ModRowKey,
+    Selection, StickyHeaderInfo, StickyHunkInfo,
 };
 
 use std::{

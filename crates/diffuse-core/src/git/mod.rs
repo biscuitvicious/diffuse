@@ -31,7 +31,7 @@ pub const DEFAULT_CONTEXT_LINES: usize = 4;
 
 /// Default number of lines to expand up and down when activating a hidden gap
 /// separator.
-pub const DEFAULT_EXPAND_LINES: usize = 6;
+pub const DEFAULT_EXPAND_LINES: usize = 10;
 
 /// Check if the directory is inside a git repository or worktree.
 pub fn is_inside_work_tree(cwd: &Path) -> bool {

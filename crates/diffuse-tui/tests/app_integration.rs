@@ -11,8 +11,7 @@ use diffuse_tui::{
         pipeline::{PipelineInput, run_pipeline_full},
         wire::PipelineOutput,
     },
-    render::Badge,
-    view::{diff_grid::FILE_HEADER_INDICATOR_COL, hunk_divider_text},
+    view::diff_grid::FILE_HEADER_INDICATOR_COL,
 };
 
 fn temp_notes_path() -> PathBuf {
@@ -455,26 +454,14 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
         .unwrap()
         .flat;
     let div_vis = starts[div_flat];
-    let click_row = state.last_viewport_start + div_vis.saturating_sub(state.scroll);
-
-    let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        h,
-        gap_before,
-    );
-    let col = txt
-        .find("▲")
-        .map(|i| txt[..i].chars().count())
-        .unwrap_or(10);
+    let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+    let click_row = state.last_viewport_start + (div_vis + div_segs).saturating_sub(state.scroll);
 
     let gap_before_click = gap_before;
     state.execute(TuiCommand::MouseClick {
         row: click_row,
-        col,
+        col: 0,
         shift: false,
     });
     let gap_after = state.hunk_leading_gap(fi, 1);
@@ -637,7 +624,10 @@ fn test_initial_screen_rendered_visual_frame() {
 
     // Row 3: Hunk divider with context
     assert!(screen_lines[3].contains("Hunk 1/1 · 2 lines"));
-    assert!(screen_lines[3].contains("more lines: ▼"));
+    assert!(screen_lines[3].contains("1021 more lines"));
+
+    // Row 4..: Context and diff lines with gutter expand icon
+    assert!(screen_lines[4].contains("▲1022"));
 
     // Row 7..: Diff lines with line numbers and change markers
     assert!(screen_lines[7].contains("1025"));
@@ -944,5 +934,208 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
     assert_eq!(
         y_recollapsed, y_before,
         "File header visual Y must be preserved across re-collapse (expected {y_before}, got {y_recollapsed})"
+    );
+}
+
+#[test]
+fn test_tui_gutter_expansion_arrows_from_golden() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::dark(),
+    );
+
+    let (w, h) = (120, 50);
+    let buf = state.render_to_buffer(w, h);
+
+    // 1. Verify buffer rendering: hunk headers omit arrows
+    let mut hunk_header_count = 0;
+    for y in 0..buf.area().height {
+        let mut line = String::new();
+        for x in 0..buf.area().width {
+            line.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        if line.contains("──── Hunk ") {
+            hunk_header_count += 1;
+            assert!(
+                !line.contains('▲') && !line.contains('▼') && !line.contains('⬍'),
+                "hunk header line {y} must not contain expansion arrows: {line:?}"
+            );
+            assert!(
+                line.contains("more lines"),
+                "hunk header line {y} must still contain hidden line count: {line:?}"
+            );
+        }
+    }
+    assert!(hunk_header_count > 0, "must find at least one hunk header");
+
+    // 2. Identify a hunk with a leading gap (e.g. hunk 0 of file 0 or another hunk)
+    let (fi, hi) = state
+        .hunk_starts
+        .iter()
+        .find_map(|hs| {
+            if state.hunk_leading_gap(hs.file, hs.hunk) > 0 {
+                Some((hs.file, hs.hunk))
+            } else {
+                None
+            }
+        })
+        .expect("must find a hunk with leading gap");
+
+    let initial_gap = state.hunk_leading_gap(fi, hi);
+    assert!(initial_gap > 0);
+
+    let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let hs = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == fi && hs.hunk == hi)
+        .unwrap();
+    let div_flat = hs.flat;
+    let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+    let first_row_screen =
+        state.last_viewport_start + (starts[div_flat] + div_segs).saturating_sub(state.scroll);
+
+    // Verify cell (0, first_row_screen) has the '▲' expand icon in the buffer
+    let icon_cell = buf
+        .cell((0, first_row_screen as u16))
+        .map(|c| c.symbol())
+        .unwrap_or(" ");
+    assert_eq!(
+        icon_cell, "▲",
+        "first diff row gutter col 0 must render ▲ icon"
+    );
+
+    // Verify cell (0, first_row_screen + 1) has the '│' stem icon
+    let stem_cell = buf
+        .cell((0, (first_row_screen + 1) as u16))
+        .map(|c| c.symbol())
+        .unwrap_or(" ");
+    assert_eq!(
+        stem_cell, "│",
+        "diff row under top arrow must render │ stem icon"
+    );
+
+    // Verify bottom arrow and stem for the hunk
+    let end_flat = state
+        .flat
+        .iter()
+        .enumerate()
+        .rposition(|(_, r)| r.file_idx == fi && r.hunk_idx() == Some(hi) && r.is_diff_row())
+        .expect("must find end of hunk");
+    let last_vis = starts[end_flat] + counts[end_flat] - 1;
+    let last_row_screen = state.last_viewport_start + last_vis.saturating_sub(state.scroll);
+    assert!(last_row_screen < h as usize);
+
+    let down_icon_cell = buf
+        .cell((0, last_row_screen as u16))
+        .map(|c| c.symbol())
+        .unwrap_or(" ");
+    assert_eq!(
+        down_icon_cell, "▼",
+        "last diff row gutter col 0 must render ▼ icon"
+    );
+
+    let down_stem_cell = buf
+        .cell((0, (last_row_screen - 1) as u16))
+        .map(|c| c.symbol())
+        .unwrap_or(" ");
+    assert_eq!(
+        down_stem_cell, "│",
+        "diff row above bottom arrow must render │ stem icon"
+    );
+
+    // Park cursor on row 0 to test click swallowing
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    // 3. Click at col 0: expands by 10 lines (default expand lines) and swallows
+    //    click
+    state.execute(TuiCommand::MouseClick {
+        row: first_row_screen,
+        col: 0,
+        shift: false,
+    });
+    let gap_after_col0 = state.hunk_leading_gap(fi, hi);
+    assert_eq!(
+        gap_after_col0,
+        initial_gap.saturating_sub(10),
+        "clicking col 0 must expand 10 lines into the gap"
+    );
+    assert_eq!(
+        state.row_idx, 0,
+        "clicking col 0 must swallow click without moving cursor"
+    );
+
+    // 4. Click at col 0 on the stem row (first_row_screen + 1): also expands above
+    //    and swallows click
+    state.execute(TuiCommand::MouseClick {
+        row: first_row_screen + 1,
+        col: 0,
+        shift: false,
+    });
+    let gap_after_stem = state.hunk_leading_gap(fi, hi);
+    assert_eq!(
+        gap_after_stem,
+        gap_after_col0.saturating_sub(10),
+        "clicking col 0 on stem must expand 10 lines into the gap"
+    );
+    assert_eq!(
+        state.row_idx, 0,
+        "clicking col 0 on stem must swallow click without moving cursor"
+    );
+
+    // 5. Click at col 1 (stretch 1 column to the right) on the stem row: also
+    //    expands and swallows click
+    state.execute(TuiCommand::MouseClick {
+        row: first_row_screen + 1,
+        col: 1,
+        shift: false,
+    });
+    let gap_after_col1 = state.hunk_leading_gap(fi, hi);
+    assert_eq!(
+        gap_after_col1,
+        gap_after_stem.saturating_sub(10),
+        "clicking col 1 on stem must expand 10 lines into the gap"
+    );
+    assert_eq!(
+        state.row_idx, 0,
+        "clicking col 1 must swallow click without moving cursor"
+    );
+
+    // 6. Click at col 2 (outside hit area): does NOT expand, moves cursor
+    state.execute(TuiCommand::MouseClick {
+        row: first_row_screen,
+        col: 2,
+        shift: false,
+    });
+    let gap_after_col2 = state.hunk_leading_gap(fi, hi);
+    assert_eq!(
+        gap_after_col2, gap_after_col1,
+        "clicking col 2 must not expand gap"
+    );
+    assert_ne!(
+        state.row_idx, 0,
+        "clicking col 2 outside hit area must move cursor to clicked row"
+    );
+
+    // Re-render and verify newly expanded lines render with proper gutter
+    let buf_updated = state.render_to_buffer(w, h);
+    let mut updated_line = String::new();
+    for x in 0..buf_updated.area().width {
+        updated_line.push_str(
+            buf_updated
+                .cell((x, first_row_screen as u16))
+                .map(|c| c.symbol())
+                .unwrap_or(" "),
+        );
+    }
+    assert!(
+        !updated_line.trim().is_empty(),
+        "expanded buffer row must contain content"
     );
 }

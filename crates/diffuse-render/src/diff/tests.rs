@@ -1251,3 +1251,20 @@ fn test_raw_pipeline_output_opens_with_traditional_header() {
         "raw output must not carry the banner ruler"
     );
 }
+
+#[test]
+fn test_hunk_divider_text_omits_icons() {
+    let hunk = OutputHunk {
+        old_start: 10,
+        old_count: 5,
+        new_start: 10,
+        new_count: 5,
+        rows: vec![],
+    };
+    let badge = Badge {
+        idx: 1,
+        total: Some(3),
+    };
+    let text = hunk_divider_text(badge, &hunk, 8);
+    assert_eq!(text, "──── Hunk 2/3 · 8 more lines ────");
+}

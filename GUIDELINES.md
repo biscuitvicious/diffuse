@@ -33,8 +33,10 @@ The codebase is organized into discrete subcrates with strictly unidirectional d
 
 ## 4. Test-first methodology and exhaustive branch coverage
 
-- **Failing test first**: Every bug fix, functional extension, or behavior adjustment must begin with a targeted automated test (`#[test]`) confirming the initial defect or missing capability before any code changes.
-- **100% branch coverage**: All newly introduced code paths must achieve 100% branch coverage. Unit tests must systematically exercise every conditional branch, pattern match arm, and edge case.
+- **Dual-tier test-first methodology**: Every bug fix, functional extension, or behavior adjustment must begin with automated failing tests before modifying implementation code:
+  - **Primary integration test**: When introducing UI/TUI features, state transitions, rendering changes, or defect reproductions, author an integration test driving the system realistically against a suitable golden changeset from [`tests/golden/`](tests/golden/) (e.g. via `render_to_buffer` in the TUI, passing silently if the golden submodule is absent).
+  - **Complementary unit tests**: Author unit tests strictly to cover remaining code branches, match arms, and boundary edge cases not naturally exercised by the golden integration test. Avoid duplicate unit tests for scenarios already guarded by the integration test.
+- **100% branch coverage**: Across the primary integration test and complementary unit tests combined, all newly introduced and altered code paths must achieve 100% branch coverage.
 - **Performance budgets**: Individual unit tests must execute in under 0.5s, and the warm cargo test suite must finish in under 1.5s per test binary.
 
 ---

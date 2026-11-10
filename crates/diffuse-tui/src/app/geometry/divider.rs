@@ -147,4 +147,127 @@ impl AppState {
             .get(fi)
             .map_or(0, crate::app::flat::file_trailing_gap)
     }
+
+    /// Determine the context expansion indicator icon for visual segment
+    /// `s_idx` of row `flat_idx` with segment counts `seg_counts`.
+    #[must_use]
+    pub fn hunk_expand_icon_for_segment(
+        &self,
+        flat_idx: usize,
+        s_idx: usize,
+        seg_counts: &[usize],
+    ) -> Option<crate::types::HunkExpandIcon> {
+        let item = self.flat.get(flat_idx)?;
+        if !item.is_diff_row() {
+            return None;
+        }
+        let fi = item.file_idx;
+        let hi = item.hunk_idx()?;
+
+        // Fast-path for interior rows: if flat_idx has >= 2 diff rows before it and
+        // >= 2 diff rows after it within the same hunk, it is guaranteed that
+        // hunk_vis >= 2 and total_vis - hunk_vis >= 3. Consequently, it can never
+        // match visual lines 0, 1, total_vis - 2, or total_vis - 1, and returns None in
+        // O(1).
+        let is_same_hunk_diff = |idx: usize| {
+            self.flat
+                .get(idx)
+                .is_some_and(|r| r.file_idx == fi && r.hunk_idx() == Some(hi) && r.is_diff_row())
+        };
+        if flat_idx >= 2
+            && is_same_hunk_diff(flat_idx - 1)
+            && is_same_hunk_diff(flat_idx - 2)
+            && is_same_hunk_diff(flat_idx + 1)
+            && is_same_hunk_diff(flat_idx + 2)
+        {
+            return None;
+        }
+
+        let mut start = flat_idx;
+        while start > 0
+            && self.flat[start - 1].file_idx == fi
+            && self.flat[start - 1].hunk_idx() == Some(hi)
+            && self.flat[start - 1].is_diff_row()
+        {
+            start -= 1;
+        }
+
+        let mut end = flat_idx;
+        while end + 1 < self.flat.len()
+            && self.flat[end + 1].file_idx == fi
+            && self.flat[end + 1].hunk_idx() == Some(hi)
+            && self.flat[end + 1].is_diff_row()
+        {
+            end += 1;
+        }
+
+        let row_segs = |r: usize| -> usize {
+            if seg_counts.len() == self.flat.len() {
+                seg_counts[r]
+            } else if seg_counts.len() == 1 {
+                seg_counts[0]
+            } else {
+                1
+            }
+        };
+
+        let mut total_vis = 0;
+        let mut hunk_vis = 0;
+        for r in start..=end {
+            let n = row_segs(r);
+            if r < flat_idx {
+                hunk_vis += n;
+            } else if r == flat_idx {
+                hunk_vis += s_idx;
+            }
+            total_vis += n;
+        }
+
+        let has_above = self.hunk_leading_gap(fi, hi) > 0;
+        let f = self.output.files.get(fi)?;
+        let has_below = if hi + 1 < f.hunks.len() {
+            self.hunk_leading_gap(fi, hi + 1) > 0
+        } else {
+            self.hunk_trailing_gap(fi) > 0
+        };
+
+        if total_vis == 1 {
+            return if has_above && has_below {
+                Some(crate::types::HunkExpandIcon::Both)
+            } else if has_above {
+                Some(crate::types::HunkExpandIcon::Up)
+            } else if has_below {
+                Some(crate::types::HunkExpandIcon::Down)
+            } else {
+                None
+            };
+        }
+
+        if hunk_vis == 0 {
+            return if has_above {
+                Some(crate::types::HunkExpandIcon::Up)
+            } else {
+                None
+            };
+        }
+
+        if hunk_vis + 1 == total_vis {
+            return if has_below {
+                Some(crate::types::HunkExpandIcon::Down)
+            } else {
+                None
+            };
+        }
+
+        if total_vis >= 4 {
+            if has_above && hunk_vis == 1 {
+                return Some(crate::types::HunkExpandIcon::UpStem);
+            }
+            if has_below && hunk_vis + 2 == total_vis {
+                return Some(crate::types::HunkExpandIcon::DownStem);
+            }
+        }
+
+        None
+    }
 }

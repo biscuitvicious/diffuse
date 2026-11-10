@@ -12,7 +12,6 @@ use super::AppState;
 pub(crate) enum DividerFallback {
     BelowRow,
     AboveRow,
-    Coord(CursorAnchor),
 }
 
 /// Everything needed to restore the viewport after a hunk-divider expansion:
@@ -168,7 +167,6 @@ impl AppState {
                 anchors.below_text_screen_y.or(anchors.above_text_screen_y),
             ),
             DividerFallback::AboveRow => (anchors.above, anchors.above_text_screen_y),
-            DividerFallback::Coord(coord) => (Some(coord), Some(anchors.div_screen_y)),
         };
         let fallback_pos = fallback_anchor
             .and_then(|a| self.flat_pos_of_coord(a.file_idx, a.new_line, a.old_line));

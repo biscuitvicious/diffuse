@@ -138,7 +138,7 @@ constitute the machine interface for external tooling.
 | `--repo-key <KEY>` | Repository key used for notes lookup (defaults to canonical repository path) |
 | `--rev-key <KEY>` | Revision key used for notes lookup (defaults to commit hash or range) |
 | `-U, --context <LINES>` | Unified-diff context lines (default: `4`) |
-| `--expand-lines <LINES>` | Hidden context lines revealed per expansion (default: `6`) |
+| `--expand-lines <LINES>` | Hidden context lines revealed per expansion (default: `10`) |
 | `--token-product-cap <N>` | Quadratic cap for sub-line alignment (default: `250000`) |
 | `-j, --jobs <N>` | Worker thread count (default: half the CPUs) |
 | `--json` | Emit the token stream as a single JSON document |

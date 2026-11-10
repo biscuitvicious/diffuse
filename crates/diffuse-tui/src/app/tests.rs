@@ -17,8 +17,6 @@ use crate::{
         pipeline::{PipelineInput, run_pipeline_full},
         wire::PipelineOutput,
     },
-    render::Badge,
-    view::hunk_divider_text,
 };
 
 fn sample_output() -> PipelineOutput {
@@ -1069,8 +1067,8 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
         "H2 divider must still exist before fully merged"
     );
     assert!(
-        frame.contains("more lines: ⬍ · ▲ · ▼"),
-        "H2 divider must reflect hidden gap with ⬍ · ▲ · ▼ buttons"
+        frame.contains("more lines"),
+        "H2 divider must reflect hidden gap"
     );
 
     // Keep expanding until H1 and H2 merge
@@ -1177,24 +1175,15 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let h2_div_vis = starts[h2_hunk_start.flat];
     let click_row = state.last_viewport_start + h2_div_vis.saturating_sub(state.scroll);
 
-    // Compute exact visual column of '▲' on H2 divider
-    let h = &state.output.files[fi].hunks[1];
-    let hidden_gap = state.hunk_leading_gap(fi, 1);
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        h,
-        hidden_gap,
-    );
-    let idx = txt.find("▲").unwrap();
-    let col = txt[..idx].chars().count();
+    let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let div_segs = counts[h2_hunk_start.flat].saturating_sub(seg_counts[h2_hunk_start.flat]);
+    let arrow_screen_row =
+        state.last_viewport_start + (h2_div_vis + div_segs).saturating_sub(state.scroll);
 
-    // Click on the '▲' column
+    // Click on the gutter '▲' column (col 0)
     state.execute(TuiCommand::MouseClick {
-        row: click_row,
-        col,
+        row: arrow_screen_row,
+        col: 0,
         shift: false,
     });
 
@@ -1344,34 +1333,23 @@ index 1111111..2222222 100644
 
     // Render initial frame with small viewport (14 rows)
     let frame = state.render_frame(80, 14);
-    assert!(frame.contains("6 more lines: ▼"));
-    assert!(!frame.contains("▲"));
+    assert!(frame.contains("6 more lines"));
 
-    // Click down arrow on H1 divider
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    // Click up arrow on H1 first row gutter
+    let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
     let h1_start = state
         .hunk_starts
         .iter()
         .find(|hs| hs.file == fi && hs.hunk == 0)
         .unwrap();
     let h1_div_vis = starts[h1_start.flat];
-    let click_row = state.last_viewport_start + h1_div_vis.saturating_sub(state.scroll);
-
-    let h = &state.output.files[fi].hunks[0];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 0,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        h,
-        6,
-    );
-    let idx = txt.find("▼").unwrap();
-    let col = txt[..idx].chars().count();
+    let div_segs = counts[h1_start.flat].saturating_sub(seg_counts[h1_start.flat]);
+    let click_row =
+        state.last_viewport_start + (h1_div_vis + div_segs).saturating_sub(state.scroll);
 
     state.execute(TuiCommand::MouseClick {
         row: click_row,
-        col,
+        col: 0,
         shift: false,
     });
 
@@ -1393,232 +1371,27 @@ index 1111111..2222222 100644
 }
 
 #[test]
-fn test_hunk_divider_both_arrow_click_merges_and_pivots_below_row() {
+fn test_single_line_hunk_wrapped_and_unwrapped_gutter_icons() {
     let diff = r#"diff --git a/sample.rs b/sample.rs
 index 1111111..2222222 100644
 --- a/sample.rs
 +++ b/sample.rs
-@@ -1,8 +1,9 @@
- // line 1
- // line 2
- // line 3
- // line 4
-+// inserted one
- // line 5
- // line 6
- // line 7
- // line 8
-@@ -23,9 +24,9 @@
- // line 23
- // line 24
- // line 25
- // line 26
--// line 27 old
-+// line 27 new
- // line 28
- // line 29
- // line 30
- // line 31
+@@ -5,1 +5,1 @@
+-old line 5 content that is very long and will wrap nicely across multiple segments on narrow terminals
++new line 5 content that is very long and will wrap nicely across multiple segments on narrow terminals
 "#;
     let mut old_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 27 {
-            old_lines.push("// line 27 old".to_string());
+    let mut new_lines = Vec::new();
+    for i in 1..=20 {
+        if i == 5 {
+            old_lines.push(
+                "old line 5 content that is very long and will wrap nicely across multiple segments on narrow terminals".to_string(),
+            );
+            new_lines.push(
+                "new line 5 content that is very long and will wrap nicely across multiple segments on narrow terminals".to_string(),
+            );
         } else {
             old_lines.push(format!("// line {i}"));
-        }
-    }
-    let mut new_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 5 {
-            new_lines.push("// inserted one".to_string());
-        }
-        if i == 28 {
-            new_lines.push("// line 27 new".to_string());
-        } else {
-            new_lines.push(format!("// line {i}"));
-        }
-    }
-
-    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
-        .into_iter()
-        .collect();
-    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
-        .into_iter()
-        .collect();
-    let output = PipelineInput::new(diff)
-        .with_new_content(contents)
-        .with_old_content(old_contents)
-        .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        temp_notes_path(),
-        crate::render::DiffuseTheme::dark(),
-    )
-    .with_expand_lines(12);
-
-    let fi = 0;
-    assert_eq!(state.output.files[fi].hunks.len(), 2);
-    let gap = state.hunk_leading_gap(fi, 1);
-    assert_eq!(
-        gap, 14,
-        "14 lines hidden between H1 and H2; step=12 leaves 2 for the second call"
-    );
-    assert!(
-        gap <= 2 * state.expand_lines,
-        "gap must be fully consumed by the two sequential expansions"
-    );
-
-    // Render initial frame so layout state is populated
-    state.render_frame(80, 20);
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-
-    // Locate H2 divider and the boundary row: with n hidden lines split
-    // (n+1)/2 up / n-(n+1)/2 down, the first downward-side row is the
-    // original H2 first row minus the downward take.
-    let div_flat = state
-        .hunk_starts
-        .iter()
-        .find(|hs| hs.file == fi && hs.hunk == 1)
-        .map(|hs| hs.flat)
-        .expect("H2 divider must exist in flat");
-    let h2_first_new_line = state.output.files[fi].hunks[1]
-        .rows
-        .first()
-        .and_then(|r| r.new_line)
-        .expect("H2 must have rows");
-    let top_take = gap.div_ceil(2).min(state.expand_lines);
-    let bottom_take = gap - top_take;
-    let below_row_new_line = h2_first_new_line - bottom_take as u32;
-
-    let div_screen_y = starts[div_flat].saturating_sub(state.scroll);
-
-    // Click the ↕↕ (expand both) arrow on the H2 divider: the gap splits
-    // (n+1)/2 up / n-(n+1)/2 down, and on merge everything pivots around
-    // the line where the divider was — scroll stays put.
-    let scroll_before = state.scroll;
-    // Reference row ABOVE the divider (last row of H1) — must not move.
-    let ref_new_line = state.output.files[fi].hunks[0]
-        .rows
-        .iter()
-        .rev()
-        .find_map(|r| r.new_line)
-        .expect("H1 must have rows");
-    let (starts_pre, _c_pre, _s_pre, _) = state.visual_geometry(state.last_content_width);
-    let ref_vis_before = state
-        .flat_pos_of_coord(fi, Some(ref_new_line), None)
-        .and_then(|pos| starts_pre.get(pos))
-        .copied()
-        .expect("H1 last row in flat");
-
-    let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        h,
-        gap,
-    );
-    let both_idx = txt.find("⬍").expect("divider text must contain ⬍");
-    let col = txt[..both_idx].chars().count();
-
-    state.execute(TuiCommand::MouseClick {
-        row: state.last_viewport_start + div_screen_y,
-        col,
-        shift: false,
-    });
-
-    // The whole gap was consumed: H2 merged into H1
-    assert_eq!(
-        state.output.files[fi].hunks.len(),
-        1,
-        "fully consumed gap must merge H2 into H1"
-    );
-
-    // The boundary between the upward and downward halves sits exactly
-    // where the divider was on screen; the top half pushed the content
-    // above up by its visual length.
-    let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
-    let boundary_vis_after = state
-        .flat_pos_of_coord(fi, Some(below_row_new_line), None)
-        .and_then(|pos| starts_after.get(pos))
-        .copied()
-        .expect("boundary row must exist after merge");
-    assert_eq!(
-        boundary_vis_after.saturating_sub(state.scroll),
-        div_screen_y,
-        "the up/down boundary must pivot at the divider's old screen y"
-    );
-    let shift = state.scroll.saturating_sub(scroll_before);
-    // Content above the divider moved up by exactly the scroll shift.
-    let ref_vis_after = state
-        .flat_pos_of_coord(fi, Some(ref_new_line), None)
-        .and_then(|pos| starts_after.get(pos))
-        .copied()
-        .expect("reference row must exist after merge");
-    assert_eq!(
-        ref_vis_after, ref_vis_before,
-        "content above keeps its absolute layout"
-    );
-    assert_eq!(
-        ref_vis_after.saturating_sub(state.scroll),
-        ref_vis_before
-            .saturating_sub(scroll_before)
-            .saturating_sub(shift),
-        "content above the divider slides up by exactly the top half"
-    );
-}
-
-#[test]
-fn test_wrapped_divider_arrow_click_at_scrollbar_column_expands() {
-    // Regression: on narrow screens the divider wraps so the ▲▲ arrows sit
-    // flush against the border/scrollbar column; tapping them there must
-    // expand the gap instead of triggering a scrollbar seek that jumps to
-    // another file.
-    let diff = r#"diff --git a/sample.rs b/sample.rs
-index 1111111..2222222 100644
---- a/sample.rs
-+++ b/sample.rs
-@@ -1,8 +1,9 @@
- // line 1
- // line 2
- // line 3
- // line 4
-+// inserted one
- // line 5
- // line 6
- // line 7
- // line 8
-@@ -17,9 +18,9 @@
- // line 17
- // line 18
- // line 19
- // line 20
--// line 21 old
-+// line 21 new
- // line 22
- // line 23
- // line 24
- // line 25
-"#;
-    let mut old_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 21 {
-            old_lines.push("// line 21 old".to_string());
-        } else {
-            old_lines.push(format!("// line {i}"));
-        }
-    }
-    let mut new_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 5 {
-            new_lines.push("// inserted one".to_string());
-        }
-        if i == 22 {
-            new_lines.push("// line 21 new".to_string());
-        } else {
             new_lines.push(format!("// line {i}"));
         }
     }
@@ -1628,71 +1401,66 @@ index 1111111..2222222 100644
     let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
+    let opts_u0 = PipelineOptions {
+        visual_context: 0,
+        ..Default::default()
+    };
     let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
+        .with_options(opts_u0)
         .run();
+
+    // 1. Unwrapped: wide screen (140 cols). Single-line hunk collapses icon to ⬍
     let mut state = AppState::new(
+        output.clone(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    let frame_wide = state.render_frame(140, 30);
+    assert!(
+        frame_wide.contains('⬍'),
+        "unwrapped 1-line hunk with context in both directions must display ⬍"
+    );
+
+    // Clicking ⬍ (col 0) expands both directions
+    let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let hunk_start = state.hunk_starts[0].flat;
+    let div_segs = counts[hunk_start].saturating_sub(seg_counts[hunk_start]);
+    let click_row = state.last_viewport_start + (starts[hunk_start] + div_segs);
+    let gap_above_pre = state.hunk_leading_gap(0, 0);
+    let gap_below_pre = state.hunk_trailing_gap(0);
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 0,
+        shift: false,
+    });
+    assert!(
+        state.hunk_leading_gap(0, 0) < gap_above_pre,
+        "clicking ⬍ must expand above"
+    );
+    assert!(
+        state.hunk_trailing_gap(0) < gap_below_pre,
+        "clicking ⬍ must expand below"
+    );
+
+    // 2. Wrapped: narrow screen (40 cols). Single-line hunk with wrapped segments
+    // displays ▲ on segment 0 and ▼ on final segment.
+    let mut state_narrow = AppState::new(
         output,
         "test_repo".into(),
         temp_notes_path(),
         crate::render::DiffuseTheme::dark(),
-    )
-    .with_expand_lines(6);
-
-    let fi = 0;
-    // Narrow terminal: divider text (~60 chars) wraps across two segments
-    state.render_frame(48, 30);
+    );
+    let frame_narrow = state_narrow.render_frame(40, 30);
     assert!(
-        state.last_content_width < 60,
-        "content width must be narrower than the divider text for this scenario"
+        frame_narrow.contains('▲'),
+        "wrapped 1-line hunk must display ▲ on segment 0"
     );
-
-    let (starts, _counts, _seg, _) = state.visual_geometry(state.last_content_width);
-    let div_flat = state
-        .hunk_starts
-        .iter()
-        .find(|hs| hs.file == fi && hs.hunk == 1)
-        .unwrap()
-        .flat;
-    let gap_before = state.hunk_leading_gap(fi, 1);
-    let hk = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        hk,
-        gap_before,
-    );
-
-    // Find the visual segment holding the '▲▲' button and its column
-    // within that segment.
-    let cw = state.last_content_width;
-    let up_char_col = txt[..txt.find("▲").unwrap()].chars().count();
-    let seg_off = up_char_col / cw;
-    let col_in_seg = up_char_col % cw;
-
-    let div_screen = starts[div_flat].saturating_sub(state.scroll) + seg_off;
-
-    state.execute(TuiCommand::MouseClick {
-        row: state.last_viewport_start + div_screen,
-        col: col_in_seg,
-        shift: false,
-    });
-
-    assert_eq!(
-        state.hunk_leading_gap(fi, 1),
-        gap_before.saturating_sub(6),
-        "tap on wrapped ▲ must expand the gap"
-    );
-    // Clicking a divider button must never trigger a scrollbar seek: the
-    // same file's divider must remain in the viewport.
-    let (starts2, _c2, _s2, _t2) = state.visual_geometry(state.last_content_width);
-    let div_screen_after = starts2[div_flat].saturating_sub(state.scroll);
     assert!(
-        div_screen_after < state.viewport_height,
-        "clicking a divider button must never trigger a scrollbar seek"
+        frame_narrow.contains('▼'),
+        "wrapped 1-line hunk must display ▼ on final segment"
     );
 }
 
@@ -1759,8 +1527,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    // Narrow: the divider (~60 chars with the gap tail) wraps to 2 segs.
-    let (w, h) = (48, 16);
+    // Narrow: the divider (~45 chars with the gap tail) wraps to 2 segs.
+    let (w, h) = (35, 16);
     let mut state = AppState::new(
         output.clone(),
         "test_repo".into(),
@@ -1924,171 +1692,6 @@ index 1111111..2222222 100644
         state.hunk_leading_gap(0, 1),
         gap_before,
         "scrollbar column click must not expand the gap"
-    );
-}
-
-#[test]
-fn test_divider_arrow_hit_area_wraps_with_segments() {
-    // Arrow hit areas live in the unwrapped divider text, so the ±1
-    // tolerance wraps across visual segments without ever touching the
-    // scrollbar column:
-    // 1) glyph at a segment end is hit from the next segment's first cell;
-    // 2&3) glyph at a segment start is hit from the previous segment's
-    //    last cell.
-    let diff = r#"diff --git a/sample.rs b/sample.rs
-index 1111111..2222222 100644
---- a/sample.rs
-+++ b/a.rs
-@@ -1,8 +1,9 @@
- // line 1
- // line 2
- // line 3
- // line 4
-+// inserted one
- // line 5
- // line 6
- // line 7
- // line 8
-@@ -17,9 +18,9 @@
- // line 17
- // line 18
- // line 19
- // line 20
--// line 21 old
-+// line 21 new
- // line 22
- // line 23
- // line 24
- // line 25
-"#;
-    let mut old_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 21 {
-            old_lines.push("// line 21 old".to_string());
-        } else {
-            old_lines.push(format!("// line {i}"));
-        }
-    }
-    let mut new_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 5 {
-            new_lines.push("// inserted one".to_string());
-        }
-        if i == 22 {
-            new_lines.push("// line 21 new".to_string());
-        } else {
-            new_lines.push(format!("// line {i}"));
-        }
-    }
-    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
-        .into_iter()
-        .collect();
-    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
-        .into_iter()
-        .collect();
-    let output = PipelineInput::new(diff)
-        .with_new_content(contents)
-        .with_old_content(old_contents)
-        .run();
-
-    // Character index of the ▲ glyph in hunk 2's divider text.
-    let hk = output.files[0].hunks[1].clone();
-    let gap_probe = {
-        let tmp = AppState::new(
-            output.clone(),
-            "test_repo".into(),
-            temp_notes_path(),
-            crate::render::DiffuseTheme::dark(),
-        );
-        tmp.hunk_leading_gap(0, 1)
-    };
-    assert!(gap_probe > 0, "need a hidden gap for arrow hits");
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(output.files[0].hunks.len()),
-        },
-        &hk,
-        gap_probe,
-    );
-    let up_idx = txt.find('▲').expect("divider must carry ▲");
-    let c = txt[..up_idx].chars().count();
-
-    // Case 1: glyph at a segment end (width c+1) is hit from the next
-    // segment's first cell.
-    let mut state = AppState::new(
-        output.clone(),
-        "test_repo".into(),
-        temp_notes_path(),
-        crate::render::DiffuseTheme::dark(),
-    );
-    let width_end = c + 1;
-    state.render_frame(width_end, 40);
-    assert!(
-        state.last_content_width == width_end,
-        "no scrollbar may appear or the column math shifts"
-    );
-    let cw = state.last_content_width;
-    let ho = state.last_viewport_start;
-    let (starts, _, _, _) = state.visual_geometry(cw);
-    let div_flat = state
-        .hunk_starts
-        .iter()
-        .find(|hs| hs.hunk == 1)
-        .unwrap()
-        .flat;
-    let div_screen = starts[div_flat].saturating_sub(state.scroll);
-    assert!(
-        state.hunk_div_seg_count(0, 1, cw) >= 2,
-        "divider must wrap for this scenario"
-    );
-    state.execute(TuiCommand::MouseClick {
-        row: ho + div_screen + 1,
-        col: 0,
-        shift: false,
-    });
-    assert_eq!(
-        state.hunk_leading_gap(0, 1),
-        gap_probe.saturating_sub(state.expand_lines.max(1)),
-        "next-segment first cell must hit a line-end ▲"
-    );
-
-    // Cases 2&3: glyph at a segment start (width c) is hit from the
-    // previous segment's last cell.
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        temp_notes_path(),
-        crate::render::DiffuseTheme::dark(),
-    );
-    state.render_frame(c, 40);
-    assert!(
-        state.last_content_width == c,
-        "no scrollbar may appear or the column math shifts"
-    );
-    let cw = state.last_content_width;
-    let ho = state.last_viewport_start;
-    let (starts, _, _, _) = state.visual_geometry(cw);
-    let div_flat = state
-        .hunk_starts
-        .iter()
-        .find(|hs| hs.hunk == 1)
-        .unwrap()
-        .flat;
-    let div_screen = starts[div_flat].saturating_sub(state.scroll);
-    assert!(
-        state.hunk_div_seg_count(0, 1, cw) >= 2,
-        "divider must wrap for this scenario"
-    );
-    state.execute(TuiCommand::MouseClick {
-        row: ho + div_screen,
-        col: cw - 1,
-        shift: false,
-    });
-    assert_eq!(
-        state.hunk_leading_gap(0, 1),
-        gap_probe.saturating_sub(state.expand_lines.max(1)),
-        "previous-segment last cell must hit a wrapped ▲"
     );
 }
 
@@ -2620,20 +2223,12 @@ index 1111111..2222222 100644
     let cursor_before = state.row_idx;
     let cursor_screen_before = starts[cursor_before].saturating_sub(state.scroll);
     let gap_before = state.hunk_leading_gap(fi, 1);
-    let hk = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        hk,
-        gap_before,
-    );
-    let idx = txt.find("▲").unwrap();
-    let col = txt[..idx].chars().count();
+    let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+    let arrow_screen_row = state.last_viewport_start + div_screen_before + div_segs;
     state.execute(TuiCommand::MouseClick {
-        row: state.last_viewport_start + div_screen_before,
-        col,
+        row: arrow_screen_row,
+        col: 0,
         shift: false,
     });
 
@@ -2770,20 +2365,12 @@ index 1111111..2222222 100644
             .map(|p| starts[p] + div_segs - state.scroll)
             .expect("anchor must exist");
 
-        let hk = state.output.files[fi].hunks[1].clone();
-        let txt = hunk_divider_text(
-            Badge {
-                idx: 1,
-                total: Some(state.output.files[fi].hunks.len()),
-            },
-            &hk,
-            gap,
-        );
-        let idx = txt.find("▲").unwrap();
-        let up_col = txt[..idx].chars().count();
+        let last_h0_flat = div_flat - 1;
+        let last_h0_vis = starts[last_h0_flat] + seg_counts[last_h0_flat] - 1;
+        let last_h0_sy = last_h0_vis.saturating_sub(state.scroll);
         state.execute(TuiCommand::MouseClick {
-            row: state.last_viewport_start + dsy + up_col / cw,
-            col: up_col % cw,
+            row: state.last_viewport_start + last_h0_sy,
+            col: 0,
             shift: false,
         });
 
@@ -3282,7 +2869,7 @@ fn test_mov_target_and_source_render_in_tui() {
 }
 
 #[test]
-fn test_hunk_divider_arrow_hit_rectangles_and_dot_exclusion() {
+fn test_gutter_expand_icon_hit_area_and_swallow() {
     let diff = r#"diff --git a/sample.rs b/sample.rs
 index 1111111..2222222 100644
 --- a/sample.rs
@@ -3317,53 +2904,64 @@ index 1111111..2222222 100644
     let gap = state.hunk_leading_gap(fi, 1);
     assert_eq!(gap, 14);
 
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-    let h2_div_vis = starts[state.hunk_starts[1].flat];
-    let click_row = state.last_viewport_start + h2_div_vis.saturating_sub(state.scroll);
+    let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let h2_hunk_start = state.hunk_starts[1].flat;
+    let h2_div_vis = starts[h2_hunk_start];
+    let div_segs = counts[h2_hunk_start].saturating_sub(seg_counts[h2_hunk_start]);
+    let click_row =
+        state.last_viewport_start + (h2_div_vis + div_segs).saturating_sub(state.scroll);
 
-    let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(state.output.files[fi].hunks.len()),
-        },
-        h,
-        gap,
-    );
+    // Park cursor on row 0
+    state.row_idx = 0;
+    state.vis_line = 0;
 
-    // Locate arrows and separating dots
-    let both_idx = txt.find('⬍').unwrap();
-    let both_col = txt[..both_idx].chars().count();
-    let up_idx = txt.find('▲').unwrap();
-    let up_col = txt[..up_idx].chars().count();
-
-    // The dot between both and up is exactly mid-way (both_col + 2 == up_col -
-    // 2)
-    let dot_col = both_col + 2;
-    assert_eq!(dot_col, up_col - 2);
-
-    // Clicking the separating dot must NOT trigger any expansion
+    // 1. Click at col 0 (on the ▲ icon): expands and swallows click (cursor stays
+    //    on row 0)
     state.execute(TuiCommand::MouseClick {
         row: click_row,
-        col: dot_col,
+        col: 0,
+        shift: false,
+    });
+    let gap_after_col0 = state.hunk_leading_gap(fi, 1);
+    assert!(
+        gap_after_col0 < gap,
+        "col 0 click on expand arrow must trigger expansion"
+    );
+    assert_eq!(
+        state.row_idx, 0,
+        "expand icon click must be swallowed and not move cursor"
+    );
+
+    // 2. Click at col 1 (1 column right of the icon): expands and swallows click
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 1,
+        shift: false,
+    });
+    let gap_after_col1 = state.hunk_leading_gap(fi, 1);
+    assert!(
+        gap_after_col1 < gap_after_col0,
+        "col 1 click within hit area must trigger expansion"
+    );
+    assert_eq!(
+        state.row_idx, 0,
+        "expand icon hit area click must be swallowed and not move cursor"
+    );
+
+    // 3. Click at col 2 (outside the 2-col hit area): does NOT expand, moves cursor
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 2,
         shift: false,
     });
     assert_eq!(
         state.hunk_leading_gap(fi, 1),
-        gap,
-        "clicking the separating dot must not trigger expansion"
+        gap_after_col1,
+        "col 2 click outside hit area must not expand"
     );
-
-    // Clicking both_col - 1 (leading space of ⬍) MUST hit both
-    state.execute(TuiCommand::MouseClick {
-        row: click_row,
-        col: both_col - 1,
-        shift: false,
-    });
-    let gap_after_both = state.hunk_leading_gap(fi, 1);
-    assert!(
-        gap_after_both < gap,
-        "clicking leading space of ⬍ must trigger both-expansion"
+    assert_ne!(
+        state.row_idx, 0,
+        "click outside hit area must move cursor to clicked row"
     );
 }
 
@@ -4388,19 +3986,10 @@ fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
         .flat;
     let div_vis = starts[div_flat];
     let div_screen_y = div_vis.saturating_sub(state.scroll);
-    let click_row = state.last_viewport_start + div_screen_y;
-
-    let h = &state.output.files[fi].hunks[1];
-    let hidden_gap = state.hunk_leading_gap(fi, 1);
-    let txt = hunk_divider_text(
-        Badge {
-            idx: 1,
-            total: Some(2),
-        },
-        h,
-        hidden_gap,
-    );
-    let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+    let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+    let click_row = state.last_viewport_start + div_screen_y + div_segs;
+    let col = 0;
 
     // 1. Cursor is BEFORE the hunk bar (e.g. line 3 in hunk 0)
     let line_3_flat = state
@@ -4583,19 +4172,11 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
             .flat;
         let div_vis = starts[div_flat];
         let div_screen_y = (div_vis as isize) - (state.scroll as isize);
-        let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
-
-        let h = &state.output.files[fi].hunks[1];
-        let hidden_gap = state.hunk_leading_gap(fi, 1);
-        let txt = hunk_divider_text(
-            Badge {
-                idx: 1,
-                total: Some(2),
-            },
-            h,
-            hidden_gap,
-        );
-        let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+        let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+        let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+        let click_row =
+            (state.last_viewport_start as isize + div_screen_y + div_segs as isize) as usize;
+        let col = 0;
 
         // Park cursor on line 1 (starts[1] == 1). With scroll == 6, rel_y = 1 -
         // 6 = -5.
@@ -4654,19 +4235,11 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
             .flat;
         let div_vis = starts[div_flat];
         let div_screen_y = (div_vis as isize) - (state.scroll as isize);
-        let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
-
-        let h = &state.output.files[fi].hunks[1];
-        let hidden_gap = state.hunk_leading_gap(fi, 1);
-        let txt = hunk_divider_text(
-            Badge {
-                idx: 1,
-                total: Some(2),
-            },
-            h,
-            hidden_gap,
-        );
-        let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+        let (_, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
+        let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+        let click_row =
+            (state.last_viewport_start as isize + div_screen_y + div_segs as isize) as usize;
+        let col = 0;
 
         // Park cursor on last row in hunk 1. starts[last] is > 16. With scroll
         // == 2, rel_y > 16 (below screen).
@@ -4862,7 +4435,7 @@ fn test_expand_below_cursor_above_divider() {
             );
         }
 
-        // Test B: click ▼ (expand context below divider) retains visual cursor
+        // Test B: click ▼ (expand context below hunk 0) retains visual cursor
         // position
         {
             let mut state = AppState::new(
@@ -4886,25 +4459,14 @@ fn test_expand_below_cursor_above_divider() {
                 .find(|hs| hs.file == fi && hs.hunk == 1)
                 .unwrap()
                 .flat;
-            let div_vis = starts[div_flat];
-            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
-            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
-
-            let h = &state.output.files[fi].hunks[1];
-            let hidden_gap = state.hunk_leading_gap(fi, 1);
-            let txt = hunk_divider_text(
-                Badge {
-                    idx: 1,
-                    total: Some(2),
-                },
-                h,
-                hidden_gap,
-            );
-            let col = txt.find("▼").map(|i| txt[..i].chars().count()).unwrap();
+            let last_hunk0_flat = div_flat - 1;
+            let row_vis = starts[last_hunk0_flat];
+            let row_screen_y = (row_vis as isize) - (state.scroll as isize);
+            let click_row = (state.last_viewport_start as isize + row_screen_y) as usize;
 
             state.execute(TuiCommand::MouseClick {
                 row: click_row,
-                col,
+                col: 0,
                 shift: false,
             });
             state.render_frame(120, 16);
@@ -4917,7 +4479,7 @@ fn test_expand_below_cursor_above_divider() {
             );
         }
 
-        // Test C: click ▲ on divider 1 retains visual cursor position
+        // Test C: click ▲ on hunk 1 first row retains visual cursor position
         {
             let mut state = AppState::new(
                 two_hunk_gap_output(),
@@ -4933,7 +4495,7 @@ fn test_expand_below_cursor_above_divider() {
             let cursor_vis_before = state.cursor_visual_line();
             let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
 
-            let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+            let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
             let div_flat = state
                 .hunk_starts
                 .iter()
@@ -4941,24 +4503,14 @@ fn test_expand_below_cursor_above_divider() {
                 .unwrap()
                 .flat;
             let div_vis = starts[div_flat];
-            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
-            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
-
-            let h = &state.output.files[fi].hunks[1];
-            let hidden_gap = state.hunk_leading_gap(fi, 1);
-            let txt = hunk_divider_text(
-                Badge {
-                    idx: 1,
-                    total: Some(2),
-                },
-                h,
-                hidden_gap,
-            );
-            let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+            let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
+            let click_row = (state.last_viewport_start as isize
+                + (div_vis as isize - state.scroll as isize)
+                + div_segs as isize) as usize;
 
             state.execute(TuiCommand::MouseClick {
                 row: click_row,
-                col,
+                col: 0,
                 shift: false,
             });
             state.render_frame(120, 16);
@@ -5929,7 +5481,7 @@ fn test_adaptive_width_on_file_expand_reload_and_append() {
 
 #[test]
 #[should_panic(
-    expected = "terminal content width (4) is too narrow: line number gutter requires 6 columns"
+    expected = "terminal content width (4) is too narrow: line number gutter requires 7 columns"
 )]
 fn test_content_width_less_than_or_equal_to_gutter_width_fails_with_informative_error() {
     let diff = r#"diff --git a/test.rs b/test.rs
@@ -5952,10 +5504,10 @@ fn test_content_width_less_than_or_equal_to_gutter_width_fails_with_informative_
         crate::render::DiffuseTheme::dark(),
     );
 
-    // Max line number 1000 -> line_num_width = 4 -> gutter_width = 6.
-    assert_eq!(state.gutter_width(), 6);
+    // Max line number 1000 -> line_num_width = 4 -> gutter_width = 7.
+    assert_eq!(state.gutter_width(), 7);
 
-    // Call render_diff_viewport_lines with width 5 (which is <= gutter_width 6)
+    // Call render_diff_viewport_lines with width 5 (which is <= gutter_width 7)
     let _ = state.render_diff_viewport_lines(5, 10, 10);
 }
 
@@ -5983,14 +5535,14 @@ fn test_explicit_line_num_width_override() {
         crate::render::DiffuseTheme::dark(),
     );
 
-    // Default adaptive: max line is 1001, width is 4, gutter is 6
+    // Default adaptive: max line is 1001, width is 4, gutter is 7
     assert_eq!(state.line_num_width, 4);
-    assert_eq!(state.gutter_width(), 6);
+    assert_eq!(state.gutter_width(), 7);
 
     // Override with 0 (hide line numbers entirely)
     state = state.with_line_num_width(Some(0));
     assert_eq!(state.line_num_width, 0);
-    assert_eq!(state.gutter_width(), 2);
+    assert_eq!(state.gutter_width(), 3);
 
     let (lines, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
     // Find a rendered row (e.g. line with "old 1")
@@ -5998,33 +5550,36 @@ fn test_explicit_line_num_width_override() {
         .iter()
         .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
         .expect("must find del row");
-    // With line_num_width 0, gutter has 2 columns: a space span and a '-' span (no
-    // line number)
+    // With line_num_width 0, gutter has 3 columns: expand icon column (" "), space
+    // span, and '-' span
     assert_eq!(del_line.spans[0].content, " ");
-    assert_eq!(del_line.spans[1].content, "-");
+    assert_eq!(del_line.spans[1].content, " ");
+    assert_eq!(del_line.spans[2].content, "-");
 
     // Override with 2 (numbers >= 100 truncate with ellipsis)
     state = state.with_line_num_width(Some(2));
     assert_eq!(state.line_num_width, 2);
-    assert_eq!(state.gutter_width(), 4);
+    assert_eq!(state.gutter_width(), 5);
 
     let (lines_w2, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
     let del_line_w2 = lines_w2
         .iter()
         .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
         .expect("must find del row");
-    // 1000 truncated to width 2 becomes "1…" followed by " " and "-"
-    assert_eq!(del_line_w2.spans[0].content, "1…");
-    assert_eq!(del_line_w2.spans[1].content, " ");
-    assert_eq!(del_line_w2.spans[2].content, "-");
+    // Expand column " ", then 1000 truncated to width 2 becomes "1…" followed by "
+    // " and "-"
+    assert_eq!(del_line_w2.spans[0].content, " ");
+    assert_eq!(del_line_w2.spans[1].content, "1…");
+    assert_eq!(del_line_w2.spans[2].content, " ");
+    assert_eq!(del_line_w2.spans[3].content, "-");
 
     // Override with 16
     state = state.with_line_num_width(Some(16));
     assert_eq!(state.line_num_width, 16);
-    assert_eq!(state.gutter_width(), 18);
+    assert_eq!(state.gutter_width(), 19);
 
     // Reset override to None -> restores adaptive dynamic calculation
     state = state.with_line_num_width(None);
     assert_eq!(state.line_num_width, 4);
-    assert_eq!(state.gutter_width(), 6);
+    assert_eq!(state.gutter_width(), 7);
 }

@@ -11,7 +11,7 @@ use crate::{
     core::parse::RowKind,
     render::{
         continuation_prefix_spans_with_mod_side_and_width, raw_row_spans, row_segment_spans,
-        slice_by_visual_width, styled_prefix_spans_with_width,
+        slice_by_visual_width, span::StyledSpan, styled_prefix_spans_with_width,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
@@ -331,6 +331,11 @@ impl AppState {
                 .saturating_sub(1)
         };
         let mut vis_i = starts.get(first_idx).copied().unwrap_or(0);
+        let gutter_icon_color = self.theme.palette[crate::render::Cursor::Rest]
+            [diffuse_render::DiffKind::Ctx]
+            .gutter
+            .icon
+            .color;
         for (idx, item) in self.flat.iter().enumerate().skip(first_idx) {
             let count = counts[idx];
             if vis_i + count <= content_start_vis {
@@ -481,7 +486,7 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected =
                                 idx == self.row_idx && self.vis_line == div_segs + s_idx;
-                            let prefix = if s_idx == 0 {
+                            let mut prefix = if s_idx == 0 {
                                 styled_prefix_spans_with_width(
                                     r.kind,
                                     r.mov_side,
@@ -505,6 +510,18 @@ impl AppState {
                                     self.line_num_width,
                                 )
                             };
+                            let expand_icon =
+                                self.hunk_expand_icon_for_segment(idx, s_idx, &seg_counts);
+                            let icon_glyph =
+                                expand_icon.map_or(" ", crate::types::HunkExpandIcon::as_str);
+                            prefix.insert(
+                                0,
+                                StyledSpan::styled(
+                                    icon_glyph.to_string(),
+                                    Some(gutter_icon_color),
+                                    None,
+                                ),
+                            );
                             let rendered_row = if self.raw_diff {
                                 let text_cols =
                                     content_width.saturating_sub(self.gutter_width()).max(1);

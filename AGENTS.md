@@ -56,13 +56,22 @@ Both execution paths must match the recorded golden outputs (`.wire.jsonl`, `.pa
 
 ## Test-first discipline and quality invariants
 
-Every modification, bug fix, or feature must expand the automated test suite under a strict test-first methodology:
+Every modification, bug fix, or feature must expand the automated test suite under a strict test-first methodology using a dual-tier testing strategy:
 
-1. **Write a failing test first**: Author a targeted unit test (`#[test]`) capturing the missing capability or reproducing the defect, before modifying implementation code.
-2. **Confirm the initial failure**: Execute the test to verify that the failure mode accurately identifies the condition.
-3. **Implement the minimal solution**: Author the minimal, architecturally sound changes necessary to satisfy the test.
-4. **Exhaustive branch coverage**: Ensure that all new and altered code paths achieve 100% branch coverage, exercising every conditional branch and pattern match arm (see [`GUIDELINES.md`](GUIDELINES.md)).
-5. **Enforce performance budgets**:
+1. **Primary reproducing / specification integration test**:
+   - For end-to-end features, UI/TUI state changes, rendering behaviors, or defect reproductions, author an integration test driving the system realistically against a suitable golden changeset from [`tests/golden/`](tests/golden/).
+   - In the TUI, drive execution through real buffer rendering (`render_to_buffer`) and event dispatch, inspecting the resulting screen cells.
+   - If the golden submodule is uninitialized in a standalone checkout, the integration test must exit early and pass silently (`let Some(out) = load_golden(...) else { return; };`).
+2. **Complementary unit tests for remaining branches**:
+   - Author unit tests *strictly to cover code branches, match arms, and boundary edge cases* that are not naturally exercised by the golden integration test (e.g. extreme single-line files, corner-case wrapping permutations, clamped bounds, or isolated error conditions).
+   - Avoid duplicate unit tests that merely re-assert behaviors already thoroughly guarded by the integration test.
+3. **Confirm initial failure**:
+   - Execute the test suite to verify that the failure mode accurately identifies the missing capability or defect before implementing code changes.
+4. **Implement the minimal solution**:
+   - Author the minimal, architecturally sound changes necessary to satisfy the tests.
+5. **Exhaustive branch coverage**:
+   - The primary integration test and complementary unit tests combined must achieve 100% branch coverage across all new and altered code paths (see [`GUIDELINES.md`](GUIDELINES.md)).
+6. **Enforce performance budgets**:
    - Individual unit tests must execute in `< 0.5s`.
    - Test binaries must complete in `< 1.5s`.
    - The full verification gate (`scripts/check.sh`) must complete in `< 3s` on warm builds.
@@ -70,8 +79,8 @@ Every modification, bug fix, or feature must expand the automated test suite und
 
 ## Standard development workflow
 
-1. **Failing test**: Write the reproduction or specification test and confirm failure.
-2. **Implementation**: Make the minimal changes required; verify existing tests pass.
+1. **Failing tests**: Author the golden-driven integration test (reproducing defect or specifying behavior) plus any complementary unit tests for non-golden edge branches, and confirm their failure.
+2. **Implementation**: Make the minimal changes required; verify all existing and new tests pass.
 3. **Verification gate**: Execute `scripts/check.sh` after every change (applies nightly `rustfmt`, runs `clippy --fix`, and executes all cargo tests). All checks must pass with zero warnings. Do not run `cargo fmt` or `cargo clippy` separately — `scripts/check.sh` already applies both to the maximum extent.
 4. **Golden review**: If golden outputs change, review diffs per [`tests/AGENTS.md`](tests/AGENTS.md) to confirm that changes are strictly improvements or equivalent.
 5. **Installation**: `scripts/check.sh` installs the development binary (`~/.cargo/bin/diffuse`) and synchronizes the dev extension automatically. Release builds are compiled via `scripts/install.sh`.

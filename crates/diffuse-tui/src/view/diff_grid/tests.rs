@@ -394,7 +394,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     assert!(
         expanded
             .to_string()
-            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────")
+            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines ────")
     );
 
     // Zero-change hunk (e.g. synthetic note hunk) -> count badge is omitted
@@ -434,7 +434,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     assert!(
         zero_gap_div
             .to_string()
-            .contains("Hunk 1/1 · 30 more lines: ▼ ────")
+            .contains("Hunk 1/1 · 30 more lines ────")
     );
     assert!(!zero_gap_div.to_string().contains("0 lines"));
 
@@ -469,9 +469,9 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(single.to_string().contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
+    assert!(single.to_string().contains("· 1 more line ────"));
 
-    // Top gap divider (50 lines hidden at top of file, only down arrow)
+    // Top gap divider (50 lines hidden at top of file, no icons)
     let top_gap = hunk_divider_line(
         Badge {
             idx: 0,
@@ -483,7 +483,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(top_gap.to_string().contains("· 50 more lines: ▼ ────"));
+    assert!(top_gap.to_string().contains("· 50 more lines ────"));
     assert!(!top_gap.to_string().contains("▲"));
 
     // Bottom gap divider (only up arrow) — 4-dash prefix and post
@@ -653,7 +653,7 @@ fn test_ratatui_diff_grid_lines() {
         &DiffuseTheme::dark(),
     );
     assert!(h_line.to_string().contains("Hunk 1"));
-    assert!(h_line.to_string().contains("10 more lines:"));
+    assert!(h_line.to_string().contains("10 more lines"));
 
     let b_line = bottom_gap_divider_line(5, false, false, 80, &DiffuseTheme::dark());
     assert!(b_line.to_string().contains("5 more lines:"));
