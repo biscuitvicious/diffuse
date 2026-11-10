@@ -29,11 +29,27 @@ pub const MAX_LINE_NUM_BUF_LEN: usize = 32;
 /// UTF-8 ellipsis character (`…`, U+2026, 3 bytes, 1 visual column).
 pub const ELLIPSIS: &str = "…";
 
-/// Visual width of the gutter prefix for a given line number width
+/// Visual width of the gutter prefix for old and new line number widths.
+///
+/// When `old_line_width == 0`, old line numbers are collapsed and only the
+/// `new_line_width + 2` columns are occupied.
+/// When `old_line_width > 0`, the gutter allocates `old_line_width + 1 +
+/// new_line_width + 2` columns (including the 1-column space separator between
+/// old and new line numbers).
+#[inline]
+pub const fn dual_gutter_width(old_line_width: usize, new_line_width: usize) -> usize {
+    if old_line_width > 0 {
+        old_line_width + 1 + new_line_width + 2
+    } else {
+        new_line_width + 2
+    }
+}
+
+/// Visual width of the gutter prefix for a single line number width
 /// (`line_num_width + 2`).
 #[inline]
 pub const fn gutter_width(line_num_width: usize) -> usize {
-    line_num_width + 2
+    dual_gutter_width(0, line_num_width)
 }
 
 /// Static space padding matching line number widths `0..=MAX_LINE_NUM_WIDTH` (0
@@ -79,6 +95,11 @@ pub const GUTTER_SPACES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
     "                 ",
     "                  ",
 ];
+
+#[inline]
+fn blank_spaces(width: usize) -> &'static str {
+    LINE_NUM_SPACES[width.min(MAX_LINE_NUM_WIDTH)]
+}
 
 /// Static continuation box prefixes matching `line_num_width` spaces followed
 /// by `"│ "`.
@@ -215,87 +236,171 @@ pub fn prefix_of_with_mod_side_and_width(
     runs: &[OutputRun],
     line_num_width: usize,
 ) -> String {
-    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
-    if line_num_width == 0 {
+    prefix_of_with_mod_side_and_widths(
+        kind,
+        mov_side,
+        mod_side,
+        mod_glyph,
+        group,
+        new_line,
+        old_line,
+        runs,
+        0,
+        line_num_width,
+    )
+}
+
+/// Generate plain prefix gutter with optional expanded mod side and specified
+/// old and new line number widths.
+#[allow(clippy::too_many_arguments)]
+pub fn prefix_of_with_mod_side_and_widths(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    group: Option<RowGroup>,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    runs: &[OutputRun],
+    old_line_width: usize,
+    new_line_width: usize,
+) -> String {
+    if old_line_width == 0 {
+        let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+        if new_line_width == 0 {
+            if is_common_only_row(kind, runs) {
+                return "  ".to_string();
+            }
+            if let Some(side) = mod_side {
+                let glyph_str = mod_glyph
+                    .unwrap_or_else(|| ModGlyph::for_side(side))
+                    .as_str();
+                return match side {
+                    ModSide::Del => format!("{glyph_str}-"),
+                    ModSide::Add => format!("{glyph_str}+"),
+                };
+            }
+            return match group {
+                Some(RowGroup::Anchor) if kind == RowKind::Mod => "~ ".to_string(),
+                Some(RowGroup::Aux { .. }) => match kind {
+                    RowKind::Add => "~+".to_string(),
+                    RowKind::Del => "~-".to_string(),
+                    _ => "  ".to_string(),
+                },
+                _ => match kind {
+                    RowKind::Add => " +".to_string(),
+                    RowKind::Del => " -".to_string(),
+                    RowKind::Mod => " ~".to_string(),
+                    RowKind::Mov => {
+                        if mov_side == Some(MovSide::Src) {
+                            "≈-".to_string()
+                        } else {
+                            "≈+".to_string()
+                        }
+                    }
+                    _ => "  ".to_string(),
+                },
+            };
+        }
         if is_common_only_row(kind, runs) {
-            return "  ".to_string();
+            return format!("{}  ", format_line_num(new_line, new_line_width, &mut buf));
         }
         if let Some(side) = mod_side {
             let glyph_str = mod_glyph
                 .unwrap_or_else(|| ModGlyph::for_side(side))
                 .as_str();
             return match side {
-                ModSide::Del => format!("{glyph_str}-"),
-                ModSide::Add => format!("{glyph_str}+"),
+                ModSide::Del => format!(
+                    "{}{glyph_str}-",
+                    format_line_num(old_line, new_line_width, &mut buf)
+                ),
+                ModSide::Add => format!(
+                    "{}{glyph_str}+",
+                    format_line_num(new_line, new_line_width, &mut buf)
+                ),
             };
         }
         return match group {
-            Some(RowGroup::Anchor) if kind == RowKind::Mod => "~ ".to_string(),
+            Some(RowGroup::Anchor) if kind == RowKind::Mod => {
+                format!("{}~ ", format_line_num(new_line, new_line_width, &mut buf))
+            }
             Some(RowGroup::Aux { .. }) => match kind {
-                RowKind::Add => "~+".to_string(),
-                RowKind::Del => "~-".to_string(),
-                _ => "  ".to_string(),
+                RowKind::Add => {
+                    format!("{}~+", format_line_num(new_line, new_line_width, &mut buf))
+                }
+                RowKind::Del => {
+                    format!("{}~-", format_line_num(old_line, new_line_width, &mut buf))
+                }
+                _ => format!(
+                    "{}  ",
+                    format_line_num(new_line.or(old_line), new_line_width, &mut buf)
+                ),
             },
             _ => match kind {
-                RowKind::Add => " +".to_string(),
-                RowKind::Del => " -".to_string(),
-                RowKind::Mod => " ~".to_string(),
+                RowKind::Add => {
+                    format!("{} +", format_line_num(new_line, new_line_width, &mut buf))
+                }
+                RowKind::Del => {
+                    format!("{} -", format_line_num(old_line, new_line_width, &mut buf))
+                }
+                RowKind::Mod => {
+                    format!("{} ~", format_line_num(new_line, new_line_width, &mut buf))
+                }
                 RowKind::Mov => {
                     if mov_side == Some(MovSide::Src) {
-                        "≈-".to_string()
+                        format!("{}≈-", format_line_num(old_line, new_line_width, &mut buf))
                     } else {
-                        "≈+".to_string()
+                        format!("{}≈+", format_line_num(new_line, new_line_width, &mut buf))
                     }
                 }
-                _ => "  ".to_string(),
+                _ => format!(
+                    "{}  ",
+                    format_line_num(new_line.or(old_line), new_line_width, &mut buf)
+                ),
             },
         };
     }
+
+    let mut old_buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let mut new_buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let old_pad = format_line_num(old_line, old_line_width, &mut old_buf);
+    let new_pad = format_line_num(new_line, new_line_width, &mut new_buf);
+    let blank_old = blank_spaces(old_line_width);
+    let blank_new = blank_spaces(new_line_width);
+
     if is_common_only_row(kind, runs) {
-        return format!("{}  ", format_line_num(new_line, line_num_width, &mut buf));
+        return format!("{old_pad} {new_pad}  ");
     }
     if let Some(side) = mod_side {
         let glyph_str = mod_glyph
             .unwrap_or_else(|| ModGlyph::for_side(side))
             .as_str();
         return match side {
-            ModSide::Del => format!(
-                "{}{glyph_str}-",
-                format_line_num(old_line, line_num_width, &mut buf)
-            ),
-            ModSide::Add => format!(
-                "{}{glyph_str}+",
-                format_line_num(new_line, line_num_width, &mut buf)
-            ),
+            ModSide::Del => format!("{old_pad} {blank_new}{glyph_str}-"),
+            ModSide::Add => format!("{blank_old} {new_pad}{glyph_str}+"),
         };
     }
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-            format!("{}~ ", format_line_num(new_line, line_num_width, &mut buf))
+            format!("{old_pad} {new_pad}~ ")
         }
         Some(RowGroup::Aux { .. }) => match kind {
-            RowKind::Add => format!("{}~+", format_line_num(new_line, line_num_width, &mut buf)),
-            RowKind::Del => format!("{}~-", format_line_num(old_line, line_num_width, &mut buf)),
-            _ => format!(
-                "{}  ",
-                format_line_num(new_line.or(old_line), line_num_width, &mut buf)
-            ),
+            RowKind::Add => format!("{blank_old} {new_pad}~+"),
+            RowKind::Del => format!("{old_pad} {blank_new}~-"),
+            _ => format!("{old_pad} {new_pad}  "),
         },
         _ => match kind {
-            RowKind::Add => format!("{} +", format_line_num(new_line, line_num_width, &mut buf)),
-            RowKind::Del => format!("{} -", format_line_num(old_line, line_num_width, &mut buf)),
-            RowKind::Mod => format!("{} ~", format_line_num(new_line, line_num_width, &mut buf)),
+            RowKind::Add => format!("{blank_old} {new_pad} +"),
+            RowKind::Del => format!("{old_pad} {blank_new} -"),
+            RowKind::Mod => format!("{old_pad} {new_pad} ~"),
             RowKind::Mov => {
                 if mov_side == Some(MovSide::Src) {
-                    format!("{}≈-", format_line_num(old_line, line_num_width, &mut buf))
+                    format!("{old_pad} {blank_new}≈-")
                 } else {
-                    format!("{}≈+", format_line_num(new_line, line_num_width, &mut buf))
+                    format!("{blank_old} {new_pad}≈+")
                 }
             }
-            _ => format!(
-                "{}  ",
-                format_line_num(new_line.or(old_line), line_num_width, &mut buf)
-            ),
+            _ => format!("{old_pad} {new_pad}  "),
         },
     }
 }
@@ -319,162 +424,294 @@ pub fn styled_prefix_spans_with_width(
     theme: &DiffuseTheme,
     line_num_width: usize,
 ) -> Vec<StyledSpan> {
-    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    styled_prefix_spans_with_widths(
+        kind,
+        mov_side,
+        mod_side,
+        mod_glyph,
+        group,
+        new_line,
+        old_line,
+        runs,
+        in_hunk,
+        bg,
+        theme,
+        0,
+        line_num_width,
+    )
+}
+
+/// Generate the span-native coordinate gutter for specified old and new line
+/// number widths: line numbers plus kind glyph as ordered [`StyledSpan`]s
+/// riding on `bg`. When `old_line_width == 0`, old line numbers are omitted
+/// entirely and only the new line number and kind glyphs are returned.
+#[allow(clippy::too_many_arguments)]
+pub fn styled_prefix_spans_with_widths(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    group: Option<RowGroup>,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    runs: &[OutputRun],
+    in_hunk: bool,
+    bg: Option<Color>,
+    theme: &DiffuseTheme,
+    old_line_width: usize,
+    new_line_width: usize,
+) -> Vec<StyledSpan> {
     let palette = theme.palette;
     let ctx_num = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
         .gutter
         .num;
-    if is_common_only_row(kind, runs) {
-        if line_num_width == 0 {
-            return vec![ctx_num.span("  ", bg)];
-        }
-        let pad = format_line_num(new_line, line_num_width, &mut buf);
-        return vec![ctx_num.span(format!("{pad}  "), bg)];
-    }
     let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
     let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
     let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
+
+    if old_line_width == 0 {
+        let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+        if is_common_only_row(kind, runs) {
+            if new_line_width == 0 {
+                return vec![ctx_num.span("  ", bg)];
+            }
+            let pad = format_line_num(new_line, new_line_width, &mut buf);
+            return vec![ctx_num.span(format!("{pad}  "), bg)];
+        }
+        if let Some(side) = mod_side {
+            let glyph_str = mod_glyph
+                .unwrap_or_else(|| ModGlyph::for_side(side))
+                .as_str();
+            return match side {
+                ModSide::Del => {
+                    if new_line_width == 0 {
+                        vec![r#mod.icon.span(glyph_str, bg), del.icon.span("-", bg)]
+                    } else {
+                        let pad = format_line_num(old_line, new_line_width, &mut buf);
+                        vec![
+                            del.num.span(pad, bg),
+                            r#mod.icon.span(glyph_str, bg),
+                            del.icon.span("-", bg),
+                        ]
+                    }
+                }
+                ModSide::Add => {
+                    if new_line_width == 0 {
+                        vec![r#mod.icon.span(glyph_str, bg), add.icon.span("+", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![
+                            add.num.span(pad, bg),
+                            r#mod.icon.span(glyph_str, bg),
+                            add.icon.span("+", bg),
+                        ]
+                    }
+                }
+            };
+        }
+        return match group {
+            Some(RowGroup::Anchor) if kind == RowKind::Mod => {
+                if new_line_width == 0 {
+                    vec![r#mod.icon.span("~ ", bg)]
+                } else {
+                    let pad = format_line_num(new_line, new_line_width, &mut buf);
+                    vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
+                }
+            }
+            Some(RowGroup::Aux { .. }) => match kind {
+                RowKind::Add => {
+                    if new_line_width == 0 {
+                        vec![r#mod.icon.span("~", bg), add.icon.span("+", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![
+                            add.num.span(pad, bg),
+                            r#mod.icon.span("~", bg),
+                            add.icon.span("+", bg),
+                        ]
+                    }
+                }
+                RowKind::Del => {
+                    if new_line_width == 0 {
+                        vec![r#mod.icon.span("~", bg), del.icon.span("-", bg)]
+                    } else {
+                        let pad = format_line_num(old_line, new_line_width, &mut buf);
+                        vec![
+                            del.num.span(pad, bg),
+                            r#mod.icon.span("~", bg),
+                            del.icon.span("-", bg),
+                        ]
+                    }
+                }
+                _ => {
+                    if new_line_width == 0 {
+                        vec![ctx_num.span("  ", bg)]
+                    } else {
+                        let pad = format_line_num(new_line.or(old_line), new_line_width, &mut buf);
+                        vec![ctx_num.span(format!("{pad}  "), bg)]
+                    }
+                }
+            },
+            _ => match kind {
+                RowKind::Del => {
+                    if new_line_width == 0 {
+                        vec![
+                            StyledSpan::styled(" ", Some(del.num.color), bg),
+                            del.icon.span("-", bg),
+                        ]
+                    } else {
+                        let pad = format_line_num(old_line, new_line_width, &mut buf);
+                        vec![
+                            del.num.span(pad, bg),
+                            StyledSpan::styled(" ", Some(del.num.color), bg),
+                            del.icon.span("-", bg),
+                        ]
+                    }
+                }
+                RowKind::Add => {
+                    if new_line_width == 0 {
+                        vec![StyledSpan::styled(" ", None, bg), add.icon.span("+", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
+                    }
+                }
+                RowKind::Mod => {
+                    if new_line_width == 0 {
+                        vec![StyledSpan::styled(" ", None, bg), r#mod.icon.span("~", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![
+                            r#mod.num.span(format!("{pad} "), bg),
+                            r#mod.icon.span("~", bg),
+                        ]
+                    }
+                }
+                RowKind::Mov => {
+                    if mov_side == Some(MovSide::Src) {
+                        if new_line_width == 0 {
+                            vec![mov.icon.span("≈", bg), del.icon.span("-", bg)]
+                        } else {
+                            let pad = format_line_num(old_line, new_line_width, &mut buf);
+                            vec![
+                                del.num.span(pad, bg),
+                                mov.icon.span("≈", bg),
+                                del.icon.span("-", bg),
+                            ]
+                        }
+                    } else if new_line_width == 0 {
+                        vec![mov.icon.span("≈", bg), add.icon.span("+", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![
+                            add.num.span(pad, bg),
+                            mov.icon.span("≈", bg),
+                            add.icon.span("+", bg),
+                        ]
+                    }
+                }
+                _ => {
+                    if new_line_width == 0 {
+                        vec![ctx_num.span("  ", bg)]
+                    } else {
+                        let pad = format_line_num(new_line.or(old_line), new_line_width, &mut buf);
+                        vec![ctx_num.span(format!("{pad}  "), bg)]
+                    }
+                }
+            },
+        };
+    }
+
+    let mut old_buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let mut new_buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let old_pad = format_line_num(old_line, old_line_width, &mut old_buf);
+    let new_pad = format_line_num(new_line, new_line_width, &mut new_buf);
+
+    if is_common_only_row(kind, runs) {
+        return vec![ctx_num.span(format!("{old_pad} {new_pad}  "), bg)];
+    }
+
+    let blank_old = blank_spaces(old_line_width);
+    let blank_new = blank_spaces(new_line_width);
+
     if let Some(side) = mod_side {
         let glyph_str = mod_glyph
             .unwrap_or_else(|| ModGlyph::for_side(side))
             .as_str();
         return match side {
-            ModSide::Del => {
-                if line_num_width == 0 {
-                    vec![r#mod.icon.span(glyph_str, bg), del.icon.span("-", bg)]
-                } else {
-                    let pad = format_line_num(old_line, line_num_width, &mut buf);
-                    vec![
-                        del.num.span(pad, bg),
-                        r#mod.icon.span(glyph_str, bg),
-                        del.icon.span("-", bg),
-                    ]
-                }
-            }
-            ModSide::Add => {
-                if line_num_width == 0 {
-                    vec![r#mod.icon.span(glyph_str, bg), add.icon.span("+", bg)]
-                } else {
-                    let pad = format_line_num(new_line, line_num_width, &mut buf);
-                    vec![
-                        add.num.span(pad, bg),
-                        r#mod.icon.span(glyph_str, bg),
-                        add.icon.span("+", bg),
-                    ]
-                }
-            }
+            ModSide::Del => vec![
+                del.num.span(old_pad, bg),
+                StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                r#mod.icon.span(glyph_str, bg),
+                del.icon.span("-", bg),
+            ],
+            ModSide::Add => vec![
+                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                add.num.span(new_pad, bg),
+                r#mod.icon.span(glyph_str, bg),
+                add.icon.span("+", bg),
+            ],
         };
     }
+
     match group {
-        Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-            if line_num_width == 0 {
-                vec![r#mod.icon.span("~ ", bg)]
-            } else {
-                let pad = format_line_num(new_line, line_num_width, &mut buf);
-                vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
-            }
-        }
+        Some(RowGroup::Anchor) if kind == RowKind::Mod => vec![
+            r#mod.num.span(old_pad, bg),
+            StyledSpan::styled(" ", Some(r#mod.num.color), bg),
+            r#mod.num.span(new_pad, bg),
+            r#mod.icon.span("~ ", bg),
+        ],
         Some(RowGroup::Aux { .. }) => match kind {
-            RowKind::Add => {
-                if line_num_width == 0 {
-                    vec![r#mod.icon.span("~", bg), add.icon.span("+", bg)]
-                } else {
-                    let pad = format_line_num(new_line, line_num_width, &mut buf);
-                    vec![
-                        add.num.span(pad, bg),
-                        r#mod.icon.span("~", bg),
-                        add.icon.span("+", bg),
-                    ]
-                }
-            }
-            RowKind::Del => {
-                if line_num_width == 0 {
-                    vec![r#mod.icon.span("~", bg), del.icon.span("-", bg)]
-                } else {
-                    let pad = format_line_num(old_line, line_num_width, &mut buf);
-                    vec![
-                        del.num.span(pad, bg),
-                        r#mod.icon.span("~", bg),
-                        del.icon.span("-", bg),
-                    ]
-                }
-            }
-            _ => {
-                if line_num_width == 0 {
-                    vec![ctx_num.span("  ", bg)]
-                } else {
-                    let pad = format_line_num(new_line.or(old_line), line_num_width, &mut buf);
-                    vec![ctx_num.span(format!("{pad}  "), bg)]
-                }
-            }
+            RowKind::Add => vec![
+                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                add.num.span(new_pad, bg),
+                r#mod.icon.span("~", bg),
+                add.icon.span("+", bg),
+            ],
+            RowKind::Del => vec![
+                del.num.span(old_pad, bg),
+                StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                r#mod.icon.span("~", bg),
+                del.icon.span("-", bg),
+            ],
+            _ => vec![ctx_num.span(format!("{old_pad} {new_pad}  "), bg)],
         },
         _ => match kind {
-            RowKind::Del => {
-                if line_num_width == 0 {
-                    vec![
-                        StyledSpan::styled(" ", Some(del.num.color), bg),
-                        del.icon.span("-", bg),
-                    ]
-                } else {
-                    let pad = format_line_num(old_line, line_num_width, &mut buf);
-                    vec![
-                        del.num.span(pad, bg),
-                        StyledSpan::styled(" ", Some(del.num.color), bg),
-                        del.icon.span("-", bg),
-                    ]
-                }
-            }
-            RowKind::Add => {
-                if line_num_width == 0 {
-                    vec![StyledSpan::styled(" ", None, bg), add.icon.span("+", bg)]
-                } else {
-                    let pad = format_line_num(new_line, line_num_width, &mut buf);
-                    vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
-                }
-            }
-            RowKind::Mod => {
-                if line_num_width == 0 {
-                    vec![StyledSpan::styled(" ", None, bg), r#mod.icon.span("~", bg)]
-                } else {
-                    let pad = format_line_num(new_line, line_num_width, &mut buf);
-                    vec![
-                        r#mod.num.span(format!("{pad} "), bg),
-                        r#mod.icon.span("~", bg),
-                    ]
-                }
-            }
+            RowKind::Del => vec![
+                del.num.span(old_pad, bg),
+                StyledSpan::styled(format!(" {blank_new} "), Some(del.num.color), bg),
+                del.icon.span("-", bg),
+            ],
+            RowKind::Add => vec![
+                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                add.num.span(format!("{new_pad} "), bg),
+                add.icon.span("+", bg),
+            ],
+            RowKind::Mod => vec![
+                r#mod.num.span(old_pad, bg),
+                StyledSpan::styled(" ", Some(r#mod.num.color), bg),
+                r#mod.num.span(format!("{new_pad} "), bg),
+                r#mod.icon.span("~", bg),
+            ],
             RowKind::Mov => {
                 if mov_side == Some(MovSide::Src) {
-                    if line_num_width == 0 {
-                        vec![mov.icon.span("≈", bg), del.icon.span("-", bg)]
-                    } else {
-                        let pad = format_line_num(old_line, line_num_width, &mut buf);
-                        vec![
-                            del.num.span(pad, bg),
-                            mov.icon.span("≈", bg),
-                            del.icon.span("-", bg),
-                        ]
-                    }
-                } else if line_num_width == 0 {
-                    vec![mov.icon.span("≈", bg), add.icon.span("+", bg)]
-                } else {
-                    let pad = format_line_num(new_line, line_num_width, &mut buf);
                     vec![
-                        add.num.span(pad, bg),
+                        del.num.span(old_pad, bg),
+                        StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                        mov.icon.span("≈", bg),
+                        del.icon.span("-", bg),
+                    ]
+                } else {
+                    vec![
+                        StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                        add.num.span(new_pad, bg),
                         mov.icon.span("≈", bg),
                         add.icon.span("+", bg),
                     ]
                 }
             }
-            _ => {
-                if line_num_width == 0 {
-                    vec![ctx_num.span("  ", bg)]
-                } else {
-                    let pad = format_line_num(new_line.or(old_line), line_num_width, &mut buf);
-                    vec![ctx_num.span(format!("{pad}  "), bg)]
-                }
-            }
+            _ => vec![ctx_num.span(format!("{old_pad} {new_pad}  "), bg)],
         },
     }
 }
@@ -554,31 +791,77 @@ pub fn continuation_prefix_spans_with_mod_side_and_width(
     bg: Option<Color>,
     line_num_width: usize,
 ) -> Vec<StyledSpan> {
-    if mod_row_extends_box(mod_side, mod_glyph) {
-        let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
-        if line_num_width == 0 {
-            vec![
-                r#mod.icon.span("│", bg),
-                StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
-            ]
-        } else {
-            let pad = if line_num_width <= MAX_LINE_NUM_WIDTH {
-                LINE_NUM_SPACES[line_num_width]
+    continuation_prefix_spans_with_mod_side_and_widths(
+        mod_side,
+        mod_glyph,
+        theme,
+        bg,
+        0,
+        line_num_width,
+    )
+}
+
+/// Continuation prefix spans taking `ModSide`, `ModGlyph`, and specified
+/// old and new line number widths into account.
+pub fn continuation_prefix_spans_with_mod_side_and_widths(
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    theme: &DiffuseTheme,
+    bg: Option<Color>,
+    old_line_width: usize,
+    new_line_width: usize,
+) -> Vec<StyledSpan> {
+    if old_line_width == 0 {
+        if mod_row_extends_box(mod_side, mod_glyph) {
+            let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+            if new_line_width == 0 {
+                return vec![
+                    r#mod.icon.span("│", bg),
+                    StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
+                ];
+            }
+            let pad = if new_line_width <= MAX_LINE_NUM_WIDTH {
+                LINE_NUM_SPACES[new_line_width]
             } else {
                 return vec![
-                    StyledSpan::styled(" ".repeat(line_num_width), Some(Color::Fixed(242)), bg),
+                    StyledSpan::styled(" ".repeat(new_line_width), Some(Color::Fixed(242)), bg),
                     r#mod.icon.span("│", bg),
                     StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
                 ];
             };
-            vec![
+            return vec![
                 StyledSpan::styled(pad, Some(Color::Fixed(242)), bg),
                 r#mod.icon.span("│", bg),
                 StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
-            ]
+            ];
         }
+        return continuation_prefix_spans_with_width(bg, new_line_width);
+    }
+
+    if mod_row_extends_box(mod_side, mod_glyph) {
+        let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
+        let pad_len = old_line_width + 1 + new_line_width;
+        let pad = if pad_len <= MAX_LINE_NUM_WIDTH {
+            LINE_NUM_SPACES[pad_len]
+        } else {
+            return vec![
+                StyledSpan::styled(" ".repeat(pad_len), Some(Color::Fixed(242)), bg),
+                r#mod.icon.span("│", bg),
+                StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
+            ];
+        };
+        vec![
+            StyledSpan::styled(pad, Some(Color::Fixed(242)), bg),
+            r#mod.icon.span("│", bg),
+            StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
+        ]
     } else {
-        continuation_prefix_spans_with_width(bg, line_num_width)
+        let total_w = dual_gutter_width(old_line_width, new_line_width);
+        vec![StyledSpan::styled(
+            " ".repeat(total_w),
+            Some(Color::Fixed(242)),
+            bg,
+        )]
     }
 }
 
@@ -610,6 +893,30 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
         BOX_PREFIXES[idx]
     } else {
         GUTTER_SPACES[idx]
+    }
+}
+
+/// Continuation prefix plain text taking `ModSide`, `ModGlyph`, and
+/// specified old and new line number widths into account.
+pub fn continuation_prefix_plain_with_mod_side_and_widths(
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    old_line_width: usize,
+    new_line_width: usize,
+) -> String {
+    if old_line_width == 0 {
+        return continuation_prefix_plain_with_mod_side_and_width(
+            mod_side,
+            mod_glyph,
+            new_line_width,
+        )
+        .to_string();
+    }
+    if mod_row_extends_box(mod_side, mod_glyph) {
+        let pad_len = old_line_width + 1 + new_line_width;
+        format!("{}│ ", " ".repeat(pad_len))
+    } else {
+        " ".repeat(dual_gutter_width(old_line_width, new_line_width))
     }
 }
 

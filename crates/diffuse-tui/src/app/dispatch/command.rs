@@ -71,6 +71,12 @@ impl AppState {
             TuiCommand::ToggleSyntax => self.syntax_on = !self.syntax_on,
             TuiCommand::ToggleWordDiff => self.word_diff = !self.word_diff,
             TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
+            TuiCommand::ToggleOldLineGutter => {
+                let cw = self.effective_content_width();
+                let active = self.is_old_line_gutter_active(cw);
+                self.show_old_line_gutter = Some(!active);
+                self.bump_content();
+            }
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
             TuiCommand::ToggleTheme => {
                 // Resolve the opposite-mode pair from the theme's asset

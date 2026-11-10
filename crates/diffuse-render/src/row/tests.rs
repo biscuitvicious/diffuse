@@ -2210,3 +2210,289 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(super::gutter::BOX_PREFIXES[0], "│ ");
     assert_eq!(super::gutter::BOX_PREFIXES[5], "     │ ");
 }
+
+#[test]
+fn test_dual_gutter_width_and_prefix_formatting() {
+    // 1. dual_gutter_width calculations
+    assert_eq!(dual_gutter_width(0, 0), 2);
+    assert_eq!(dual_gutter_width(0, 3), 5);
+    assert_eq!(dual_gutter_width(0, 4), 6);
+    assert_eq!(dual_gutter_width(3, 4), 10); // 3 + 1 + 4 + 2
+    assert_eq!(dual_gutter_width(4, 4), 11); // 4 + 1 + 4 + 2
+    assert_eq!(dual_gutter_width(5, 5), 13); // 5 + 1 + 5 + 2
+
+    let theme = DiffuseTheme::dark();
+
+    // 2. prefix_of_with_mod_side_and_widths with old_w = 3, new_w = 4
+    let runs = [];
+    let p_ctx = prefix_of_with_mod_side_and_widths(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_ctx, "  8   10  ");
+    assert_eq!(p_ctx.len(), 10);
+
+    let p_add = prefix_of_with_mod_side_and_widths(
+        RowKind::Add,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        None,
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_add, "      10 +");
+    assert_eq!(p_add.len(), 10);
+
+    let p_del = prefix_of_with_mod_side_and_widths(
+        RowKind::Del,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_del, "  8      -");
+    assert_eq!(p_del.len(), 10);
+
+    let p_mod = prefix_of_with_mod_side_and_widths(
+        RowKind::Mod,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_mod, "  8   10 ~");
+    assert_eq!(p_mod.len(), 10);
+
+    let p_mov_src = prefix_of_with_mod_side_and_widths(
+        RowKind::Mov,
+        Some(MovSide::Src),
+        None,
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_mov_src, "  8     ≈-");
+    assert_eq!(crate::width::display_width(&p_mov_src), 10);
+
+    let p_mov_tgt = prefix_of_with_mod_side_and_widths(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        None,
+        None,
+        Some(10),
+        None,
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_mov_tgt, "      10≈+");
+    assert_eq!(crate::width::display_width(&p_mov_tgt), 10);
+
+    let p_mod_del = prefix_of_with_mod_side_and_widths(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_mod_del, "  8     ┌-");
+    assert_eq!(crate::width::display_width(&p_mod_del), 10);
+
+    let p_mod_add = prefix_of_with_mod_side_and_widths(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Add),
+        None,
+        None,
+        Some(10),
+        None,
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_mod_add, "      10└+");
+    assert_eq!(crate::width::display_width(&p_mod_add), 10);
+
+    // 3. styled_prefix_spans_with_widths width validation
+    let span_len = |spans: &[StyledSpan]| {
+        spans
+            .iter()
+            .map(|s| crate::width::display_width(&s.text))
+            .sum::<usize>()
+    };
+
+    let s_ctx = styled_prefix_spans_with_widths(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        Some(8),
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_ctx), 10);
+
+    let s_add = styled_prefix_spans_with_widths(
+        RowKind::Add,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        None,
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_add), 10);
+
+    let s_del = styled_prefix_spans_with_widths(
+        RowKind::Del,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_del), 10);
+
+    let s_mod = styled_prefix_spans_with_widths(
+        RowKind::Mod,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        Some(8),
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_mod), 10);
+
+    let s_mov_src = styled_prefix_spans_with_widths(
+        RowKind::Mov,
+        Some(MovSide::Src),
+        None,
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_mov_src), 10);
+
+    let s_mov_tgt = styled_prefix_spans_with_widths(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        None,
+        None,
+        Some(10),
+        None,
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(span_len(&s_mov_tgt), 10);
+
+    let s_mod_del = styled_prefix_spans_with_widths(
+        RowKind::Mod,
+        None,
+        Some(ModSide::Del),
+        None,
+        None,
+        None,
+        Some(8),
+        &runs,
+        false,
+        None,
+        &theme,
+        3,
+        4,
+    );
+    assert_eq!(s_mod_del[0].text, "  8");
+    assert_eq!(s_mod_del[1].text, "     "); // 1 space + 4 blank_new
+    assert_eq!(s_mod_del[2].text, "┌");
+    assert_eq!(s_mod_del[3].text, "-");
+
+    // 4. continuation_prefix_spans_with_mod_side_and_widths
+    let cont_normal =
+        continuation_prefix_spans_with_mod_side_and_widths(None, None, &theme, None, 3, 4);
+    assert_eq!(span_len(&cont_normal), 10);
+
+    let cont_box = continuation_prefix_spans_with_mod_side_and_widths(
+        Some(ModSide::Del),
+        None,
+        &theme,
+        None,
+        3,
+        4,
+    );
+    assert_eq!(cont_box[0].text, "        "); // 3 + 1 + 4 = 8 spaces
+    assert_eq!(cont_box[1].text, "│");
+    assert_eq!(cont_box[2].text, " ");
+
+    let cont_plain_box =
+        continuation_prefix_plain_with_mod_side_and_widths(Some(ModSide::Del), None, 3, 4);
+    assert_eq!(cont_plain_box, "        │ ");
+}

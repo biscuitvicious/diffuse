@@ -10,8 +10,8 @@ use crate::{
     app::{AppState, notes::NoteRowFocus},
     core::parse::RowKind,
     render::{
-        continuation_prefix_spans_with_mod_side_and_width, raw_row_spans, row_segment_spans,
-        slice_by_visual_width, span::StyledSpan, styled_prefix_spans_with_width,
+        continuation_prefix_spans_with_mod_side_and_widths, raw_row_spans, row_segment_spans,
+        slice_by_visual_width, span::StyledSpan, styled_prefix_spans_with_widths,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
@@ -486,8 +486,15 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected =
                                 idx == self.row_idx && self.vis_line == div_segs + s_idx;
+                            let is_old_active = self.is_old_line_gutter_active(content_width);
+                            let old_line_w = if is_old_active {
+                                self.old_line_num.width
+                            } else {
+                                0
+                            };
+                            let new_line_w = self.new_line_num.width;
                             let mut prefix = if s_idx == 0 {
-                                styled_prefix_spans_with_width(
+                                styled_prefix_spans_with_widths(
                                     r.kind,
                                     r.mov_side,
                                     mod_side,
@@ -499,15 +506,17 @@ impl AppState {
                                     in_hunk_extent,
                                     None,
                                     &self.theme,
-                                    self.line_num_width,
+                                    old_line_w,
+                                    new_line_w,
                                 )
                             } else {
-                                continuation_prefix_spans_with_mod_side_and_width(
+                                continuation_prefix_spans_with_mod_side_and_widths(
                                     mod_side,
                                     mod_glyph,
                                     &self.theme,
                                     None,
-                                    self.line_num_width,
+                                    old_line_w,
+                                    new_line_w,
                                 )
                             };
                             let expand_icon =
@@ -523,8 +532,9 @@ impl AppState {
                                 ),
                             );
                             let rendered_row = if self.raw_diff {
-                                let text_cols =
-                                    content_width.saturating_sub(self.gutter_width()).max(1);
+                                let text_cols = content_width
+                                    .saturating_sub(self.gutter_width_for(content_width))
+                                    .max(1);
                                 let piece =
                                     slice_by_visual_width(&row_text, s_idx * text_cols, text_cols);
                                 let is_last_seg = s_idx + 1 == seg_count;
@@ -539,8 +549,9 @@ impl AppState {
                                 );
                                 fit_line(raw.spans, content_width, raw.line_bg)
                             } else {
-                                let text_cols =
-                                    content_width.saturating_sub(self.gutter_width()).max(1);
+                                let text_cols = content_width
+                                    .saturating_sub(self.gutter_width_for(content_width))
+                                    .max(1);
                                 let seg_start = s_idx * text_cols;
                                 let seg_end = seg_start + text_cols;
                                 let row = row_segment_spans(

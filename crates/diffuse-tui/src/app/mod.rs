@@ -78,14 +78,17 @@ pub struct AppState {
     /// Global modification row expansion state (Some(true) = expanded,
     /// Some(false) = collapsed, None = mode ignores mod expansion).
     pub expand_mods: Option<bool>,
-    /// Adaptive line number width in columns (0 hides line numbers, >0 formats
-    /// numbers right-aligned).
-    pub line_num_width: usize,
+    /// Old line number tracking (max line number and column width).
+    pub old_line_num: crate::types::LineNumTracking,
+    /// New line number tracking (max line number and column width).
+    pub new_line_num: crate::types::LineNumTracking,
+    /// User toggle for whether the old line number gutter is displayed:
+    /// `None` = auto-activate if diff content cols >= 100,
+    /// `Some(true)` = forced visible, `Some(false)` = forced hidden.
+    pub show_old_line_gutter: Option<bool>,
     /// Explicit line number width override (Some(0..=16)), or None for
     /// adaptive dynamic width.
     pub explicit_line_num_width: Option<usize>,
-    /// Maximum line number across all currently uncollapsed files in the grid.
-    pub max_line_num: u32,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,

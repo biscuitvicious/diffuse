@@ -2859,11 +2859,23 @@ fn test_mov_target_and_source_render_in_tui() {
     let frame_src = state.render_frame(120, 40);
     let raw_frame_src = crate::render::strip_ansi(&frame_src);
     assert!(
-        raw_frame_src.contains("127≈-"),
-        "frame must render source move row 127≈-"
+        raw_frame_src.contains("127") && raw_frame_src.contains("≈-"),
+        "frame must render source move row 127 with ≈-"
     );
     assert!(
-        raw_frame_src.contains("135 -") && !raw_frame_src.contains("135≈-"),
+        raw_frame_src.contains("135") && !raw_frame_src.contains("135≈-"),
+        "trailing blank line 135 must be regular deletion '-', not move '≈-'"
+    );
+
+    // Also verify collapsed gutter at narrow width (< 100 diff content cols)
+    let frame_narrow = state.render_frame(80, 40);
+    let raw_frame_narrow = crate::render::strip_ansi(&frame_narrow);
+    assert!(
+        raw_frame_narrow.contains("127≈-"),
+        "narrow frame must render collapsed source move row 127≈-"
+    );
+    assert!(
+        raw_frame_narrow.contains("135 -") && !raw_frame_narrow.contains("135≈-"),
         "trailing blank line 135 must be regular deletion '-', not move '≈-'"
     );
 }
@@ -5393,8 +5405,10 @@ fn test_adaptive_line_number_width_from_hunk_headers() {
     );
 
     // Initial state calculated directly from hunk header: max 3, width 1
-    assert_eq!(state.max_line_num, 3);
-    assert_eq!(state.line_num_width, 1);
+    assert_eq!(state.new_line_num.max_num, 3);
+    assert_eq!(state.new_line_num.width, 1);
+    assert_eq!(state.old_line_num.max_num, 3);
+    assert_eq!(state.old_line_num.width, 1);
 
     // Now test with larger line numbers (e.g. line 42)
     let diff_large = r#"diff --git a/big.rs b/big.rs
@@ -5419,8 +5433,10 @@ fn test_adaptive_line_number_width_from_hunk_headers() {
         crate::render::DiffuseTheme::dark(),
     );
 
-    assert_eq!(state_large.max_line_num, 42);
-    assert_eq!(state_large.line_num_width, 2);
+    assert_eq!(state_large.new_line_num.max_num, 42);
+    assert_eq!(state_large.new_line_num.width, 2);
+    assert_eq!(state_large.old_line_num.max_num, 42);
+    assert_eq!(state_large.old_line_num.width, 2);
 }
 
 #[test]
@@ -5439,8 +5455,8 @@ fn test_adaptive_width_on_file_expand_reload_and_append() {
         crate::render::DiffuseTheme::dark(),
     );
 
-    assert_eq!(state.max_line_num, 3);
-    assert_eq!(state.line_num_width, 1);
+    assert_eq!(state.new_line_num.max_num, 3);
+    assert_eq!(state.new_line_num.width, 1);
 
     // Append file with line numbers in the thousands
     let diff_huge = "diff --git a/huge.rs b/huge.rs\n--- a/huge.rs\n+++ b/huge.rs\n@@ -1000,3 +1000,3 @@\n line 1000\n-line 1001\n+line 1001b\n line 1002\n";
@@ -5453,18 +5469,18 @@ fn test_adaptive_width_on_file_expand_reload_and_append() {
     state.append_file(output_huge.files[0].clone());
 
     // Immediately adapted from the appended file's final hunk header
-    assert_eq!(state.max_line_num, 1002);
-    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.new_line_num.max_num, 1002);
+    assert_eq!(state.new_line_num.width, 4);
 
     // Collapsing file 1 should adapt width back down to 1
     state.toggle_file_collapse(1);
-    assert_eq!(state.max_line_num, 3);
-    assert_eq!(state.line_num_width, 1);
+    assert_eq!(state.new_line_num.max_num, 3);
+    assert_eq!(state.new_line_num.width, 1);
 
     // Uncollapsing file 1 adapts width back up to 4
     state.toggle_file_collapse(1);
-    assert_eq!(state.max_line_num, 1002);
-    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.new_line_num.max_num, 1002);
+    assert_eq!(state.new_line_num.width, 4);
 
     // Reloading diff back to a small file adapts back down
     let diff_reload = "diff --git a/c.rs b/c.rs\n--- a/c.rs\n+++ b/c.rs\n@@ -1,2 +1,2 @@\n-line 1\n+line 1b\n line 2\n";
@@ -5475,8 +5491,8 @@ fn test_adaptive_width_on_file_expand_reload_and_append() {
         crate::core::PipelineOptions::default(),
     );
     state.reload(output_reload);
-    assert_eq!(state.max_line_num, 2);
-    assert_eq!(state.line_num_width, 1);
+    assert_eq!(state.new_line_num.max_num, 2);
+    assert_eq!(state.new_line_num.width, 1);
 }
 
 #[test]
@@ -5536,12 +5552,12 @@ fn test_explicit_line_num_width_override() {
     );
 
     // Default adaptive: max line is 1001, width is 4, gutter is 7
-    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.new_line_num.width, 4);
     assert_eq!(state.gutter_width(), 7);
 
     // Override with 0 (hide line numbers entirely)
     state = state.with_line_num_width(Some(0));
-    assert_eq!(state.line_num_width, 0);
+    assert_eq!(state.new_line_num.width, 0);
     assert_eq!(state.gutter_width(), 3);
 
     let (lines, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
@@ -5558,7 +5574,7 @@ fn test_explicit_line_num_width_override() {
 
     // Override with 2 (numbers >= 100 truncate with ellipsis)
     state = state.with_line_num_width(Some(2));
-    assert_eq!(state.line_num_width, 2);
+    assert_eq!(state.new_line_num.width, 2);
     assert_eq!(state.gutter_width(), 5);
 
     let (lines_w2, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 0);
@@ -5575,11 +5591,11 @@ fn test_explicit_line_num_width_override() {
 
     // Override with 16
     state = state.with_line_num_width(Some(16));
-    assert_eq!(state.line_num_width, 16);
+    assert_eq!(state.new_line_num.width, 16);
     assert_eq!(state.gutter_width(), 19);
 
     // Reset override to None -> restores adaptive dynamic calculation
     state = state.with_line_num_width(None);
-    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.new_line_num.width, 4);
     assert_eq!(state.gutter_width(), 7);
 }

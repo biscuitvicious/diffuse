@@ -874,12 +874,12 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
 
     // Initial state: all files expanded, max_line_num is in 2000s, width 4
     assert_eq!(state.output.files.len(), 7);
-    assert_eq!(state.line_num_width, 4);
+    assert_eq!(state.new_line_num.width, 4);
 
     // Collapse File 4 (File 5/7 · app/tests.rs)
     state.toggle_file_collapse(4);
     assert_eq!(
-        state.line_num_width, 3,
+        state.new_line_num.width, 3,
         "with file 4 collapsed, max line is < 1000"
     );
 
@@ -911,7 +911,10 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
 
     // Now expand File 4
     state.toggle_file_collapse(4);
-    assert_eq!(state.line_num_width, 4, "expanding file 4 restores width 4");
+    assert_eq!(
+        state.new_line_num.width, 4,
+        "expanding file 4 restores width 4"
+    );
 
     let buf_expanded = state.render_to_buffer(width, height);
     let y_after = find_header_y(&buf_expanded).expect("file 4 header should still be visible");
@@ -925,7 +928,7 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
     // Y
     state.toggle_file_collapse(4);
     assert_eq!(
-        state.line_num_width, 3,
+        state.new_line_num.width, 3,
         "re-collapsing file 4 restores width 3"
     );
     let buf_recollapsed = state.render_to_buffer(width, height);
@@ -1138,4 +1141,155 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         !updated_line.trim().is_empty(),
         "expanded buffer row must contain content"
     );
+}
+
+#[test]
+fn test_tui_collapsible_old_line_gutter_from_golden() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::dark(),
+    );
+
+    // Initial state: old and new line tracking populated, auto mode (None)
+    assert_eq!(state.new_line_num.width, 4);
+    assert_eq!(state.old_line_num.width, 4);
+    assert_eq!(state.show_old_line_gutter, None);
+
+    // Verify context rows in File 1 render BOTH old and new line numbers
+    let buf_check = state.render_to_buffer(200, 60);
+    let mut found_ctx_221 = false;
+    for y in 0..buf_check.area().height {
+        let mut line = String::new();
+        for x in 0..buf_check.area().width {
+            line.push_str(buf_check.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        if line.contains("including alongside") {
+            assert!(
+                line.contains("221  221"),
+                "ctx row must show both old and new line numbers: {line:?}"
+            );
+            found_ctx_221 = true;
+            break;
+        }
+    }
+    assert!(found_ctx_221, "must find line 221 in rendered buffer");
+
+    // Exact boundary check: expanded gutter width is 1 (expand) + 4 (old) + 1
+    // (space) + 4 (new) + 2 (marker) = 12. Remaining diff content columns must
+    // be >= 100 to activate. 111 - 12 = 99 < 100 -> inactive
+    assert!(!state.is_old_line_gutter_active(111));
+    assert_eq!(state.gutter_width_for(111), 7);
+    // 112 - 12 = 100 >= 100 -> active
+    assert!(state.is_old_line_gutter_active(112));
+    assert_eq!(state.gutter_width_for(112), 12);
+
+    // At terminal width 120 (content width 119 with scrollbar): active
+    let (w_wide, h) = (120, 50);
+    assert!(state.is_old_line_gutter_active(119));
+    let buf_wide = state.render_to_buffer(w_wide, h);
+
+    let get_prefix = |buf: &ratatui::buffer::Buffer, y: u16, cols: u16| -> String {
+        (0..cols)
+            .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect()
+    };
+
+    // Find a diff row that has both old and new line numbers (e.g. Ctx row in hunk
+    // 0) The dual gutter layout: [expand: 1][old: 4][space: 1][new: 4][marker:
+    // 2] -> 12 cols
+    let dual_prefix = (0..buf_wide.area().height)
+        .map(|y| get_prefix(&buf_wide, y, 12))
+        .find(|pfx| pfx.contains("84") || pfx.contains("85") || pfx.contains("86"))
+        .expect("must find a diff row with line numbers");
+
+    // Verify dual line number gutter structure: old line number at cols 1..5, space
+    // at col 5, new line number at 6..10
+    assert_eq!(
+        dual_prefix.chars().nth(5),
+        Some(' '),
+        "col 5 must be separator space: {dual_prefix:?}"
+    );
+
+    // Toggle old line gutter off via command
+    state.execute(TuiCommand::ToggleOldLineGutter);
+    assert_eq!(state.show_old_line_gutter, Some(false));
+    assert!(!state.is_old_line_gutter_active(119));
+    assert_eq!(state.gutter_width_for(119), 7);
+
+    // Render with old gutter toggled off
+    let buf_collapsed = state.render_to_buffer(w_wide, h);
+
+    // In collapsed gutter, gutter width is 7: [expand: 1][new: 4][marker: 2]
+    // The marker is at cols 5..7
+    let single_prefix = (0..buf_collapsed.area().height)
+        .map(|y| get_prefix(&buf_collapsed, y, 7))
+        .find(|pfx| pfx.contains("84") || pfx.contains("85") || pfx.contains("86"))
+        .expect("must find diff row in collapsed buffer");
+    let single_chars: Vec<char> = single_prefix.chars().collect();
+    let marker_str: String = single_chars[5..7].iter().collect();
+    assert_eq!(
+        marker_str, "  ",
+        "marker in collapsed 7-col gutter at cols 5..7: {single_prefix:?}"
+    );
+
+    // Toggle back on
+    state.execute(TuiCommand::ToggleOldLineGutter);
+    assert_eq!(state.show_old_line_gutter, Some(true));
+    assert!(state.is_old_line_gutter_active(119));
+
+    // Reset back to auto mode for narrow testing
+    state.show_old_line_gutter = None;
+
+    // Automatic collapse when terminal is narrower: width 100 -> content width <=
+    // 100 -> diff content < 100 cols
+    let (w_narrow, h_narrow) = (100, 40);
+    assert!(!state.is_old_line_gutter_active(99));
+    assert!(!state.is_old_line_gutter_active(100));
+    assert_eq!(state.gutter_width_for(99), 7);
+
+    let buf_narrow = state.render_to_buffer(w_narrow, h_narrow);
+
+    let narrow_prefix = (0..buf_narrow.area().height)
+        .map(|y| get_prefix(&buf_narrow, y, 7))
+        .find(|pfx| pfx.contains("84") || pfx.contains("85") || pfx.contains("86"))
+        .expect("must find diff row in narrow buffer");
+    let narrow_chars: Vec<char> = narrow_prefix.chars().collect();
+    let narrow_marker: String = narrow_chars[5..7].iter().collect();
+    assert_eq!(
+        narrow_marker, "  ",
+        "narrow buffer automatically uses collapsed 7-col gutter"
+    );
+
+    // Phone viewport: width 48, default inactive
+    let (w_phone, h_phone) = (48, 24);
+    assert!(!state.is_old_line_gutter_active(48));
+    assert_eq!(state.gutter_width_for(48), 7);
+
+    // User types '#' on phone -> explicitly forces old-line gutter on
+    state.execute(TuiCommand::ToggleOldLineGutter);
+    assert_eq!(state.show_old_line_gutter, Some(true));
+    assert!(state.is_old_line_gutter_active(48));
+    assert_eq!(state.gutter_width_for(48), 12);
+
+    let buf_phone = state.render_to_buffer(w_phone, h_phone);
+    let phone_prefix = (0..buf_phone.area().height)
+        .map(|y| get_prefix(&buf_phone, y, 12))
+        .find(|pfx| pfx.contains("84") || pfx.contains("85") || pfx.contains("86"))
+        .expect("must find diff row in phone buffer with dual gutter");
+    assert_eq!(
+        phone_prefix.chars().nth(5),
+        Some(' '),
+        "phone dual gutter has separator at col 5"
+    );
+
+    // User types '#' again on phone -> toggles back off
+    state.execute(TuiCommand::ToggleOldLineGutter);
+    assert_eq!(state.show_old_line_gutter, Some(false));
+    assert!(!state.is_old_line_gutter_active(48));
+    assert_eq!(state.gutter_width_for(48), 7);
 }

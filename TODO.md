@@ -24,9 +24,9 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 ## 3. UI, navigation and display features
 
 - [ ] **Collapsible file picker pane**: Add a collapsible file picker and list pane to the left of the diff display for fast file browsing and jump navigation.
-- [ ] **Collapsible old-line number gutter**: Add a collapsible old-line number gutter to the left of the new-line number gutter, toggleable to maximize horizontal code viewing space.
+- [x] **Collapsible old-line number gutter**: Add a collapsible old-line number gutter to the left of the new-line number gutter, toggleable to maximize horizontal code viewing space.
 - [ ] **Collapsible side-by-side diff**: Add a split side-by-side dual-pane diff layout that can be toggled on and off.
-- [ ] **Auto-width-adjusting number gutters**: Dynamic line number gutters start at 3 columns and expand adaptively (4+ columns) as line numbers greater than 999 or 9999 are encountered during streaming.
+- [x] **Auto-width-adjusting number gutters**: Dynamic line number gutters start at 3 columns and expand adaptively (4+ columns) as line numbers greater than 999 or 9999 are encountered during streaming.
 - [ ] **Selection round: Shift-Up/Down selection**: Add Shift-Up/Down to start a selection, ending when shift is released. Pressing `v` while selecting clears the selection.
 - [x] **Hunk dividers as selectable rows**: Make hunk dividers normal rows that the cursor can select and that receive key shortcuts (for example, `Enter`, `m`, `s`) like file headers and diff lines, instead of click-only expansion targets.
 - [ ] **Subline selection with automatic clipboard copy**: Support character-level / subline selection start and end coordinates, automatically copying the selected text to the system clipboard on selection confirmation or mouse release.

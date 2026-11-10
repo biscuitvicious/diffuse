@@ -1321,9 +1321,10 @@ fn test_cli_notes_add_subcommand() {
         n1.original_source_rows[1].text(),
         "fn second() renamed() {}"
     );
-    // The context row keeps only its new-side number; the modification row
-    // carries both sides.
-    assert!(n1.original_source_rows[0].old_line.is_none());
+    // Both context and modification rows carry their corresponding line
+    // numbers.
+    assert_eq!(n1.original_source_rows[0].old_line, Some(1));
+    assert_eq!(n1.original_source_rows[0].new_line, Some(1));
     assert_eq!(n1.original_source_rows[1].old_line, Some(2));
     assert!(n1.content_hash.is_some());
 

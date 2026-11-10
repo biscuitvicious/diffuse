@@ -21,8 +21,9 @@ impl AppState {
         }
 
         self.output = output;
-        self.max_line_num = 0;
-        self.line_num_width = self.explicit_line_num_width.unwrap_or(0);
+        let init_w = self.explicit_line_num_width.unwrap_or(0);
+        self.old_line_num = crate::types::LineNumTracking::new(0, init_w);
+        self.new_line_num = crate::types::LineNumTracking::new(0, init_w);
         if self.output.files.is_empty() {
             self.flat.clear();
             self.hunk_starts.clear();
@@ -112,8 +113,9 @@ impl AppState {
         self.vis_line = 0;
         self.scroll = 0;
         self.col_offset = 0;
-        self.max_line_num = 0;
-        self.line_num_width = self.explicit_line_num_width.unwrap_or(0);
+        let init_w = self.explicit_line_num_width.unwrap_or(0);
+        self.old_line_num = crate::types::LineNumTracking::new(0, init_w);
+        self.new_line_num = crate::types::LineNumTracking::new(0, init_w);
         self.anchor = None;
         self.confirmed_sel = None;
         self.scroll_pin = None;

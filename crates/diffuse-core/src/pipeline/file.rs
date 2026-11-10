@@ -517,7 +517,11 @@ pub fn process_single_diff_file(
                     if !is_pure_context {
                         match side {
                             VisibleSide::New => {
-                                row.old_line = None;
+                                // Keep old_line intact for dual-gutter
+                                // rendering. In
+                                // single-gutter mode, new_line.or(old_line)
+                                // still
+                                // yields new_line.
                             }
                             VisibleSide::Old => {
                                 row.new_line = None;

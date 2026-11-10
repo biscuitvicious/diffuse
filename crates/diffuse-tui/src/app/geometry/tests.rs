@@ -184,7 +184,7 @@ index 1111111..2222222 100644
         raw_line.contains("\x1b[38;5;120m"),
         "marker and text must render green: {raw_line:?}"
     );
-    let render_gutter = " ".repeat(crate::render::gutter_width(state.line_num_width));
+    let render_gutter = " ".repeat(crate::render::gutter_width(state.new_line_num.width));
     assert!(
         frame.contains(&format!("\x1b[38;5;242m{render_gutter}\x1b[38;5;120m")),
         "continuation segments must start with gutter and green foreground"
@@ -1134,4 +1134,54 @@ fn test_hunk_expand_icon_for_segment_branches() {
     // Non-diff row and out of bounds
     assert_eq!(state_mid.hunk_expand_icon_for_segment(0, 0, &[1]), None);
     assert_eq!(state_mid.hunk_expand_icon_for_segment(999, 0, &[1]), None);
+}
+
+#[test]
+fn test_line_num_tracking_and_collapsible_gutter_boundaries() {
+    use crate::types::LineNumTracking;
+
+    let track = LineNumTracking::new(42, 2);
+    assert_eq!(track.max_num, 42);
+    assert_eq!(track.width, 2);
+    assert_eq!(LineNumTracking::default(), LineNumTracking::new(0, 0));
+
+    let mut state = AppState::new(
+        sample_output_two_hunks(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    // Initial state: None (auto)
+    state.old_line_num = LineNumTracking::new(50, 2);
+    state.new_line_num = LineNumTracking::new(50, 2);
+    assert_eq!(state.show_old_line_gutter, None);
+
+    // expanded_gutter_w = 1 + 2 + 1 + 2 + 2 = 8
+    // Auto threshold 100 diff content cols requires content_width - 8 >= 100 ->
+    // content_width >= 108
+    assert!(!state.is_old_line_gutter_active(107));
+    assert_eq!(state.gutter_width_for(107), 5); // 1 + 2 + 2
+    assert!(state.is_old_line_gutter_active(108));
+    assert_eq!(state.gutter_width_for(108), 8);
+
+    // On narrow screen / phone (e.g. 48 cols), auto is inactive
+    assert!(!state.is_old_line_gutter_active(48));
+    assert_eq!(state.gutter_width_for(48), 5);
+
+    // Forced on: Some(true) forces active even on narrow screen / phone (48 cols)
+    state.show_old_line_gutter = Some(true);
+    assert!(state.is_old_line_gutter_active(48));
+    assert_eq!(state.gutter_width_for(48), 8);
+
+    // Forced off: Some(false) forces inactive even on wide screen (200 cols)
+    state.show_old_line_gutter = Some(false);
+    assert!(!state.is_old_line_gutter_active(200));
+    assert_eq!(state.gutter_width_for(200), 5);
+
+    // If old_line_num.width is 0, never active even if forced on
+    state.show_old_line_gutter = Some(true);
+    state.old_line_num = LineNumTracking::new(0, 0);
+    assert!(!state.is_old_line_gutter_active(200));
+    assert_eq!(state.gutter_width_for(200), 5);
 }

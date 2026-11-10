@@ -19,7 +19,9 @@ use diffuse_core::ModSide;
 #[derive(Clone, Default)]
 pub(crate) struct CachedGeometry {
     pub(crate) content_width: usize,
-    pub(crate) line_num_width: usize,
+    pub(crate) old_line_num_width: usize,
+    pub(crate) new_line_num_width: usize,
+    pub(crate) show_old_line_gutter: Option<bool>,
     pub(crate) raw_diff: bool,
     pub(crate) col_offset: usize,
     pub(crate) word_diff: bool,
@@ -33,6 +35,10 @@ pub(crate) struct CachedGeometry {
 
 /// Visual width of the context expansion arrow gutter column in the TUI.
 pub const EXPAND_GUTTER_WIDTH: usize = 1;
+
+/// Minimum remaining content columns required for the old-line number gutter
+/// to automatically activate.
+pub const MIN_CONTENT_COLS_FOR_OLD_GUTTER: usize = 100;
 
 impl AppState {
     /// Bump after any mutation of diff content (files, hunks, rows, flat
@@ -73,11 +79,48 @@ impl AppState {
         }
     }
 
-    /// Visual width of the line number prefix gutter (`line_num_width + 2 +
-    /// EXPAND_GUTTER_WIDTH`).
+    /// Returns true if the old line number gutter is active for the given
+    /// `content_width`.
+    ///
+    /// When `show_old_line_gutter` is `None` (auto), activates only when old
+    /// lines exist (`old_line_num.width > 0`) and diff content still has at
+    /// least 100 columns remaining after expanding the old-line gutter.
+    /// When `Some(true)`, forces the old-line gutter visible as long as
+    /// content width fits the expanded gutter.
+    /// When `Some(false)`, forces the old-line gutter hidden.
+    #[inline]
+    pub fn is_old_line_gutter_active(&self, content_width: usize) -> bool {
+        if self.old_line_num.width == 0 {
+            return false;
+        }
+        let expanded_gutter_w = EXPAND_GUTTER_WIDTH
+            + diffuse_render::dual_gutter_width(self.old_line_num.width, self.new_line_num.width);
+        match self.show_old_line_gutter {
+            Some(true) => content_width > expanded_gutter_w,
+            Some(false) => false,
+            None => {
+                content_width.saturating_sub(expanded_gutter_w) >= MIN_CONTENT_COLS_FOR_OLD_GUTTER
+            }
+        }
+    }
+
+    /// Visual width of the line number prefix gutter for a specific content
+    /// width.
+    #[inline]
+    pub fn gutter_width_for(&self, content_width: usize) -> usize {
+        let old_w = if self.is_old_line_gutter_active(content_width) {
+            self.old_line_num.width
+        } else {
+            0
+        };
+        diffuse_render::dual_gutter_width(old_w, self.new_line_num.width) + EXPAND_GUTTER_WIDTH
+    }
+
+    /// Visual width of the line number prefix gutter for current effective
+    /// content width.
     #[inline]
     pub fn gutter_width(&self) -> usize {
-        diffuse_render::gutter_width(self.line_num_width) + EXPAND_GUTTER_WIDTH
+        self.gutter_width_for(self.effective_content_width())
     }
 
     /// Assert that `content_width` can accommodate the line number prefix
@@ -85,37 +128,50 @@ impl AppState {
     /// informative error otherwise.
     #[inline]
     pub fn assert_content_width_fits_gutter(&self, content_width: usize) {
-        let gutter_w = self.gutter_width();
+        let gutter_w = self.gutter_width_for(content_width);
         if content_width <= gutter_w {
             panic!(
                 "terminal content width ({content_width}) is too narrow: line number gutter requires {gutter_w} columns (max line number is {}, width is {})",
-                self.max_line_num, self.line_num_width
+                self.new_line_num.max_num, self.new_line_num.width
             );
         }
     }
 
-    /// Recalculates the maximum line number across all loaded/uncollapsed files
-    /// in the grid by inspecting the tail of each file (O(files)).
+    /// Recalculates the maximum old and new line numbers across all
+    /// loaded/uncollapsed files in the grid by inspecting the tail of each
+    /// file (O(files)).
     pub fn recalculate_line_num_width(&mut self) {
-        let mut max_num: u32 = 0;
+        let mut old_max: u32 = 0;
+        let mut new_max: u32 = 0;
         for (fi, file) in self.output.files.iter().enumerate() {
             if self.collapsed_files.contains(&fi) {
                 continue;
             }
-            let file_max = Self::file_max_line_num(file, self.raw_diff);
-            if file_max > max_num {
-                max_num = file_max;
+            let (file_old_max, file_new_max) = Self::file_max_line_nums(file, self.raw_diff);
+            if file_old_max > old_max {
+                old_max = file_old_max;
+            }
+            if file_new_max > new_max {
+                new_max = file_new_max;
             }
         }
-        self.max_line_num = max_num;
-        let new_width = if let Some(w) = self.explicit_line_num_width {
-            w.min(diffuse_render::MAX_LINE_NUM_WIDTH)
-        } else if max_num > 0 {
-            (max_num.ilog10() as usize) + 1
-        } else {
-            0
+        self.old_line_num.max_num = old_max;
+        self.new_line_num.max_num = new_max;
+
+        let compute_width = |max: u32, explicit: Option<usize>| -> usize {
+            if let Some(w) = explicit {
+                w.min(diffuse_render::MAX_LINE_NUM_WIDTH)
+            } else if max > 0 {
+                (max.ilog10() as usize) + 1
+            } else {
+                0
+            }
         };
-        if new_width != self.line_num_width {
+
+        let new_old_width = compute_width(old_max, self.explicit_line_num_width);
+        let new_new_width = compute_width(new_max, self.explicit_line_num_width);
+
+        if new_old_width != self.old_line_num.width || new_new_width != self.new_line_num.width {
             let cw = self.effective_content_width();
             let cursor_screen_y = if !self.flat.is_empty() {
                 let old_geo = self.cached_geometry(cw);
@@ -126,7 +182,8 @@ impl AppState {
             } else {
                 None
             };
-            self.line_num_width = new_width;
+            self.old_line_num.width = new_old_width;
+            self.new_line_num.width = new_new_width;
             self.bump_content();
             if let Some(screen_y) = cursor_screen_y {
                 let new_geo = self.cached_geometry(cw);
@@ -142,8 +199,8 @@ impl AppState {
     }
 
     /// Inspect the tail hunk header of a single file to determine its highest
-    /// line number directly without scanning any rows.
-    pub fn file_max_line_num(file: &OutputFile, raw_diff: bool) -> u32 {
+    /// old and new line numbers directly without scanning any rows.
+    pub fn file_max_line_nums(file: &OutputFile, raw_diff: bool) -> (u32, u32) {
         let hunks = if raw_diff && !file.raw_hunks.is_empty() {
             &file.raw_hunks
         } else {
@@ -160,20 +217,28 @@ impl AppState {
             } else {
                 0
             };
-            old_max.max(new_max)
+            (old_max, new_max)
         } else {
-            let count_max = file.new_line_count.max(file.old_line_count) as u32;
-            if count_max > 0 {
-                count_max
+            let old_count = file.old_line_count as u32;
+            let new_count = file.new_line_count as u32;
+            if old_count > 0 || new_count > 0 {
+                (old_count, new_count)
             } else if let Some(last_row) = file.rows.last() {
-                last_row
-                    .new_line
-                    .unwrap_or(0)
-                    .max(last_row.old_line.unwrap_or(0))
+                (
+                    last_row.old_line.unwrap_or(0),
+                    last_row.new_line.unwrap_or(0),
+                )
             } else {
-                0
+                (0, 0)
             }
         }
+    }
+
+    /// Inspect the tail hunk header of a single file to determine its highest
+    /// line number directly without scanning any rows.
+    pub fn file_max_line_num(file: &OutputFile, raw_diff: bool) -> u32 {
+        let (old_max, new_max) = Self::file_max_line_nums(file, raw_diff);
+        old_max.max(new_max)
     }
 
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
@@ -230,7 +295,7 @@ impl AppState {
                     } => r.new_text(),
                     _ => r.text(),
                 };
-                let gutter_w = self.gutter_width();
+                let gutter_w = self.gutter_width_for(content_width);
                 if self.raw_diff {
                     let text_cols = content_width.saturating_sub(gutter_w).max(1);
                     let exp = crate::render::expand_tabs(&text, 4);
@@ -281,7 +346,9 @@ impl AppState {
         if let Some(hit) = self.geo_cache.iter().find_map(|slot| {
             slot.as_ref().filter(|g| {
                 g.content_width == content_width
-                    && g.line_num_width == self.line_num_width
+                    && g.old_line_num_width == self.old_line_num.width
+                    && g.new_line_num_width == self.new_line_num.width
+                    && g.show_old_line_gutter == self.show_old_line_gutter
                     && g.raw_diff == self.raw_diff
                     && g.col_offset == self.col_offset
                     && g.word_diff == self.word_diff
@@ -304,7 +371,9 @@ impl AppState {
         );
         let geo = CachedGeometry {
             content_width,
-            line_num_width: self.line_num_width,
+            old_line_num_width: self.old_line_num.width,
+            new_line_num_width: self.new_line_num.width,
+            show_old_line_gutter: self.show_old_line_gutter,
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             word_diff: self.word_diff,

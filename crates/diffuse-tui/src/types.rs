@@ -45,6 +45,20 @@ impl HunkExpandIcon {
     }
 }
 
+/// Tracks the maximum observed line number and its visual column width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LineNumTracking {
+    pub max_num: u32,
+    pub width: usize,
+}
+
+impl LineNumTracking {
+    #[inline]
+    pub const fn new(max_num: u32, width: usize) -> Self {
+        Self { max_num, width }
+    }
+}
+
 /// A contiguous line selection within a file, bounded by diff-row
 /// coordinates in display order. Each bound carries both the old and new
 /// line numbers when the selected rows provide them.
