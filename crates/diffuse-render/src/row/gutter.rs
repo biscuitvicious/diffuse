@@ -52,6 +52,23 @@ pub const fn gutter_width(line_num_width: usize) -> usize {
     dual_gutter_width(0, line_num_width)
 }
 
+/// Partition `content_width` into `(left_width, right_width)` reserving 1
+/// column for the center vertical divider between split dual panes.
+#[inline]
+pub const fn split_pane_widths(content_width: usize) -> (usize, usize) {
+    let avail = content_width.saturating_sub(1);
+    let left = avail / 2;
+    let right = avail - left;
+    (left, right)
+}
+
+/// Visual widths of the line number prefix gutters for split dual-pane diffs
+/// as `(left_gutter_width, right_gutter_width)`.
+#[inline]
+pub const fn split_gutter_widths(old_line_width: usize, new_line_width: usize) -> (usize, usize) {
+    (gutter_width(old_line_width), gutter_width(new_line_width))
+}
+
 /// Static space padding matching line number widths `0..=MAX_LINE_NUM_WIDTH` (0
 /// to 16 spaces).
 pub const LINE_NUM_SPACES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
@@ -417,6 +434,51 @@ pub fn prefix_of_with_mod_side_and_widths(
     }
 }
 
+/// Plain text gutter prefix for the left (old / pre-image) pane of a split row.
+#[inline]
+pub fn split_left_prefix_of(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    old_line: Option<u32>,
+    old_line_width: usize,
+) -> String {
+    if kind == RowKind::Add || mov_side == Some(MovSide::Tgt) {
+        return static_spaces(gutter_width(old_line_width)).to_string();
+    }
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let pad = format_line_num(old_line, old_line_width, &mut buf);
+    match kind {
+        RowKind::Ctx => format!("{pad}  "),
+        RowKind::Mod => format!("{pad} ~"),
+        RowKind::Del => format!("{pad} -"),
+        RowKind::Mov if mov_side == Some(MovSide::Src) => format!("{pad}≈-"),
+        _ => format!("{pad}  "),
+    }
+}
+
+/// Plain text gutter prefix for the right (new / post-image) pane of a split
+/// row.
+#[inline]
+pub fn split_right_prefix_of(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    new_line: Option<u32>,
+    new_line_width: usize,
+) -> String {
+    if kind == RowKind::Del || mov_side == Some(MovSide::Src) {
+        return static_spaces(gutter_width(new_line_width)).to_string();
+    }
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let pad = format_line_num(new_line, new_line_width, &mut buf);
+    match kind {
+        RowKind::Ctx => format!("{pad}  "),
+        RowKind::Mod => format!("{pad} ~"),
+        RowKind::Add => format!("{pad} +"),
+        RowKind::Mov if mov_side == Some(MovSide::Tgt) => format!("{pad}≈+"),
+        _ => format!("{pad}  "),
+    }
+}
+
 /// Generate the span-native coordinate gutter for an arbitrary line number
 /// width: line number plus kind glyph as ordered [`StyledSpan`]s riding on
 /// `bg`. When `line_num_width == 0`, line numbers are omitted entirely and only
@@ -763,6 +825,114 @@ pub fn styled_prefix_spans(
     )
 }
 
+/// Generate styled gutter prefix spans for the left (old / pre-image) pane of a
+/// split row.
+pub fn styled_split_left_prefix_spans(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    old_line: Option<u32>,
+    in_hunk: bool,
+    bg: Option<Color>,
+    theme: &DiffuseTheme,
+    old_line_width: usize,
+) -> Vec<StyledSpan> {
+    let total_w = gutter_width(old_line_width);
+    if kind == RowKind::Add || mov_side == Some(MovSide::Tgt) {
+        return vec![StyledSpan::styled(static_spaces(total_w), None, bg)];
+    }
+    let palette = theme.palette;
+    let ctx_num = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
+        .gutter
+        .num;
+    let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
+    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
+    let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
+
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let pad = format_line_num(old_line, old_line_width, &mut buf);
+
+    match kind {
+        RowKind::Ctx => {
+            vec![ctx_num.span(format!("{pad}  "), bg)]
+        }
+        RowKind::Mod => {
+            vec![
+                r#mod.num.span(format!("{pad} "), bg),
+                r#mod.icon.span("~", bg),
+            ]
+        }
+        RowKind::Del => {
+            vec![
+                del.num.span(pad, bg),
+                StyledSpan::styled(" ", Some(del.num.color), bg),
+                del.icon.span("-", bg),
+            ]
+        }
+        RowKind::Mov if mov_side == Some(MovSide::Src) => {
+            vec![
+                del.num.span(pad, bg),
+                mov.icon.span("≈", bg),
+                del.icon.span("-", bg),
+            ]
+        }
+        _ => {
+            vec![ctx_num.span(format!("{pad}  "), bg)]
+        }
+    }
+}
+
+/// Generate styled gutter prefix spans for the right (new / post-image) pane of
+/// a split row.
+pub fn styled_split_right_prefix_spans(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    new_line: Option<u32>,
+    in_hunk: bool,
+    bg: Option<Color>,
+    theme: &DiffuseTheme,
+    new_line_width: usize,
+) -> Vec<StyledSpan> {
+    let total_w = gutter_width(new_line_width);
+    if kind == RowKind::Del || mov_side == Some(MovSide::Src) {
+        return vec![StyledSpan::styled(static_spaces(total_w), None, bg)];
+    }
+    let palette = theme.palette;
+    let ctx_num = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
+        .gutter
+        .num;
+    let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
+    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
+    let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
+
+    let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
+    let pad = format_line_num(new_line, new_line_width, &mut buf);
+
+    match kind {
+        RowKind::Ctx => {
+            vec![ctx_num.span(format!("{pad}  "), bg)]
+        }
+        RowKind::Mod => {
+            vec![
+                r#mod.num.span(format!("{pad} "), bg),
+                r#mod.icon.span("~", bg),
+            ]
+        }
+        RowKind::Add => {
+            vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
+        }
+        RowKind::Mov if mov_side == Some(MovSide::Tgt) => {
+            vec![
+                add.num.span(pad, bg),
+                mov.icon.span("≈", bg),
+                add.icon.span("+", bg),
+            ]
+        }
+        _ => {
+            vec![ctx_num.span(format!("{pad}  "), bg)]
+        }
+    }
+}
+
 /// Generate the span-native twin of the wrapped-row continuation prefix
 /// using default pager line number width.
 pub fn continuation_prefix_spans(bg: Option<Color>) -> Vec<StyledSpan> {
@@ -925,6 +1095,44 @@ pub fn continuation_prefix_plain_with_mod_side(
         mod_glyph,
         DEFAULT_PAGER_LINE_NUM_WIDTH,
     )
+}
+
+/// Continuation prefix spans for the left pane of a split row.
+#[inline]
+pub fn styled_split_left_continuation_prefix_spans(
+    bg: Option<Color>,
+    old_line_width: usize,
+) -> Vec<StyledSpan> {
+    vec![StyledSpan::styled(
+        static_spaces(gutter_width(old_line_width)),
+        Some(Color::Fixed(242)),
+        bg,
+    )]
+}
+
+/// Continuation prefix spans for the right pane of a split row.
+#[inline]
+pub fn styled_split_right_continuation_prefix_spans(
+    bg: Option<Color>,
+    new_line_width: usize,
+) -> Vec<StyledSpan> {
+    vec![StyledSpan::styled(
+        static_spaces(gutter_width(new_line_width)),
+        Some(Color::Fixed(242)),
+        bg,
+    )]
+}
+
+/// Plain text continuation prefix for the left pane of a split row.
+#[inline]
+pub fn split_left_continuation_prefix_plain(old_line_width: usize) -> &'static str {
+    static_spaces(gutter_width(old_line_width))
+}
+
+/// Plain text continuation prefix for the right pane of a split row.
+#[inline]
+pub fn split_right_continuation_prefix_plain(new_line_width: usize) -> &'static str {
+    static_spaces(gutter_width(new_line_width))
 }
 
 /// Write gutter prefix spans with the exact ANSI gutter spelling: fused

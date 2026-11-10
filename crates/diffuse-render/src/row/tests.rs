@@ -2496,3 +2496,109 @@ fn test_dual_gutter_width_and_prefix_formatting() {
         continuation_prefix_plain_with_mod_side_and_widths(Some(ModSide::Del), None, 3, 4);
     assert_eq!(cont_plain_box, "        │ ");
 }
+
+#[test]
+fn test_side_by_side_gutter_formatting_and_partitioning() {
+    // 1. split_pane_widths
+    assert_eq!(split_pane_widths(80), (39, 40));
+    assert_eq!(split_pane_widths(120), (59, 60));
+    assert_eq!(split_pane_widths(101), (50, 50));
+    assert_eq!(split_pane_widths(0), (0, 0));
+    assert_eq!(split_pane_widths(1), (0, 0));
+    assert_eq!(split_pane_widths(2), (0, 1));
+    assert_eq!(split_pane_widths(3), (1, 1));
+
+    // 2. split_gutter_widths
+    assert_eq!(split_gutter_widths(3, 4), (5, 6));
+    assert_eq!(split_gutter_widths(0, 0), (2, 2));
+
+    // 3. Plain prefixes: left (old) side with width 3
+    assert_eq!(
+        split_left_prefix_of(RowKind::Ctx, None, Some(42), 3),
+        " 42  "
+    );
+    assert_eq!(
+        split_left_prefix_of(RowKind::Mod, None, Some(42), 3),
+        " 42 ~"
+    );
+    assert_eq!(
+        split_left_prefix_of(RowKind::Del, None, Some(42), 3),
+        " 42 -"
+    );
+    assert_eq!(split_left_prefix_of(RowKind::Add, None, None, 3), "     ");
+    assert_eq!(
+        split_left_prefix_of(RowKind::Mov, Some(MovSide::Src), Some(42), 3),
+        " 42≈-"
+    );
+    assert_eq!(
+        split_left_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, 3),
+        "     "
+    );
+
+    // 4. Plain prefixes: right (new) side with width 4
+    assert_eq!(
+        split_right_prefix_of(RowKind::Ctx, None, Some(105), 4),
+        " 105  "
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Mod, None, Some(105), 4),
+        " 105 ~"
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Add, None, Some(105), 4),
+        " 105 +"
+    );
+    assert_eq!(split_right_prefix_of(RowKind::Del, None, None, 4), "      ");
+    assert_eq!(
+        split_right_prefix_of(RowKind::Mov, Some(MovSide::Tgt), Some(105), 4),
+        " 105≈+"
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Mov, Some(MovSide::Src), None, 4),
+        "      "
+    );
+
+    // 5. Styled prefix spans: width parity
+    let theme = DiffuseTheme::dark();
+    let span_len = |spans: &[StyledSpan]| {
+        spans
+            .iter()
+            .map(|s| crate::width::display_width(&s.text))
+            .sum::<usize>()
+    };
+
+    let s_l_ctx =
+        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(42), false, None, &theme, 3);
+    assert_eq!(span_len(&s_l_ctx), 5);
+    let s_l_mod =
+        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+    assert_eq!(span_len(&s_l_mod), 5);
+    let s_l_del =
+        styled_split_left_prefix_spans(RowKind::Del, None, Some(42), false, None, &theme, 3);
+    assert_eq!(span_len(&s_l_del), 5);
+    let s_l_add = styled_split_left_prefix_spans(RowKind::Add, None, None, false, None, &theme, 3);
+    assert_eq!(span_len(&s_l_add), 5);
+    assert_eq!(s_l_add[0].text, "     ");
+
+    let s_r_ctx =
+        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(105), false, None, &theme, 4);
+    assert_eq!(span_len(&s_r_ctx), 6);
+    let s_r_mod =
+        styled_split_right_prefix_spans(RowKind::Mod, None, Some(105), false, None, &theme, 4);
+    assert_eq!(span_len(&s_r_mod), 6);
+    let s_r_add =
+        styled_split_right_prefix_spans(RowKind::Add, None, Some(105), false, None, &theme, 4);
+    assert_eq!(span_len(&s_r_add), 6);
+    let s_r_del = styled_split_right_prefix_spans(RowKind::Del, None, None, false, None, &theme, 4);
+    assert_eq!(span_len(&s_r_del), 6);
+    assert_eq!(s_r_del[0].text, "      ");
+
+    // 6. Continuation prefixes
+    let s_l_cont = styled_split_left_continuation_prefix_spans(None, 3);
+    assert_eq!(span_len(&s_l_cont), 5);
+    let s_r_cont = styled_split_right_continuation_prefix_spans(None, 4);
+    assert_eq!(span_len(&s_r_cont), 6);
+
+    assert_eq!(split_left_continuation_prefix_plain(3), "     ");
+    assert_eq!(split_right_continuation_prefix_plain(4), "      ");
+}
