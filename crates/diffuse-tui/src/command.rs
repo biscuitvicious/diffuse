@@ -32,6 +32,7 @@ pub enum TuiCommand {
     ToggleWordDiff,
     ToggleRawDiff,
     ToggleOldLineGutter,
+    ToggleSideBySide,
     ToggleHelp,
     ToggleTheme,
     ToggleStaged,

@@ -254,6 +254,9 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (_, KeyCode::Char('#')) => {
             state.execute(TuiCommand::ToggleOldLineGutter);
         }
+        (_, KeyCode::Char('\\')) | (_, KeyCode::Char('|')) => {
+            state.execute(TuiCommand::ToggleSideBySide);
+        }
         (KeyModifiers::NONE, KeyCode::Char('r')) | (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
             state.execute(TuiCommand::ForceReload);
         }

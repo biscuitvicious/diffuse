@@ -11,7 +11,10 @@ use crate::{
     core::parse::RowKind,
     render::{
         continuation_prefix_spans_with_mod_side_and_widths, raw_row_spans, row_segment_spans,
-        slice_by_visual_width, span::StyledSpan, styled_prefix_spans_with_widths,
+        side_by_side_row_segment_spans, slice_by_visual_width, span::StyledSpan, split_pane_widths,
+        styled_prefix_spans_with_widths, styled_split_left_continuation_prefix_spans,
+        styled_split_left_prefix_spans, styled_split_right_continuation_prefix_spans,
+        styled_split_right_prefix_spans,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
@@ -482,87 +485,63 @@ impl AppState {
                     let Some(r) = self.row_of(item) else {
                         continue;
                     };
-                    let mod_side = item.mod_side();
-                    let mod_glyph = item.mod_glyph();
-                    let row_text = match mod_side {
-                        Some(diffuse_core::ModSide::Del) => r.old_text(),
-                        Some(diffuse_core::ModSide::Add) => r.new_text(),
-                        None => r.text(),
-                    };
                     let seg_count = seg_counts[idx];
 
-                    for s_idx in 0..seg_count {
-                        if vis_i >= content_start_vis && vis_i < content_end_vis {
-                            let is_selected =
-                                idx == self.row_idx && self.vis_line == div_segs + s_idx;
-                            let mut prefix = if s_idx == 0 {
-                                styled_prefix_spans_with_widths(
-                                    r.kind,
-                                    r.mov_side,
-                                    mod_side,
-                                    mod_glyph,
-                                    r.group,
-                                    r.new_line,
-                                    r.old_line,
-                                    &r.runs,
-                                    in_hunk_extent,
-                                    None,
-                                    &self.theme,
-                                    old_line_w,
-                                    new_line_w,
-                                )
-                            } else {
-                                continuation_prefix_spans_with_mod_side_and_widths(
-                                    mod_side,
-                                    mod_glyph,
-                                    &self.theme,
-                                    None,
-                                    old_line_w,
-                                    new_line_w,
-                                )
-                            };
-                            let expand_icon =
-                                self.hunk_expand_icon_for_segment(idx, s_idx, &seg_counts);
-                            let icon_glyph =
-                                expand_icon.map_or(" ", crate::types::HunkExpandIcon::as_str);
-                            prefix.insert(
-                                0,
-                                StyledSpan::styled(
-                                    icon_glyph.to_string(),
-                                    Some(gutter_icon_color),
-                                    None,
-                                ),
-                            );
-                            let rendered_row = if self.raw_diff {
-                                let piece = slice_by_visual_width(
-                                    &row_text,
-                                    s_idx * diff_text_cols,
-                                    diff_text_cols,
+                    if self.side_by_side {
+                        let (left_w, right_w) = split_pane_widths(content_width);
+                        let sbs_old_w = self.old_line_num.width;
+                        let sbs_new_w = self.new_line_num.width;
+
+                        for s_idx in 0..seg_count {
+                            if vis_i >= content_start_vis && vis_i < content_end_vis {
+                                let is_selected =
+                                    idx == self.row_idx && self.vis_line == div_segs + s_idx;
+                                let mut l_pref = if s_idx == 0 {
+                                    styled_split_left_prefix_spans(
+                                        r.kind,
+                                        r.mov_side,
+                                        r.old_line,
+                                        in_hunk_extent,
+                                        None,
+                                        &self.theme,
+                                        sbs_old_w,
+                                    )
+                                } else {
+                                    styled_split_left_continuation_prefix_spans(None, sbs_old_w)
+                                };
+                                let expand_icon =
+                                    self.hunk_expand_icon_for_segment(idx, s_idx, &seg_counts);
+                                let icon_glyph =
+                                    expand_icon.map_or(" ", crate::types::HunkExpandIcon::as_str);
+                                l_pref.insert(
+                                    0,
+                                    StyledSpan::styled(
+                                        icon_glyph.to_string(),
+                                        Some(gutter_icon_color),
+                                        None,
+                                    ),
                                 );
-                                let is_last_seg = s_idx + 1 == seg_count;
-                                let raw = raw_row_spans(
-                                    r.kind,
-                                    prefix,
-                                    &piece,
-                                    is_selected,
-                                    in_band && !is_selected,
-                                    is_last_seg,
-                                    &self.theme,
-                                );
-                                fit_line(raw.spans, content_width, raw.line_bg)
-                            } else {
-                                let seg_start = s_idx * diff_text_cols;
-                                let seg_end = seg_start + diff_text_cols;
-                                let row = row_segment_spans(
-                                    &row_text,
-                                    r.is_aux(),
-                                    r.kind,
-                                    r.mov_side,
-                                    mod_side,
-                                    &r.runs,
-                                    seg_start,
-                                    seg_end,
-                                    prefix,
+                                let r_pref = if s_idx == 0 {
+                                    styled_split_right_prefix_spans(
+                                        r.kind,
+                                        r.mov_side,
+                                        r.new_line,
+                                        in_hunk_extent,
+                                        None,
+                                        &self.theme,
+                                        sbs_new_w,
+                                    )
+                                } else {
+                                    styled_split_right_continuation_prefix_spans(None, sbs_new_w)
+                                };
+
+                                let row = side_by_side_row_segment_spans(
+                                    r,
+                                    s_idx,
+                                    left_w,
+                                    right_w,
+                                    l_pref,
+                                    r_pref,
                                     is_selected,
                                     in_band && !is_selected,
                                     self.col_offset,
@@ -570,12 +549,106 @@ impl AppState {
                                     self.syntax_on,
                                     &self.theme,
                                 );
-                                fit_line(row.spans, content_width, row.line_bg)
-                            };
-                            line_src.push(Some(idx));
-                            lines.push(rendered_row);
+                                line_src.push(Some(idx));
+                                lines.push(fit_line(row.spans, content_width, row.line_bg));
+                            }
+                            vis_i += 1;
                         }
-                        vis_i += 1;
+                    } else {
+                        let mod_side = item.mod_side();
+                        let mod_glyph = item.mod_glyph();
+                        let row_text = match mod_side {
+                            Some(diffuse_core::ModSide::Del) => r.old_text(),
+                            Some(diffuse_core::ModSide::Add) => r.new_text(),
+                            None => r.text(),
+                        };
+
+                        for s_idx in 0..seg_count {
+                            if vis_i >= content_start_vis && vis_i < content_end_vis {
+                                let is_selected =
+                                    idx == self.row_idx && self.vis_line == div_segs + s_idx;
+                                let mut prefix = if s_idx == 0 {
+                                    styled_prefix_spans_with_widths(
+                                        r.kind,
+                                        r.mov_side,
+                                        mod_side,
+                                        mod_glyph,
+                                        r.group,
+                                        r.new_line,
+                                        r.old_line,
+                                        &r.runs,
+                                        in_hunk_extent,
+                                        None,
+                                        &self.theme,
+                                        old_line_w,
+                                        new_line_w,
+                                    )
+                                } else {
+                                    continuation_prefix_spans_with_mod_side_and_widths(
+                                        mod_side,
+                                        mod_glyph,
+                                        &self.theme,
+                                        None,
+                                        old_line_w,
+                                        new_line_w,
+                                    )
+                                };
+                                let expand_icon =
+                                    self.hunk_expand_icon_for_segment(idx, s_idx, &seg_counts);
+                                let icon_glyph =
+                                    expand_icon.map_or(" ", crate::types::HunkExpandIcon::as_str);
+                                prefix.insert(
+                                    0,
+                                    StyledSpan::styled(
+                                        icon_glyph.to_string(),
+                                        Some(gutter_icon_color),
+                                        None,
+                                    ),
+                                );
+                                let rendered_row = if self.raw_diff {
+                                    let piece = slice_by_visual_width(
+                                        &row_text,
+                                        s_idx * diff_text_cols,
+                                        diff_text_cols,
+                                    );
+                                    let is_last_seg = s_idx + 1 == seg_count;
+                                    let raw = raw_row_spans(
+                                        r.kind,
+                                        prefix,
+                                        &piece,
+                                        is_selected,
+                                        in_band && !is_selected,
+                                        is_last_seg,
+                                        &self.theme,
+                                    );
+                                    fit_line(raw.spans, content_width, raw.line_bg)
+                                } else {
+                                    let seg_start = s_idx * diff_text_cols;
+                                    let seg_end = seg_start + diff_text_cols;
+                                    let row = row_segment_spans(
+                                        &row_text,
+                                        r.is_aux(),
+                                        r.kind,
+                                        r.mov_side,
+                                        mod_side,
+                                        &r.runs,
+                                        seg_start,
+                                        seg_end,
+                                        prefix,
+                                        is_selected,
+                                        in_band && !is_selected,
+                                        self.col_offset,
+                                        self.word_diff,
+                                        self.syntax_on,
+                                        &self.theme,
+                                    );
+                                    fit_line(row.spans, content_width, row.line_bg)
+                                };
+                                line_src.push(Some(idx));
+                                lines.push(rendered_row);
+                            }
+                            vis_i += 1;
+                        }
                     }
                 }
             }

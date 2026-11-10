@@ -77,6 +77,10 @@ impl AppState {
                 self.show_old_line_gutter = Some(!active);
                 self.bump_content();
             }
+            TuiCommand::ToggleSideBySide => {
+                self.side_by_side = !self.side_by_side;
+                self.bump_content();
+            }
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
             TuiCommand::ToggleTheme => {
                 // Resolve the opposite-mode pair from the theme's asset

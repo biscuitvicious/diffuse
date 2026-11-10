@@ -1060,3 +1060,23 @@ fn test_force_reload_keybinding() {
     );
     assert!(s.pending_force_reload);
 }
+
+#[test]
+fn test_toggle_side_by_side_keybinding() {
+    let mut s = state_with_rows();
+    assert!(!s.side_by_side);
+
+    // Press '\'
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE)),
+    );
+    assert!(s.side_by_side);
+
+    // Press '|'
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('|'), KeyModifiers::SHIFT)),
+    );
+    assert!(!s.side_by_side);
+}

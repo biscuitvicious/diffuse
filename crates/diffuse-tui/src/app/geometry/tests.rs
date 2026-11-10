@@ -1216,9 +1216,10 @@ fn test_side_by_side_geometry_and_wrapping() {
         );
     }
     if let Some(&last_start) = split_geo.starts.last()
-        && let Some(&last_count) = split_geo.counts.last() {
-            assert_eq!(split_geo.total_vis_lines, last_start + last_count);
-        }
+        && let Some(&last_count) = split_geo.counts.last()
+    {
+        assert_eq!(split_geo.total_vis_lines, last_start + last_count);
+    }
 
     // Geometry cache invalidates when toggling side_by_side
     state.side_by_side = false;
