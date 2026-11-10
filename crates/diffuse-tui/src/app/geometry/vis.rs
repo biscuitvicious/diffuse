@@ -25,6 +25,7 @@ pub(crate) struct CachedGeometry {
     pub(crate) raw_diff: bool,
     pub(crate) col_offset: usize,
     pub(crate) word_diff: bool,
+    pub(crate) side_by_side: bool,
     pub(crate) starts: Vec<usize>,
     pub(crate) counts: Vec<usize>,
     pub(crate) seg_counts: Vec<usize>,
@@ -39,6 +40,23 @@ pub const EXPAND_GUTTER_WIDTH: usize = 1;
 /// Minimum remaining content columns required for the old-line number gutter
 /// to automatically activate.
 pub const MIN_CONTENT_COLS_FOR_OLD_GUTTER: usize = 100;
+
+#[inline]
+fn pane_text_seg_count(text: &str, cols: usize, col_offset: usize) -> usize {
+    let exp = crate::render::expand_tabs(text, 4);
+    let slice = if col_offset > 0 {
+        use unicode_segmentation::UnicodeSegmentation;
+        exp.graphemes(true).skip(col_offset).collect::<String>()
+    } else {
+        exp.into_owned()
+    };
+    let len = display_width(&slice);
+    if len == 0 {
+        1
+    } else {
+        len.div_ceil(cols.max(1))
+    }
+}
 
 impl AppState {
     /// Bump after any mutation of diff content (files, hunks, rows, flat
@@ -128,6 +146,18 @@ impl AppState {
     /// informative error otherwise.
     #[inline]
     pub fn assert_content_width_fits_gutter(&self, content_width: usize) {
+        if self.side_by_side {
+            let (left_w, right_w) = diffuse_render::split_pane_widths(content_width);
+            let left_gutter_w =
+                EXPAND_GUTTER_WIDTH + diffuse_render::gutter_width(self.old_line_num.width);
+            let right_gutter_w = diffuse_render::gutter_width(self.new_line_num.width);
+            if left_w <= left_gutter_w || right_w <= right_gutter_w {
+                panic!(
+                    "terminal content width ({content_width}) is too narrow for side-by-side layout: panes require {left_gutter_w} and {right_gutter_w} columns for gutters"
+                );
+            }
+            return;
+        }
         let gutter_w = self.gutter_width_for(content_width);
         if content_width <= gutter_w {
             panic!(
@@ -321,6 +351,97 @@ impl AppState {
         }
     }
 
+    /// Visual wrapped line segment count for row `idx` in side-by-side
+    /// (dual-pane) layout given the respective content column budgets.
+    pub(crate) fn row_seg_count_side_by_side(
+        &self,
+        idx: usize,
+        content_width: usize,
+        left_cols: usize,
+        right_cols: usize,
+    ) -> usize {
+        let Some(item) = self.flat.get(idx) else {
+            return 1;
+        };
+        match item.kind {
+            FlatRowKind::FileHeader => {
+                let Some(file_obj) = self.output.files.get(item.file_idx) else {
+                    return 1;
+                };
+                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                let txt = crate::view::diff_grid::file_header_text_with_prefix(
+                    file_obj,
+                    self.file_badge(item.file_idx),
+                    is_collapsed,
+                    self.output.common_directory_prefix().as_deref(),
+                );
+                let len = display_width(txt);
+                let text_cols = content_width.max(1);
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+            }
+            FlatRowKind::HunkDivider { hunk_idx } => {
+                let Some(file) = self.output.files.get(item.file_idx) else {
+                    return 1;
+                };
+                let hunks = if !file.raw_hunks.is_empty() {
+                    &file.raw_hunks
+                } else {
+                    &file.hunks
+                };
+                let h = &hunks[hunk_idx];
+                let sep_text = format!(
+                    "@@ -{},{} +{},{} @@",
+                    h.old_start, h.old_count, h.new_start, h.new_count
+                );
+                let len = display_width(sep_text);
+                let text_cols = content_width.max(1);
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+            }
+            FlatRowKind::BottomGapDivider { .. } => {
+                self.bottom_gap_seg_count(item.file_idx, content_width)
+            }
+            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
+                let Some(r) = self.row_of(item) else {
+                    return 1;
+                };
+                match r.kind {
+                    diffuse_core::parse::RowKind::Ctx => {
+                        let text = r.old_text();
+                        let l_segs = pane_text_seg_count(&text, left_cols, self.col_offset);
+                        let r_segs = pane_text_seg_count(&text, right_cols, self.col_offset);
+                        l_segs.max(r_segs).max(1)
+                    }
+                    diffuse_core::parse::RowKind::Mod => {
+                        let l_segs = pane_text_seg_count(&r.old_text(), left_cols, self.col_offset);
+                        let r_segs =
+                            pane_text_seg_count(&r.new_text(), right_cols, self.col_offset);
+                        l_segs.max(r_segs).max(1)
+                    }
+                    diffuse_core::parse::RowKind::Del => {
+                        pane_text_seg_count(&r.old_text(), left_cols, self.col_offset).max(1)
+                    }
+                    diffuse_core::parse::RowKind::Add => {
+                        pane_text_seg_count(&r.new_text(), right_cols, self.col_offset).max(1)
+                    }
+                    diffuse_core::parse::RowKind::Mov => {
+                        if r.mov_side == Some(diffuse_core::wire::MovSide::Src) {
+                            pane_text_seg_count(&r.old_text(), left_cols, self.col_offset).max(1)
+                        } else if r.mov_side == Some(diffuse_core::wire::MovSide::Tgt) {
+                            pane_text_seg_count(&r.new_text(), right_cols, self.col_offset).max(1)
+                        } else {
+                            let l_segs =
+                                pane_text_seg_count(&r.old_text(), left_cols, self.col_offset);
+                            let r_segs =
+                                pane_text_seg_count(&r.new_text(), right_cols, self.col_offset);
+                            l_segs.max(r_segs).max(1)
+                        }
+                    }
+                    _ => 1,
+                }
+            }
+        }
+    }
+
     /// Computes full visual layout mapping: starts, counts, `seg_counts`, and
     /// total visual lines. Always freshly computed; frame rendering should
     /// prefer [`AppState::cached_geometry`].
@@ -354,6 +475,7 @@ impl AppState {
                     && g.raw_diff == self.raw_diff
                     && g.col_offset == self.col_offset
                     && g.word_diff == self.word_diff
+                    && g.side_by_side == self.side_by_side
             })
         }) {
             tracing::trace!(content_width, rows = self.flat.len(), "geometry cache hit");
@@ -379,6 +501,7 @@ impl AppState {
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             word_diff: self.word_diff,
+            side_by_side: self.side_by_side,
             starts,
             counts,
             seg_counts,
@@ -427,6 +550,13 @@ impl AppState {
         let mut total_vis_lines = 0;
         let gutter_w = self.gutter_width_for(content_width);
 
+        let (left_w, right_w) = diffuse_render::split_pane_widths(content_width);
+        let left_gutter_w =
+            EXPAND_GUTTER_WIDTH + diffuse_render::gutter_width(self.old_line_num.width);
+        let right_gutter_w = diffuse_render::gutter_width(self.new_line_num.width);
+        let left_cols = left_w.saturating_sub(left_gutter_w).max(1);
+        let right_cols = right_w.saturating_sub(right_gutter_w).max(1);
+
         for (idx, _item) in self.flat.iter().enumerate() {
             starts.push(total_vis_lines);
             let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
@@ -434,7 +564,11 @@ impl AppState {
             } else {
                 0
             };
-            let row_segs = self.row_seg_count_with_gutter(idx, content_width, gutter_w);
+            let row_segs = if self.side_by_side {
+                self.row_seg_count_side_by_side(idx, content_width, left_cols, right_cols)
+            } else {
+                self.row_seg_count_with_gutter(idx, content_width, gutter_w)
+            };
             let note_lines = callouts.get(&idx).map_or(0, Vec::len);
             let item_total = div_lines + row_segs + note_lines;
             counts.push(item_total);

@@ -89,6 +89,8 @@ pub struct AppState {
     /// Explicit line number width override (Some(0..=16)), or None for
     /// adaptive dynamic width.
     pub explicit_line_num_width: Option<usize>,
+    /// Whether the diff is displayed in side-by-side (split dual-pane) layout.
+    pub side_by_side: bool,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,

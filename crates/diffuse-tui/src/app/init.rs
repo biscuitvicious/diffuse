@@ -97,6 +97,7 @@ impl AppState {
             new_line_num: crate::types::LineNumTracking::default(),
             show_old_line_gutter: None,
             explicit_line_num_width: None,
+            side_by_side: false,
             loading_files: HashSet::new(),
             on_demand_tx: None,
             on_demand_rx: None,
@@ -157,6 +158,11 @@ impl AppState {
         if expand_mods == Some(true) {
             self.expand_all_mods();
         }
+        self
+    }
+
+    pub fn with_side_by_side(mut self, side_by_side: bool) -> Self {
+        self.side_by_side = side_by_side;
         self
     }
 

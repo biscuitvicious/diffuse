@@ -1185,3 +1185,44 @@ fn test_line_num_tracking_and_collapsible_gutter_boundaries() {
     assert!(!state.is_old_line_gutter_active(200));
     assert_eq!(state.gutter_width_for(200), 5);
 }
+
+#[test]
+fn test_side_by_side_geometry_and_wrapping() {
+    let output = sample_output();
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+    assert!(!state.side_by_side);
+
+    let cw = 80;
+    let unified_geo = state.cached_geometry(cw);
+
+    // Switch to side-by-side mode
+    state.side_by_side = true;
+    state.bump_content();
+
+    let split_geo = state.cached_geometry(cw);
+    assert!(split_geo.side_by_side);
+
+    // Prefix sum monotone continuity: starts[i+1] == starts[i] + counts[i]
+    for i in 0..split_geo.starts.len().saturating_sub(1) {
+        assert_eq!(
+            split_geo.starts[i + 1],
+            split_geo.starts[i] + split_geo.counts[i],
+            "monotone continuity failed at row {i}"
+        );
+    }
+    if let Some(&last_start) = split_geo.starts.last()
+        && let Some(&last_count) = split_geo.counts.last() {
+            assert_eq!(split_geo.total_vis_lines, last_start + last_count);
+        }
+
+    // Geometry cache invalidates when toggling side_by_side
+    state.side_by_side = false;
+    let geo_back = state.cached_geometry(cw);
+    assert!(!geo_back.side_by_side);
+    assert_eq!(geo_back.total_vis_lines, unified_geo.total_vis_lines);
+}
