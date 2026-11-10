@@ -2602,3 +2602,468 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     assert_eq!(split_left_continuation_prefix_plain(3), "     ");
     assert_eq!(split_right_continuation_prefix_plain(4), "      ");
 }
+
+#[test]
+fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
+    let theme = DiffuseTheme::dark();
+    let (left_w, right_w) = split_pane_widths(80); // (39, 40)
+    assert_eq!((left_w, right_w), (39, 40));
+
+    // 1. Context Row
+    let ctx_row = crate::core::wire::OutputRow {
+        kind: RowKind::Ctx,
+        mov_side: None,
+        new_line: Some(10),
+        old_line: Some(10),
+        runs: vec![OutputRun {
+            text: std::borrow::Cow::Borrowed("fn calculate() -> i32 { 42 }"),
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref =
+        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3);
+    let r_pref =
+        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3);
+    let line = side_by_side_row_segment_spans(
+        &ctx_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    // Left pane has width 39, divider has width 1 ("│"), right pane has width 40
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    let left_width: usize = line.spans[..div_idx]
+        .iter()
+        .map(|s| crate::width::display_width(&s.text))
+        .sum();
+    let right_width: usize = line.spans[div_idx + 1..]
+        .iter()
+        .map(|s| crate::width::display_width(&s.text))
+        .sum();
+    assert_eq!(left_width, 39);
+    assert_eq!(right_width, 40);
+
+    // 2. Mod Row
+    let mod_row = crate::core::wire::OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        old_line: Some(42),
+        new_line: Some(42),
+        runs: vec![
+            OutputRun {
+                text: std::borrow::Cow::Borrowed("let val = "),
+                kind: RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+            },
+            OutputRun {
+                text: std::borrow::Cow::Borrowed("old_calc();"),
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+            },
+            OutputRun {
+                text: std::borrow::Cow::Borrowed("new_calc();"),
+                kind: RunKind::Add,
+                color: TokenColor::Default,
+                sgr: None,
+            },
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref =
+        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+    let r_pref =
+        styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+    let line = side_by_side_row_segment_spans(
+        &mod_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    let left_spans = &line.spans[..div_idx];
+    let right_spans = &line.spans[div_idx + 1..];
+    // Left pane has old_calc() with strikethrough, no new_calc()
+    assert!(
+        left_spans
+            .iter()
+            .any(|s| s.text.contains("old_calc") && s.strikethrough)
+    );
+    assert!(!left_spans.iter().any(|s| s.text.contains("new_calc")));
+    // Right pane has new_calc() with fill bg and no strikethrough, no old_calc()
+    assert!(
+        right_spans
+            .iter()
+            .any(|s| s.text.contains("new_calc") && !s.strikethrough)
+    );
+    assert!(!right_spans.iter().any(|s| s.text.contains("old_calc")));
+
+    // 3. Del Row: left active, right blank
+    let del_row = crate::core::wire::OutputRow {
+        kind: RowKind::Del,
+        mov_side: None,
+        old_line: Some(5),
+        new_line: None,
+        runs: vec![OutputRun {
+            text: std::borrow::Cow::Borrowed("del_fn();"),
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref =
+        styled_split_left_prefix_spans(RowKind::Del, None, Some(5), false, None, &theme, 3);
+    let r_pref = styled_split_right_prefix_spans(RowKind::Del, None, None, false, None, &theme, 3);
+    let line = side_by_side_row_segment_spans(
+        &del_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    assert!(
+        line.spans[..div_idx]
+            .iter()
+            .any(|s| s.text.contains("del_fn"))
+    );
+    let right_text: String = line.spans[div_idx + 1..]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(right_text.trim(), "");
+
+    // 4. Add Row: left blank, right active
+    let add_row = crate::core::wire::OutputRow {
+        kind: RowKind::Add,
+        mov_side: None,
+        old_line: None,
+        new_line: Some(6),
+        runs: vec![OutputRun {
+            text: std::borrow::Cow::Borrowed("add_fn();"),
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref = styled_split_left_prefix_spans(RowKind::Add, None, None, false, None, &theme, 3);
+    let r_pref =
+        styled_split_right_prefix_spans(RowKind::Add, None, Some(6), false, None, &theme, 3);
+    let line = side_by_side_row_segment_spans(
+        &add_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    let left_text: String = line.spans[..div_idx]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(left_text.trim(), "");
+    assert!(
+        line.spans[div_idx + 1..]
+            .iter()
+            .any(|s| s.text.contains("add_fn"))
+    );
+
+    // 5. ANSI serialization
+    let ansi = render_side_by_side_row_segment(
+        &mod_row,
+        0,
+        left_w,
+        right_w,
+        &styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        &styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert!(ansi.contains('│'));
+    assert!(ansi.contains("old_calc"));
+    assert!(ansi.contains("new_calc"));
+
+    // 6. Relocation Rows: MovSrc and MovTgt
+    let mov_src_row = crate::core::wire::OutputRow {
+        kind: RowKind::Mov,
+        mov_side: Some(MovSide::Src),
+        old_line: Some(15),
+        new_line: None,
+        runs: vec![OutputRun {
+            text: std::borrow::Cow::Borrowed("moved_src();"),
+            kind: RunKind::MovedSrc,
+            color: TokenColor::Default,
+            sgr: None,
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref = styled_split_left_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Src),
+        Some(15),
+        false,
+        None,
+        &theme,
+        3,
+    );
+    let r_pref = styled_split_right_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Src),
+        None,
+        false,
+        None,
+        &theme,
+        3,
+    );
+    let line = side_by_side_row_segment_spans(
+        &mov_src_row,
+        0,
+        left_w,
+        right_w,
+        l_pref,
+        r_pref,
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    assert!(
+        line.spans[..div_idx]
+            .iter()
+            .any(|s| s.text.contains("moved_src"))
+    );
+    let r_text: String = line.spans[div_idx + 1..]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(r_text.trim(), "");
+
+    let mov_tgt_row = crate::core::wire::OutputRow {
+        kind: RowKind::Mov,
+        mov_side: Some(MovSide::Tgt),
+        old_line: None,
+        new_line: Some(25),
+        runs: vec![OutputRun {
+            text: std::borrow::Cow::Borrowed("moved_tgt();"),
+            kind: RunKind::MovedTgt,
+            color: TokenColor::Default,
+            sgr: None,
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let l_pref = styled_split_left_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        false,
+        None,
+        &theme,
+        3,
+    );
+    let r_pref = styled_split_right_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        Some(25),
+        false,
+        None,
+        &theme,
+        3,
+    );
+    let line = side_by_side_row_segment_spans(
+        &mov_tgt_row,
+        0,
+        left_w,
+        right_w,
+        l_pref,
+        r_pref,
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line.spans), 80);
+    let div_idx = line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    let l_text: String = line.spans[..div_idx]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(l_text.trim(), "");
+    assert!(
+        line.spans[div_idx + 1..]
+            .iter()
+            .any(|s| s.text.contains("moved_tgt"))
+    );
+
+    // 7. Multi-segment continuation wrapping (s_idx > 0)
+    let long_mod_row = crate::core::wire::OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        old_line: Some(1),
+        new_line: Some(1),
+        runs: vec![
+            OutputRun {
+                text: std::borrow::Cow::Borrowed("short;"),
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+            },
+            OutputRun {
+                text: std::borrow::Cow::Borrowed(
+                    "this is a very long new text line that definitely wraps across multiple segments in forty columns",
+                ),
+                kind: RunKind::Add,
+                color: TokenColor::Default,
+                sgr: None,
+            },
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let l_cont = styled_split_left_continuation_prefix_spans(None, 3);
+    let r_cont = styled_split_right_continuation_prefix_spans(None, 3);
+    let line_s1 = side_by_side_row_segment_spans(
+        &long_mod_row,
+        1,
+        left_w,
+        right_w,
+        l_cont,
+        r_cont,
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(crate::span::spans_width(&line_s1.spans), 80);
+    let div_idx = line_s1
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    // Left pane s_idx = 1 has continuation prefix and blank spaces, but maintains
+    // del_tint_bg
+    let l_text: String = line_s1.spans[..div_idx]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(l_text.trim(), "");
+    assert_eq!(crate::span::spans_width(&line_s1.spans[..div_idx]), 39);
+    // Right pane s_idx = 1 has continuation of the wrapped addition line
+    let r_text: String = line_s1.spans[div_idx + 1..]
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(!r_text.trim().is_empty());
+    assert_eq!(crate::span::spans_width(&line_s1.spans[div_idx + 1..]), 40);
+
+    // 8. Edge widths: 0x0, left-only, right-only
+    let empty_line = side_by_side_row_segment_spans(
+        &ctx_row,
+        0,
+        0,
+        0,
+        vec![],
+        vec![],
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(empty_line.spans.len(), 0);
+
+    let left_only = side_by_side_row_segment_spans(
+        &ctx_row,
+        0,
+        30,
+        0,
+        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3),
+        vec![],
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(crate::span::spans_width(&left_only.spans), 30);
+    assert!(!left_only.spans.iter().any(|s| s.text == "│"));
+
+    let right_only = side_by_side_row_segment_spans(
+        &ctx_row,
+        0,
+        0,
+        30,
+        vec![],
+        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3),
+        false,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    assert_eq!(crate::span::spans_width(&right_only.spans), 30);
+    assert!(!right_only.spans.iter().any(|s| s.text == "│"));
+
+    // 9. Selected cursor and band states
+    let sel_line = side_by_side_row_segment_spans(
+        &mod_row,
+        0,
+        left_w,
+        right_w,
+        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        true,
+        false,
+        0,
+        false,
+        true,
+        &theme,
+    );
+    let div_idx = sel_line
+        .spans
+        .iter()
+        .position(|s| s.text == "│")
+        .expect("missing divider");
+    let band_bg = theme.palette[Cursor::Row].band.bg;
+    assert_eq!(sel_line.spans[div_idx].bg, Some(band_bg));
+}

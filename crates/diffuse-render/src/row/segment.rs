@@ -14,9 +14,9 @@ use crate::{
         lcs::char_slice,
         merge::RunKind,
         parse::{RowKind, Spans},
-        wire::{ModSide, MovSide, OutputRun},
+        wire::{ModSide, MovSide, OutputRow, OutputRun},
     },
-    span::{StyledSpan, write_span_token},
+    span::{StyledSpan, pad_spans, spans_width, write_span_token},
     theme::{Cursor, DiffKind, DiffuseTheme},
     width::grapheme_width,
 };
@@ -518,4 +518,280 @@ pub fn row_segment_spans(
     }
 
     RowSegmentLine { spans, line_bg }
+}
+
+/// Write a slice of styled spans to an ANSI writer, updating background
+/// escapes only when the background changes and resetting at the end.
+pub fn write_spans_ansi<W: Write>(out: &mut W, spans: &[StyledSpan]) -> fmt::Result {
+    let mut cur_bg: Option<Color> = None;
+    for span in spans {
+        let effective_bg = span.bg.filter(|c| *c != Color::Primary);
+        if effective_bg != cur_bg {
+            match effective_bg {
+                Some(color) => color.write_bg(out)?,
+                None => out.write_str(crate::ansi::BG_RESET)?,
+            }
+            cur_bg = effective_bg;
+        }
+        write_span_token(out, span)?;
+    }
+    if cur_bg.is_some() {
+        out.write_str(crate::ansi::BG_RESET)?;
+    }
+    Ok(())
+}
+
+#[inline]
+const fn is_left_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
+    match kind {
+        RowKind::Ctx | RowKind::Mod | RowKind::Del => true,
+        RowKind::Mov => match mov_side {
+            Some(MovSide::Src) => true,
+            Some(MovSide::Tgt) => false,
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+#[inline]
+const fn is_right_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
+    match kind {
+        RowKind::Ctx | RowKind::Mod | RowKind::Add => true,
+        RowKind::Mov => match mov_side {
+            Some(MovSide::Tgt) => true,
+            Some(MovSide::Src) => false,
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+fn build_blank_pane_spans(
+    pane_width: usize,
+    mut prefix: Vec<StyledSpan>,
+    blank_bg: Option<Color>,
+) -> (Vec<StyledSpan>, Option<Color>) {
+    for span in &mut prefix {
+        span.bg = blank_bg;
+    }
+    let padded = pad_spans(prefix, pane_width, blank_bg);
+    (padded, blank_bg)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pane_segment_spans(
+    text: &str,
+    is_aux: bool,
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    mod_side: Option<ModSide>,
+    runs: &[OutputRun],
+    seg_idx: usize,
+    pane_width: usize,
+    prefix: Vec<StyledSpan>,
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> (Vec<StyledSpan>, Option<Color>) {
+    let gutter_w = spans_width(&prefix);
+    let cols = pane_width.saturating_sub(gutter_w).max(1);
+    let seg_start = seg_idx * cols;
+    let seg_end = seg_start + cols;
+    let line = row_segment_spans(
+        text, is_aux, kind, mov_side, mod_side, runs, seg_start, seg_end, prefix, selected, band,
+        col_offset, word_diff, syntax_on, theme,
+    );
+    let padded = pad_spans(line.spans, pane_width, line.line_bg);
+    (padded, line.line_bg)
+}
+
+/// Compose a side-by-side row segment consisting of the left (old / pre-image)
+/// pane, a 1-column vertical divider (`│`), and the right (new / post-image)
+/// pane.
+#[allow(clippy::too_many_arguments)]
+pub fn side_by_side_row_segment_spans(
+    row: &OutputRow,
+    s_idx: usize,
+    left_width: usize,
+    right_width: usize,
+    left_prefix: Vec<StyledSpan>,
+    right_prefix: Vec<StyledSpan>,
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> RowSegmentLine {
+    if left_width == 0 && right_width == 0 {
+        return RowSegmentLine {
+            spans: Vec::new(),
+            line_bg: None,
+        };
+    }
+
+    let blank_bg = if selected || band {
+        Some(theme.palette[Cursor::Row].band.bg)
+    } else {
+        None
+    };
+
+    let (left_spans, left_bg) = if left_width == 0 {
+        (Vec::new(), None)
+    } else if is_left_active(row.kind, row.mov_side) {
+        let (kind, mod_side) = if row.kind == RowKind::Mod {
+            (RowKind::Mod, Some(ModSide::Del))
+        } else {
+            (row.kind, None)
+        };
+        build_pane_segment_spans(
+            &row.old_text(),
+            row.is_aux(),
+            kind,
+            row.mov_side,
+            mod_side,
+            &row.runs,
+            s_idx,
+            left_width,
+            left_prefix,
+            selected,
+            band,
+            col_offset,
+            word_diff,
+            syntax_on,
+            theme,
+        )
+    } else {
+        build_blank_pane_spans(left_width, left_prefix, blank_bg)
+    };
+
+    let (right_spans, _right_bg) = if right_width == 0 {
+        (Vec::new(), None)
+    } else if is_right_active(row.kind, row.mov_side) {
+        let (kind, mod_side) = if row.kind == RowKind::Mod {
+            (RowKind::Mod, Some(ModSide::Add))
+        } else {
+            (row.kind, None)
+        };
+        build_pane_segment_spans(
+            &row.new_text(),
+            row.is_aux(),
+            kind,
+            row.mov_side,
+            mod_side,
+            &row.runs,
+            s_idx,
+            right_width,
+            right_prefix,
+            selected,
+            band,
+            col_offset,
+            word_diff,
+            syntax_on,
+            theme,
+        )
+    } else {
+        build_blank_pane_spans(right_width, right_prefix, blank_bg)
+    };
+
+    let line_bg = if row.kind == RowKind::Ctx {
+        left_bg
+    } else if selected || band {
+        Some(theme.palette[Cursor::Row].band.bg)
+    } else {
+        None
+    };
+
+    let mut spans = Vec::with_capacity(left_spans.len() + right_spans.len() + 1);
+    spans.extend(left_spans);
+
+    if left_width > 0 && right_width > 0 {
+        let divider_color = theme.palette[Cursor::Rest][DiffKind::Ctx]
+            .syntax
+            .table_border;
+        let divider_bg = if selected || band {
+            Some(theme.palette[Cursor::Row].band.bg)
+        } else {
+            None
+        };
+        spans.push(StyledSpan::styled("│", Some(divider_color), divider_bg));
+    }
+
+    spans.extend(right_spans);
+
+    RowSegmentLine { spans, line_bg }
+}
+
+/// Write a side-by-side row segment directly to an ANSI output writer.
+#[allow(clippy::too_many_arguments)]
+pub fn write_side_by_side_row_segment<W: Write>(
+    out: &mut W,
+    row: &OutputRow,
+    s_idx: usize,
+    left_width: usize,
+    right_width: usize,
+    left_prefix: &[StyledSpan],
+    right_prefix: &[StyledSpan],
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> fmt::Result {
+    let seg_line = side_by_side_row_segment_spans(
+        row,
+        s_idx,
+        left_width,
+        right_width,
+        left_prefix.to_vec(),
+        right_prefix.to_vec(),
+        selected,
+        band,
+        col_offset,
+        word_diff,
+        syntax_on,
+        theme,
+    );
+    write_spans_ansi(out, &seg_line.spans)
+}
+
+/// Render a side-by-side row segment with ANSI escape sequences to a
+/// [`String`].
+#[allow(clippy::too_many_arguments)]
+pub fn render_side_by_side_row_segment(
+    row: &OutputRow,
+    s_idx: usize,
+    left_width: usize,
+    right_width: usize,
+    left_prefix: &[StyledSpan],
+    right_prefix: &[StyledSpan],
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let mut out = String::with_capacity(left_width + right_width + 64);
+    let _ = write_side_by_side_row_segment(
+        &mut out,
+        row,
+        s_idx,
+        left_width,
+        right_width,
+        left_prefix,
+        right_prefix,
+        selected,
+        band,
+        col_offset,
+        word_diff,
+        syntax_on,
+        theme,
+    );
+    out
 }
