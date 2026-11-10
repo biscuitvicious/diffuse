@@ -21,7 +21,7 @@ impl AppState {
         }
 
         self.output = output;
-        let init_w = self.explicit_line_num_width.unwrap_or(0);
+        let init_w = crate::types::LineNumTracking::compute_width(0, self.explicit_line_num_width);
         self.old_line_num = crate::types::LineNumTracking::new(0, init_w);
         self.new_line_num = crate::types::LineNumTracking::new(0, init_w);
         if self.output.files.is_empty() {

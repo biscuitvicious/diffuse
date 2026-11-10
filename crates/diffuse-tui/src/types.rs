@@ -57,6 +57,19 @@ impl LineNumTracking {
     pub const fn new(max_num: u32, width: usize) -> Self {
         Self { max_num, width }
     }
+
+    /// Computes the visual column width required for a given maximum line
+    /// number and optional explicit override.
+    #[inline]
+    pub fn compute_width(max_num: u32, explicit: Option<usize>) -> usize {
+        if let Some(w) = explicit {
+            w.min(diffuse_render::MAX_LINE_NUM_WIDTH)
+        } else if max_num > 0 {
+            (max_num.ilog10() as usize) + 1
+        } else {
+            0
+        }
+    }
 }
 
 /// A contiguous line selection within a file, bounded by diff-row
@@ -386,5 +399,27 @@ mod tests {
 
         assert!(!HunkExpandIcon::DownStem.expands_above());
         assert!(HunkExpandIcon::DownStem.expands_below());
+    }
+
+    #[test]
+    fn test_line_num_tracking_compute_width() {
+        assert_eq!(LineNumTracking::compute_width(0, None), 0);
+        assert_eq!(LineNumTracking::compute_width(1, None), 1);
+        assert_eq!(LineNumTracking::compute_width(9, None), 1);
+        assert_eq!(LineNumTracking::compute_width(10, None), 2);
+        assert_eq!(LineNumTracking::compute_width(99, None), 2);
+        assert_eq!(LineNumTracking::compute_width(100, None), 3);
+        assert_eq!(LineNumTracking::compute_width(999, None), 3);
+        assert_eq!(LineNumTracking::compute_width(1000, None), 4);
+        assert_eq!(LineNumTracking::compute_width(99999, None), 5);
+
+        // Explicit width override
+        assert_eq!(LineNumTracking::compute_width(100, Some(5)), 5);
+        assert_eq!(LineNumTracking::compute_width(100, Some(0)), 0);
+        // Explicit width clamped to MAX_LINE_NUM_WIDTH
+        assert_eq!(
+            LineNumTracking::compute_width(100, Some(20)),
+            diffuse_render::MAX_LINE_NUM_WIDTH
+        );
     }
 }

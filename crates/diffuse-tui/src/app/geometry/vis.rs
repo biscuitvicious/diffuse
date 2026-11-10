@@ -7,7 +7,7 @@ use crate::{
     app::AppState,
     core::wire::OutputFile,
     render::{display_text, width::display_width},
-    types::FlatRowKind,
+    types::{FlatRowKind, LineNumTracking},
 };
 use diffuse_core::ModSide;
 
@@ -158,18 +158,8 @@ impl AppState {
         self.old_line_num.max_num = old_max;
         self.new_line_num.max_num = new_max;
 
-        let compute_width = |max: u32, explicit: Option<usize>| -> usize {
-            if let Some(w) = explicit {
-                w.min(diffuse_render::MAX_LINE_NUM_WIDTH)
-            } else if max > 0 {
-                (max.ilog10() as usize) + 1
-            } else {
-                0
-            }
-        };
-
-        let new_old_width = compute_width(old_max, self.explicit_line_num_width);
-        let new_new_width = compute_width(new_max, self.explicit_line_num_width);
+        let new_old_width = LineNumTracking::compute_width(old_max, self.explicit_line_num_width);
+        let new_new_width = LineNumTracking::compute_width(new_max, self.explicit_line_num_width);
 
         if new_old_width != self.old_line_num.width || new_new_width != self.new_line_num.width {
             let cw = self.effective_content_width();
@@ -241,7 +231,20 @@ impl AppState {
         old_max.max(new_max)
     }
 
+    /// Visual wrapped line segment count for row `idx` at `content_width`.
+    #[inline]
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
+        self.row_seg_count_with_gutter(idx, content_width, self.gutter_width_for(content_width))
+    }
+
+    /// Visual wrapped line segment count for row `idx` given a pre-computed
+    /// line number gutter width.
+    pub(crate) fn row_seg_count_with_gutter(
+        &self,
+        idx: usize,
+        content_width: usize,
+        gutter_w: usize,
+    ) -> usize {
         let Some(item) = self.flat.get(idx) else {
             return 1;
         };
@@ -295,7 +298,6 @@ impl AppState {
                     } => r.new_text(),
                     _ => r.text(),
                 };
-                let gutter_w = self.gutter_width_for(content_width);
                 if self.raw_diff {
                     let text_cols = content_width.saturating_sub(gutter_w).max(1);
                     let exp = crate::render::expand_tabs(&text, 4);
@@ -423,6 +425,7 @@ impl AppState {
         let mut seg_counts = Vec::with_capacity(self.flat.len());
         let mut nav_counts = Vec::with_capacity(self.flat.len());
         let mut total_vis_lines = 0;
+        let gutter_w = self.gutter_width_for(content_width);
 
         for (idx, _item) in self.flat.iter().enumerate() {
             starts.push(total_vis_lines);
@@ -431,7 +434,7 @@ impl AppState {
             } else {
                 0
             };
-            let row_segs = self.row_seg_count(idx, content_width);
+            let row_segs = self.row_seg_count_with_gutter(idx, content_width, gutter_w);
             let note_lines = callouts.get(&idx).map_or(0, Vec::len);
             let item_total = div_lines + row_segs + note_lines;
             counts.push(item_total);

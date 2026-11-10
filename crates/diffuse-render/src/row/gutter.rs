@@ -96,9 +96,21 @@ pub const GUTTER_SPACES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
     "                  ",
 ];
 
+/// Static space string covering up to 40 columns for zero-allocation gutter
+/// padding and continuation prefixes.
+pub const STATIC_SPACES: &str = "                                        ";
+
+/// Returns a static space slice of the requested `width` (up to 40 columns),
+/// clamped to 40 if `width` exceeds the static buffer length.
+#[inline]
+pub fn static_spaces(width: usize) -> &'static str {
+    let w = width.min(STATIC_SPACES.len());
+    &STATIC_SPACES[..w]
+}
+
 #[inline]
 fn blank_spaces(width: usize) -> &'static str {
-    LINE_NUM_SPACES[width.min(MAX_LINE_NUM_WIDTH)]
+    static_spaces(width)
 }
 
 /// Static continuation box prefixes matching `line_num_width` spaces followed
@@ -632,8 +644,9 @@ pub fn styled_prefix_spans_with_widths(
         return vec![ctx_num.span(format!("{old_pad} {new_pad}  "), bg)];
     }
 
-    let blank_old = blank_spaces(old_line_width);
-    let blank_new = blank_spaces(new_line_width);
+    let pad_before_new = static_spaces(old_line_width + 1);
+    let pad_after_old = static_spaces(1 + new_line_width);
+    let pad_del_after_old = static_spaces(new_line_width + 2);
 
     if let Some(side) = mod_side {
         let glyph_str = mod_glyph
@@ -642,12 +655,12 @@ pub fn styled_prefix_spans_with_widths(
         return match side {
             ModSide::Del => vec![
                 del.num.span(old_pad, bg),
-                StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                StyledSpan::styled(pad_after_old, Some(del.num.color), bg),
                 r#mod.icon.span(glyph_str, bg),
                 del.icon.span("-", bg),
             ],
             ModSide::Add => vec![
-                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
                 add.num.span(new_pad, bg),
                 r#mod.icon.span(glyph_str, bg),
                 add.icon.span("+", bg),
@@ -664,14 +677,14 @@ pub fn styled_prefix_spans_with_widths(
         ],
         Some(RowGroup::Aux { .. }) => match kind {
             RowKind::Add => vec![
-                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
                 add.num.span(new_pad, bg),
                 r#mod.icon.span("~", bg),
                 add.icon.span("+", bg),
             ],
             RowKind::Del => vec![
                 del.num.span(old_pad, bg),
-                StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                StyledSpan::styled(pad_after_old, Some(del.num.color), bg),
                 r#mod.icon.span("~", bg),
                 del.icon.span("-", bg),
             ],
@@ -680,11 +693,11 @@ pub fn styled_prefix_spans_with_widths(
         _ => match kind {
             RowKind::Del => vec![
                 del.num.span(old_pad, bg),
-                StyledSpan::styled(format!(" {blank_new} "), Some(del.num.color), bg),
+                StyledSpan::styled(pad_del_after_old, Some(del.num.color), bg),
                 del.icon.span("-", bg),
             ],
             RowKind::Add => vec![
-                StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
                 add.num.span(format!("{new_pad} "), bg),
                 add.icon.span("+", bg),
             ],
@@ -698,13 +711,13 @@ pub fn styled_prefix_spans_with_widths(
                 if mov_side == Some(MovSide::Src) {
                     vec![
                         del.num.span(old_pad, bg),
-                        StyledSpan::styled(format!(" {blank_new}"), Some(del.num.color), bg),
+                        StyledSpan::styled(pad_after_old, Some(del.num.color), bg),
                         mov.icon.span("≈", bg),
                         del.icon.span("-", bg),
                     ]
                 } else {
                     vec![
-                        StyledSpan::styled(format!("{blank_old} "), Some(add.num.color), bg),
+                        StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
                         add.num.span(new_pad, bg),
                         mov.icon.span("≈", bg),
                         add.icon.span("+", bg),
@@ -820,17 +833,8 @@ pub fn continuation_prefix_spans_with_mod_side_and_widths(
                     StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
                 ];
             }
-            let pad = if new_line_width <= MAX_LINE_NUM_WIDTH {
-                LINE_NUM_SPACES[new_line_width]
-            } else {
-                return vec![
-                    StyledSpan::styled(" ".repeat(new_line_width), Some(Color::Fixed(242)), bg),
-                    r#mod.icon.span("│", bg),
-                    StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
-                ];
-            };
             return vec![
-                StyledSpan::styled(pad, Some(Color::Fixed(242)), bg),
+                StyledSpan::styled(static_spaces(new_line_width), Some(Color::Fixed(242)), bg),
                 r#mod.icon.span("│", bg),
                 StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
             ];
@@ -841,24 +845,15 @@ pub fn continuation_prefix_spans_with_mod_side_and_widths(
     if mod_row_extends_box(mod_side, mod_glyph) {
         let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
         let pad_len = old_line_width + 1 + new_line_width;
-        let pad = if pad_len <= MAX_LINE_NUM_WIDTH {
-            LINE_NUM_SPACES[pad_len]
-        } else {
-            return vec![
-                StyledSpan::styled(" ".repeat(pad_len), Some(Color::Fixed(242)), bg),
-                r#mod.icon.span("│", bg),
-                StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
-            ];
-        };
         vec![
-            StyledSpan::styled(pad, Some(Color::Fixed(242)), bg),
+            StyledSpan::styled(static_spaces(pad_len), Some(Color::Fixed(242)), bg),
             r#mod.icon.span("│", bg),
             StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
         ]
     } else {
         let total_w = dual_gutter_width(old_line_width, new_line_width);
         vec![StyledSpan::styled(
-            " ".repeat(total_w),
+            static_spaces(total_w),
             Some(Color::Fixed(242)),
             bg,
         )]
@@ -914,9 +909,9 @@ pub fn continuation_prefix_plain_with_mod_side_and_widths(
     }
     if mod_row_extends_box(mod_side, mod_glyph) {
         let pad_len = old_line_width + 1 + new_line_width;
-        format!("{}│ ", " ".repeat(pad_len))
+        format!("{}│ ", static_spaces(pad_len))
     } else {
-        " ".repeat(dual_gutter_width(old_line_width, new_line_width))
+        static_spaces(dual_gutter_width(old_line_width, new_line_width)).to_string()
     }
 }
 

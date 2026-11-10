@@ -336,6 +336,15 @@ impl AppState {
             .gutter
             .icon
             .color;
+        let is_old_active = self.is_old_line_gutter_active(content_width);
+        let old_line_w = if is_old_active {
+            self.old_line_num.width
+        } else {
+            0
+        };
+        let new_line_w = self.new_line_num.width;
+        let diff_gutter_w = self.gutter_width_for(content_width);
+        let diff_text_cols = content_width.saturating_sub(diff_gutter_w).max(1);
         for (idx, item) in self.flat.iter().enumerate().skip(first_idx) {
             let count = counts[idx];
             if vis_i + count <= content_start_vis {
@@ -486,13 +495,6 @@ impl AppState {
                         if vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected =
                                 idx == self.row_idx && self.vis_line == div_segs + s_idx;
-                            let is_old_active = self.is_old_line_gutter_active(content_width);
-                            let old_line_w = if is_old_active {
-                                self.old_line_num.width
-                            } else {
-                                0
-                            };
-                            let new_line_w = self.new_line_num.width;
                             let mut prefix = if s_idx == 0 {
                                 styled_prefix_spans_with_widths(
                                     r.kind,
@@ -532,11 +534,11 @@ impl AppState {
                                 ),
                             );
                             let rendered_row = if self.raw_diff {
-                                let text_cols = content_width
-                                    .saturating_sub(self.gutter_width_for(content_width))
-                                    .max(1);
-                                let piece =
-                                    slice_by_visual_width(&row_text, s_idx * text_cols, text_cols);
+                                let piece = slice_by_visual_width(
+                                    &row_text,
+                                    s_idx * diff_text_cols,
+                                    diff_text_cols,
+                                );
                                 let is_last_seg = s_idx + 1 == seg_count;
                                 let raw = raw_row_spans(
                                     r.kind,
@@ -549,11 +551,8 @@ impl AppState {
                                 );
                                 fit_line(raw.spans, content_width, raw.line_bg)
                             } else {
-                                let text_cols = content_width
-                                    .saturating_sub(self.gutter_width_for(content_width))
-                                    .max(1);
-                                let seg_start = s_idx * text_cols;
-                                let seg_end = seg_start + text_cols;
+                                let seg_start = s_idx * diff_text_cols;
+                                let seg_end = seg_start + diff_text_cols;
                                 let row = row_segment_spans(
                                     &row_text,
                                     r.is_aux(),
