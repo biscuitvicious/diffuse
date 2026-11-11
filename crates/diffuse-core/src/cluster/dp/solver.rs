@@ -246,6 +246,7 @@ pub(crate) struct Cell {
     prev_j: u32,
     k: u8,
     op: OpKind,
+    diagonal_streak: u8,
 }
 
 impl Default for Cell {
@@ -256,6 +257,7 @@ impl Default for Cell {
             prev_j: 0,
             k: 0,
             op: OpKind::None,
+            diagonal_streak: 0,
         }
     }
 }
@@ -1007,6 +1009,7 @@ pub(crate) fn solve_cluster_matrix(
             prev_j: 0,
             k: 0,
             op: OpKind::None,
+            diagonal_streak: 0,
         };
         grid.init_envelope(m, n, bounds, init_cell);
         precomputed_lcs.init_envelope(m, n, bounds, u32::MAX);
@@ -1104,37 +1107,53 @@ pub(crate) fn solve_cluster_matrix(
             };
 
             for j in grid.row_range(i) {
-                let base = grid.get(i, j).map_or(neg, |c| c.score);
-                if base == neg {
-                    continue;
-                }
+                let (base, curr_op, curr_streak) = match grid.get(i, j) {
+                    Some(c) if c.score != neg => (c.score, c.op, c.diagonal_streak),
+                    _ => continue,
+                };
+                let is_diagonal_run =
+                    (curr_op == OpKind::Mod || curr_op == OpKind::Mov) && curr_streak >= 2;
                 // Standalone Del / Add.
+                let del_cost = w.row_cost
+                    + if is_diagonal_run {
+                        w.detour_open_penalty
+                    } else {
+                        0.0
+                    };
                 if has_old
                     && let Some(target) = grid.get_mut(i + 1, j)
-                    && base - w.row_cost > target.score
+                    && base - del_cost > target.score
                 {
                     *target = Cell {
-                        score: base - w.row_cost,
+                        score: base - del_cost,
                         prev_i: i as u32,
                         prev_j: j as u32,
                         k: 1,
                         op: OpKind::Del,
+                        diagonal_streak: 0,
                     };
                 }
+                let add_cost = w.row_cost
+                    + if is_diagonal_run {
+                        w.detour_open_penalty
+                    } else {
+                        0.0
+                    };
                 if j < n
                     && let Some(target) = grid.get_mut(i, j + 1)
-                    && base - w.row_cost >= target.score
+                    && base - add_cost >= target.score
                 {
                     // `>=`: on a del/add tie the path prefers ending with
                     // the add — the emission reads
                     // dels first, adds after (the
                     // diff reading convention).
                     *target = Cell {
-                        score: base - w.row_cost,
+                        score: base - add_cost,
                         prev_i: i as u32,
                         prev_j: j as u32,
                         k: 1,
                         op: OpKind::Add,
+                        diagonal_streak: 0,
                     };
                 }
                 // 1-to-1: Mod or Mov.
@@ -1143,6 +1162,12 @@ pub(crate) fn solve_cluster_matrix(
                 } else {
                     DpRowMeta::default()
                 };
+                let (continuity_bonus, next_streak) =
+                    if curr_op == OpKind::Mod || curr_op == OpKind::Mov {
+                        (w.diagonal_run_bonus, curr_streak.saturating_add(1).min(15))
+                    } else {
+                        (0.0, 1)
+                    };
                 'eval_mod: {
                     if has_old
                         && j < n
@@ -1155,7 +1180,7 @@ pub(crate) fn solve_cluster_matrix(
                         let nt = &new_tokens[j];
                         if ot.ids.is_empty() && nt.ids.is_empty() {
                             // blank ↔ blank: a trivial full match in one row.
-                            let s = base - w.row_cost + w.slot_continuity_bonus;
+                            let s = base + continuity_bonus - w.row_cost + w.slot_continuity_bonus;
                             if let Some(target) = grid.get_mut(i + 1, j + 1)
                                 && s > target.score
                             {
@@ -1165,12 +1190,15 @@ pub(crate) fn solve_cluster_matrix(
                                     prev_j: j as u32,
                                     k: 1,
                                     op: OpKind::Mod,
+                                    diagonal_streak: next_streak,
                                 };
                             }
                         } else if om.trimmed_id == nm.trimmed_id {
                             // Verbatim (trim-insensitive) — a Mov.
                             let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
-                            let s = base + w.matched_char_reward * ot.chars.max(nt.chars) as f64
+                            let s = base
+                                + continuity_bonus
+                                + w.matched_char_reward * ot.chars.max(nt.chars) as f64
                                 - w.row_cost
                                 - w.sprawl_penalty * length_diff;
                             if let Some(target) = grid.get_mut(i + 1, j + 1)
@@ -1182,6 +1210,7 @@ pub(crate) fn solve_cluster_matrix(
                                     prev_j: j as u32,
                                     k: 1,
                                     op: OpKind::Mov,
+                                    diagonal_streak: next_streak,
                                 };
                             }
                         } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
@@ -1377,6 +1406,7 @@ pub(crate) fn solve_cluster_matrix(
                                 }
                             };
                             let max_possible_mod_s = base
+                                + continuity_bonus
                                 + w.matched_char_reward * max_matched as f64
                                 - w.sprawl_penalty * (total - max_matched) as f64
                                 - w.row_cost
@@ -1566,7 +1596,9 @@ pub(crate) fn solve_cluster_matrix(
                                 0.0
                             };
 
-                            let s = base + w.matched_char_reward * matched as f64
+                            let s = base
+                                + continuity_bonus
+                                + w.matched_char_reward * matched as f64
                                 - penalty
                                 - w.row_cost
                                 - indent_penalty
@@ -1583,6 +1615,7 @@ pub(crate) fn solve_cluster_matrix(
                                     prev_j: j as u32,
                                     k: 1,
                                     op: OpKind::Mod,
+                                    diagonal_streak: next_streak,
                                 };
                             }
                         }
@@ -1679,15 +1712,21 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let s =
-                            base + calc_block_score(
+                        let s = base
+                            + calc_block_score(
                                 bm_matched,
                                 bm_moved_lines,
                                 ot.chars,
                                 pblock.chars,
                                 k,
-                            ) + syntax
-                                + close_bonus;
+                            )
+                            + syntax
+                            + close_bonus
+                            - if is_diagonal_run {
+                                w.detour_open_penalty
+                            } else {
+                                0.0
+                            };
                         if let Some(target) = grid.get_mut(i + 1, j + k)
                             && s > target.score
                         {
@@ -1697,6 +1736,7 @@ pub(crate) fn solve_cluster_matrix(
                                 prev_j: j as u32,
                                 k: k as u8,
                                 op: OpKind::Expand,
+                                diagonal_streak: 0,
                             };
                         }
                     }
@@ -1790,15 +1830,21 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let s =
-                            base + calc_block_score(
+                        let s = base
+                            + calc_block_score(
                                 bm_matched,
                                 bm_moved_lines,
                                 new_tokens[j].chars,
                                 pblock.chars,
                                 k,
-                            ) + syntax
-                                + close_bonus;
+                            )
+                            + syntax
+                            + close_bonus
+                            - if is_diagonal_run {
+                                w.detour_open_penalty
+                            } else {
+                                0.0
+                            };
                         if let Some(target) = grid.get_mut(i + k, j + 1)
                             && s > target.score
                         {
@@ -1808,6 +1854,7 @@ pub(crate) fn solve_cluster_matrix(
                                 prev_j: j as u32,
                                 k: k as u8,
                                 op: OpKind::Collapse,
+                                diagonal_streak: 0,
                             };
                         }
                     }

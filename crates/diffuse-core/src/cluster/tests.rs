@@ -3864,6 +3864,46 @@ fn test_keyword_head_admission_gating() {
     );
 }
 
+#[test]
+fn test_affine_diagonal_continuity_and_detour_penalization() {
+    let rs = lang_profile("rs");
+
+    // Old block: 3 consecutive modifications
+    let old_lines = vec![
+        ("    a = calculate_step(x, 1);", 10),
+        ("    b = calculate_step(x, 2);", 11),
+        ("    c = calculate_step(x, 3);", 12),
+    ];
+    // New block: 3 corresponding modifications on the diagonal,
+    // plus an inserted line between 1 and 2 that happens to be an exact verbatim twin of line 2.
+    let new_lines = vec![
+        ("    a = calculate_step(y, 1);", 10),
+        ("    b = calculate_step(x, 2);", 11), // inserted verbatim twin at offset drift
+        ("    b = calculate_step(y, 2);", 12), // natural diagonal continuation of line 2
+        ("    c = calculate_step(y, 3);", 13), // natural diagonal continuation of line 3
+    ];
+    let cluster = return_cluster(old_lines, new_lines);
+    let sol = solve_cluster(&cluster, rs);
+
+    // Diagonal continuity and detour penalty keep line 10 paired with 10, line 11 with 12, line 12 with 13,
+    // treating line 11 (new) as an inserted Add rather than taking a detour.
+    assert!(
+        pairs_with(&sol, 10, 10),
+        "line 10 must pair with line 10: {}",
+        pairing_summary(&sol)
+    );
+    assert!(
+        pairs_with(&sol, 11, 12),
+        "line 11 must pair with diagonal companion line 12, not the detour: {}",
+        pairing_summary(&sol)
+    );
+    assert!(
+        pairs_with(&sol, 12, 13),
+        "line 12 must pair with line 13: {}",
+        pairing_summary(&sol)
+    );
+}
+
 /// Whether the solution pairs old line `old` with new line `new` — either as a
 /// Mod row or as an adjacent MovSrc/MovTgt pair (the Mov emission convention).
 fn pairs_with(sol: &DpSolution, old: u32, new: u32) -> bool {
