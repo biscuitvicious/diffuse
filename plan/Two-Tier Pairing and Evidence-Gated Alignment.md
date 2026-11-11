@@ -4,7 +4,7 @@
 - [x] Phase 2 — Tier 1 Admission Tightening and Keyword Bypass Elimination (`diffuse-core`)
 - [x] Phase 3 — Affine Diagonal Continuity and Detour Penalization in DP (`diffuse-core`)
 - [x] Phase 4 — Tier 2 Residual Evidence Matching Engine (`diffuse-core`)
-- [·] Phase 5 — Golden Corpus Calibration, Acceptance Verification & Sign-Off
+- [x] Phase 5 — Golden Corpus Calibration, Acceptance Verification & Sign-Off
 
 ---
 
