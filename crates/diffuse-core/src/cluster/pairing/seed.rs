@@ -48,7 +48,11 @@ pub struct VerbatimSeedInput<'a, 'm> {
 /// needs no changes — it builds Mods from `pair_of` regardless of
 /// provenance (heuristic aux may still attach unseeded neighbors around
 /// seeded anchors).
-pub fn verbatim_seeds(input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usize> {
+pub fn verbatim_seeds(mut input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usize> {
+    let mut seeds = ngram_block_seeds(&mut input);
+    let seeded_dels: FxHashSet<usize> = seeds.values().copied().collect();
+    let seeded_adds: FxHashSet<usize> = seeds.keys().copied().collect();
+
     let VerbatimSeedInput {
         cluster,
         h,
@@ -128,7 +132,6 @@ pub fn verbatim_seeds(input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usiz
             head: head_of(text, profile),
         });
     }
-    let mut seeds = FxHashMap::default();
     for (t, ds) in &dels {
         if ds.len() != 1 {
             continue;
@@ -141,6 +144,9 @@ pub fn verbatim_seeds(input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usiz
         }
         let d = &ds[0];
         let a = &as_[0];
+        if seeded_dels.contains(&d.gi) || seeded_adds.contains(&a.gi) {
+            continue;
+        }
         // Relocations seed at their own level: same-spot verbatim pairs
         // already resolve through Mov/trivial-Mod.
         if d.indent == a.indent {
@@ -169,5 +175,273 @@ pub fn verbatim_seeds(input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usiz
         }
         seeds.insert(a.gi, d.gi);
     }
+    seeds
+}
+
+#[derive(Clone, Copy)]
+struct CandRow<'a> {
+    gi: usize,
+    trimmed: &'a str,
+    indent: usize,
+    is_blank: bool,
+}
+
+#[derive(Debug)]
+struct BlockCandidate {
+    old_start: usize,
+    new_start: usize,
+    len: usize,
+    non_blank_chars: usize,
+}
+
+/// Compute net brace balance for a line outside double-quoted strings.
+fn brace_delta(text: &str) -> isize {
+    let mut delta = 0isize;
+    let mut in_str = false;
+    let mut prev = '\0';
+    for ch in text.chars() {
+        if ch == '"' && prev != '\\' {
+            in_str = !in_str;
+        } else if !in_str {
+            if ch == '{' {
+                delta += 1;
+            } else if ch == '}' {
+                delta -= 1;
+            }
+        }
+        prev = ch;
+    }
+    delta
+}
+
+/// Detect contiguous sequences of verbatim/trimmed matches ($L \ge 2$)
+/// with consistent non-zero indent shift.
+fn ngram_block_seeds(input: &mut VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usize> {
+    let old_cands: Vec<Option<CandRow<'_>>> = input
+        .cluster
+        .old_rows
+        .iter()
+        .map(|r| {
+            if let Row::Del(d) = r
+                && let Some(&gi) = input.del_by_num.get(&d.num)
+            {
+                let text = r.text();
+                let trimmed = text.trim();
+                let indent = text.len() - text.trim_start().len();
+                Some(CandRow {
+                    gi,
+                    trimmed,
+                    indent,
+                    is_blank: trimmed.is_empty(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let new_cands: Vec<Option<CandRow<'_>>> = input
+        .cluster
+        .new_rows
+        .iter()
+        .map(|r| {
+            if let Row::Add(a) = r
+                && let Some(&gi) = input.add_by_num.get(&a.num)
+            {
+                let text = r.text();
+                let trimmed = text.trim();
+                let indent = text.len() - text.trim_start().len();
+                Some(CandRow {
+                    gi,
+                    trimmed,
+                    indent,
+                    is_blank: trimmed.is_empty(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut candidates = Vec::new();
+    let m = old_cands.len();
+    let n = new_cands.len();
+
+    for i in 0..m {
+        let Some(old_0) = old_cands[i] else { continue };
+        if old_0.is_blank {
+            continue;
+        }
+        let b0 = brace_delta(old_0.trimmed);
+        if b0 < 0 {
+            // Cannot start with an unmatched closing delimiter.
+            continue;
+        }
+
+        for j in 0..n {
+            let Some(new_0) = new_cands[j] else { continue };
+            if new_0.is_blank {
+                continue;
+            }
+            if old_0.trimmed != new_0.trimmed {
+                continue;
+            }
+
+            let delta = new_0.indent as isize - old_0.indent as isize;
+            if delta == 0 {
+                continue;
+            }
+
+            if input.hard.contains(&old_0.gi) || input.hard.contains(&new_0.gi) {
+                continue;
+            }
+            if is_fragment_pair_rejected(
+                old_0.gi,
+                new_0.gi,
+                input.h,
+                input.old_content,
+                input.new_content,
+                input.profile,
+                input.fn_cache,
+            ) {
+                continue;
+            }
+
+            let mut running_balance = b0;
+            let mut k = 1;
+            while i + k < m && j + k < n {
+                let (Some(old_k), Some(new_k)) = (old_cands[i + k], new_cands[j + k]) else {
+                    break;
+                };
+                if old_k.is_blank != new_k.is_blank {
+                    break;
+                }
+                if !old_k.is_blank {
+                    if old_k.trimmed != new_k.trimmed {
+                        break;
+                    }
+                    if new_k.indent as isize - old_k.indent as isize != delta {
+                        break;
+                    }
+                    let bk = brace_delta(old_k.trimmed);
+                    if running_balance + bk < 0 {
+                        // Unmatched closing brace from an outer scope: stop before it.
+                        break;
+                    }
+                    running_balance += bk;
+                }
+                if input.hard.contains(&old_k.gi) || input.hard.contains(&new_k.gi) {
+                    break;
+                }
+                if is_fragment_pair_rejected(
+                    old_k.gi,
+                    new_k.gi,
+                    input.h,
+                    input.old_content,
+                    input.new_content,
+                    input.profile,
+                    input.fn_cache,
+                ) {
+                    break;
+                }
+                k += 1;
+            }
+
+            while k > 0 && old_cands[i + k - 1].unwrap().is_blank {
+                k -= 1;
+            }
+
+            if k < 2 {
+                continue;
+            }
+
+            let non_blank_count = (0..k)
+                .filter(|&idx| !old_cands[i + idx].unwrap().is_blank)
+                .count();
+            if non_blank_count < 2 {
+                continue;
+            }
+
+            let non_blank_chars = (0..k)
+                .map(|idx| old_cands[i + idx].unwrap().trimmed.len())
+                .sum();
+
+            candidates.push(BlockCandidate {
+                old_start: i,
+                new_start: j,
+                len: k,
+                non_blank_chars,
+            });
+        }
+    }
+
+    let unique_candidates: Vec<BlockCandidate> = candidates
+        .into_iter()
+        .filter(|cand| {
+            let l = cand.len;
+            let cand_old = &old_cands[cand.old_start..cand.old_start + l];
+
+            for i2 in 0..=m.saturating_sub(l) {
+                if i2 == cand.old_start {
+                    continue;
+                }
+                let slice = &old_cands[i2..i2 + l];
+                let matches_seq = (0..l).all(|k| match (cand_old[k], slice[k]) {
+                    (Some(c1), Some(c2)) => c1.trimmed == c2.trimmed && c1.is_blank == c2.is_blank,
+                    _ => false,
+                });
+                if matches_seq {
+                    return false;
+                }
+            }
+
+            for j2 in 0..=n.saturating_sub(l) {
+                if j2 == cand.new_start {
+                    continue;
+                }
+                let slice = &new_cands[j2..j2 + l];
+                let matches_seq = (0..l).all(|k| match (cand_old[k], slice[k]) {
+                    (Some(c1), Some(c2)) => c1.trimmed == c2.trimmed && c1.is_blank == c2.is_blank,
+                    _ => false,
+                });
+                if matches_seq {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .collect();
+
+    let mut sorted_candidates = unique_candidates;
+    sorted_candidates.sort_by(|a, b| {
+        b.len
+            .cmp(&a.len)
+            .then_with(|| b.non_blank_chars.cmp(&a.non_blank_chars))
+            .then_with(|| a.new_start.cmp(&b.new_start))
+            .then_with(|| a.old_start.cmp(&b.old_start))
+    });
+
+    let mut seeds = FxHashMap::default();
+    let mut seeded_old = FxHashSet::default();
+    let mut seeded_new = FxHashSet::default();
+
+    for cand in sorted_candidates {
+        let overlaps = (0..cand.len).any(|k| {
+            seeded_old.contains(&(cand.old_start + k)) || seeded_new.contains(&(cand.new_start + k))
+        });
+        if overlaps {
+            continue;
+        }
+
+        for k in 0..cand.len {
+            let o_cand = old_cands[cand.old_start + k].unwrap();
+            let n_cand = new_cands[cand.new_start + k].unwrap();
+            seeds.insert(n_cand.gi, o_cand.gi);
+            seeded_old.insert(cand.old_start + k);
+            seeded_new.insert(cand.new_start + k);
+        }
+    }
+
     seeds
 }

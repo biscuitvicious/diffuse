@@ -2694,3 +2694,47 @@ fn test_pipeline_mov_src_and_tgt_carry_matching_runs() {
         "Runs must include deleted indentation"
     );
 }
+
+#[test]
+fn test_contiguous_ngram_block_pipeline_integration() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,11 +1,7 @@
+ ctx_before
+-        step_one();
+-        if condition {
+-            common_helper();
+-            break;
+-        }
+-        step_two();
+-        if other_condition {
+-            common_helper();
+-            break;
+-        }
++            step_one();
++            if condition {
++                common_helper();
++                break;
++            }
+ ctx_after
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    for (old_l, new_l) in [(2, 2), (3, 3), (4, 4), (5, 5), (6, 6)] {
+        let paired = rows.iter().find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.old_line == Some(old_l)
+                && r.new_line == Some(new_l)
+        });
+        assert!(
+            paired.is_some(),
+            "expected Mod row pairing old line {old_l} with new line {new_l}, rows:\n{:#?}",
+            rows.iter()
+                .map(|r| (r.kind, r.old_line, r.new_line, r.text()))
+                .collect::<Vec<_>>()
+        );
+    }
+}

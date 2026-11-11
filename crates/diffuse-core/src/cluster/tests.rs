@@ -3337,6 +3337,90 @@ fn test_verbatim_seeds_skip_same_indent() {
     );
 }
 
+/// Contiguous N-gram block seeding: a sequence of lines matching a
+/// block must seed as an atomic unit even if individual lines inside
+/// the block appear multiple times elsewhere in the cluster.
+#[test]
+fn test_contiguous_ngram_seeds_with_internal_duplicates() {
+    let del_lines = [
+        "        step_one();",
+        "        if condition {",
+        "            common_helper();",
+        "            break;",
+        "        }",
+        "        step_two();",
+        "        if other_condition {",
+        "            common_helper();",
+        "            break;",
+        "        }",
+    ];
+    let add_lines = [
+        "            step_one();",
+        "            if condition {",
+        "                common_helper();",
+        "                break;",
+        "            }",
+    ];
+    let rows: Vec<Row> = del_lines
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| Row::Del(DelLine::new(i as u32 + 1, s)))
+        .chain(
+            add_lines
+                .iter()
+                .enumerate()
+                .map(|(j, &s)| Row::Add(AddLine::new(j as u32 + 1, s))),
+        )
+        .collect();
+    let h = Hunk {
+        old_start: 1,
+        old_count: del_lines.len() as u32,
+        new_start: 1,
+        new_count: add_lines.len() as u32,
+        section: String::new(),
+        rows: rows.clone(),
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: rows[..del_lines.len()].to_vec(),
+        new_rows: rows[del_lines.len()..].to_vec(),
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = (1..=del_lines.len() as u32)
+        .map(|n| (n, n as usize - 1))
+        .collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = (1..=add_lines.len() as u32)
+        .map(|n| (n, del_lines.len() + n as usize - 1))
+        .collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+
+    for add_k in 0..5 {
+        let expected_del = add_k;
+        let add_global = del_lines.len() + add_k;
+        assert_eq!(
+            seeds.get(&add_global),
+            Some(&expected_del),
+            "add line {add_k} must be seeded to del line {expected_del}, got {:?}",
+            seeds.get(&add_global)
+        );
+    }
+}
+
 /// An unfinished `let` declaration head still begins a statement: the
 /// declaration starts here even when its value continues on later lines.
 /// Block anchors must not let content volume override such a head.
