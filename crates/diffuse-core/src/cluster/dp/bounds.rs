@@ -370,6 +370,8 @@ pub(crate) fn mod_pair_needs_scoring(
         && om.head_is_keyword
         && nm.head_is_keyword
         && !om.survives_in_new;
+    let keyword_head_admissible = same_indent_head_match
+        && (salient_bound > 0 || (offset_diff <= 1 && (char_bound as f64 / total as f64) >= 0.40));
     let can_have_containment = indent_shift <= w.max_indent_shift
         && (om.comment == nm.comment)
         && ((om.stripped_len >= w.min_containment_len && nm.stripped_len >= w.min_containment_len)
@@ -387,7 +389,7 @@ pub(crate) fn mod_pair_needs_scoring(
         max_salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
             || is_property_match
             || is_return_slot
-            || (same_indent_head_match && om.head_is_keyword && nm.head_is_keyword)
+            || keyword_head_admissible
     };
 
     let mut is_prefix_containment = None;

@@ -1,8 +1,8 @@
 # Two-Tier Pairing and Evidence-Gated Alignment — Engineering Plan
 
 - [x] Phase 1 — Multi-Line Contiguous N-Gram Block Pre-Seeding ($L \ge 2$) (`diffuse-core`)
-- [·] Phase 2 — Tier 1 Admission Tightening and Keyword Bypass Elimination (`diffuse-core`)
-- [ ] Phase 3 — Affine Diagonal Continuity and Detour Penalization in DP (`diffuse-core`)
+- [x] Phase 2 — Tier 1 Admission Tightening and Keyword Bypass Elimination (`diffuse-core`)
+- [·] Phase 3 — Affine Diagonal Continuity and Detour Penalization in DP (`diffuse-core`)
 - [ ] Phase 4 — Tier 2 Residual Evidence Matching Engine (`diffuse-core`)
 - [ ] Phase 5 — Golden Corpus Calibration, Acceptance Verification & Sign-Off
 

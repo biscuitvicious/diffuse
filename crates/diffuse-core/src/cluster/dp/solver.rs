@@ -1326,15 +1326,17 @@ pub(crate) fn solve_cluster_matrix(
                                     || same_indent_head_match);
 
                             let mut is_prefix_containment = None;
+                            let keyword_head_admissible_fast = same_indent_head_match
+                                && (salient_bound > 0
+                                    || (offset_diff <= 1
+                                        && (char_bound as f64 / total as f64) >= 0.40));
                             let could_be_valid_mod_fast = if is_char_scale_pair {
                                 (char_bound as f64 / total as f64) >= min_exact
                             } else {
                                 max_salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
                                     || is_property_match
                                     || is_return_slot
-                                    || (same_indent_head_match
-                                        && om.head_is_keyword
-                                        && nm.head_is_keyword)
+                                    || keyword_head_admissible_fast
                             };
                             if !could_be_valid_mod_fast {
                                 if !can_have_containment {
@@ -1500,6 +1502,10 @@ pub(crate) fn solve_cluster_matrix(
                                             * boundary_salient as f64;
                                     Some((effective_matched / total_salient as f64).min(1.0))
                                 };
+                            let keyword_head_admissible = same_indent_head_match
+                                && (matched_salient > 0
+                                    || (offset_diff <= 1
+                                        && (matched as f64 / total as f64) >= 0.40));
                             let is_valid_mod_pair = if is_char_scale_pair {
                                 (matched as f64 / total as f64) >= min_exact
                             } else if (om.comment || nm.comment) && offset_diff > 0 {
@@ -1513,9 +1519,7 @@ pub(crate) fn solve_cluster_matrix(
                                     || is_prefix_containment
                                     || is_property_match
                                     || is_return_slot
-                                    || (same_indent_head_match
-                                        && om.head_is_keyword
-                                        && nm.head_is_keyword)
+                                    || keyword_head_admissible
                             };
 
                             if !is_valid_mod_pair {
@@ -1537,9 +1541,7 @@ pub(crate) fn solve_cluster_matrix(
                                 || is_prefix_containment
                                 || is_property_match
                                 || is_return_slot
-                                || (same_indent_head_match
-                                    && om.head_is_keyword
-                                    && nm.head_is_keyword)
+                                || keyword_head_admissible
                             {
                                 1.0
                             } else {

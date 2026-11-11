@@ -2738,3 +2738,34 @@ fn test_contiguous_ngram_block_pipeline_integration() {
         );
     }
 }
+
+#[test]
+fn test_keyword_only_match_across_offset_drift_rejected() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,6 +1,7 @@
+ ctx_before
+-    if handled {
+-        break;
+-    }
++    let filler = 1;
++    let another = 2;
++    let third = 3;
++    if !is_binary {
++        do_something();
++    }
+ ctx_after
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let spurious_mod = rows.iter().find(|r| {
+        r.kind == crate::parse::RowKind::Mod && r.old_line == Some(2) && r.text().contains("if")
+    });
+    assert!(
+        spurious_mod.is_none(),
+        "keyword-only lines sharing zero salient tokens must not pair across offsets: {spurious_mod:?}"
+    );
+}

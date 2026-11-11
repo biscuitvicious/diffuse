@@ -3830,6 +3830,40 @@ fn dp_prefers_long_verbatim_chain_over_duplicate_anchor_rival() {
     );
 }
 
+#[test]
+fn test_keyword_head_admission_gating() {
+    let rs = lang_profile("rs");
+
+    // Case 1: In-place rename with zero offset drift and char overlap >= 0.40 pairs
+    // as mod.
+    let cluster_inplace =
+        return_cluster(vec![("    let a = 1;", 10)], vec![("    let b = 2;", 10)]);
+    let sol_inplace = solve_cluster(&cluster_inplace, rs);
+    assert_eq!(
+        signature(&sol_inplace),
+        ["mod"],
+        "in-place keyword statement rename at offset 0 must pair as mod: {}",
+        pairing_summary(&sol_inplace)
+    );
+
+    // Case 2: Keyword statements across offset drift > 1 with no salient overlap
+    // must stay del and add.
+    let cluster_drift = return_cluster(
+        vec![("    if handled {", 10)],
+        vec![
+            ("    let filler = 1;", 10),
+            ("    let another = 2;", 11),
+            ("    if !is_binary {", 12),
+        ],
+    );
+    let sol_drift = solve_cluster(&cluster_drift, rs);
+    assert!(
+        !pairs_with(&sol_drift, 10, 12),
+        "keyword-only statement must not pair across offset drift > 1 without salient tokens: {}",
+        pairing_summary(&sol_drift)
+    );
+}
+
 /// Whether the solution pairs old line `old` with new line `new` — either as a
 /// Mod row or as an adjacent MovSrc/MovTgt pair (the Mov emission convention).
 fn pairs_with(sol: &DpSolution, old: u32, new: u32) -> bool {
