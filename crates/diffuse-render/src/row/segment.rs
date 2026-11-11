@@ -5,7 +5,7 @@ use std::{borrow::Cow, fmt, fmt::Write};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    gutter::write_gutter_prefix,
+    gutter::{is_left_active, is_right_active, write_gutter_prefix},
     text::{display_text, expand_runs_tabs, expand_tabs, slice_by_visual_width},
 };
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     },
     span::{StyledSpan, pad_spans, spans_width, write_span_token},
     theme::{Cursor, DiffKind, DiffuseTheme},
-    width::grapheme_width,
+    width::{display_width, grapheme_width},
 };
 
 /// Background escape for an optional line color: [`None`] and
@@ -541,30 +541,48 @@ pub fn write_spans_ansi<W: Write>(out: &mut W, spans: &[StyledSpan]) -> fmt::Res
     Ok(())
 }
 
+/// Visual segment count for text wrapped to `cols` columns, optionally
+/// accounting for a horizontal scroll column offset.
 #[inline]
-const fn is_left_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
-    match kind {
-        RowKind::Ctx | RowKind::Mod | RowKind::Del => true,
-        RowKind::Mov => match mov_side {
-            Some(MovSide::Src) => true,
-            Some(MovSide::Tgt) => false,
-            None => true,
-        },
-        _ => false,
+pub fn pane_text_seg_count(text: &str, cols: usize, col_offset: usize) -> usize {
+    let exp = expand_tabs(text, 4);
+    let rem: &str = if col_offset > 0 {
+        use unicode_segmentation::UnicodeSegmentation;
+        match exp.grapheme_indices(true).nth(col_offset) {
+            Some((start, _)) => &exp[start..],
+            None => "",
+        }
+    } else {
+        &exp
+    };
+    let len = display_width(rem);
+    if len == 0 {
+        1
+    } else {
+        len.div_ceil(cols.max(1))
     }
 }
 
-#[inline]
-const fn is_right_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
-    match kind {
-        RowKind::Ctx | RowKind::Mod | RowKind::Add => true,
-        RowKind::Mov => match mov_side {
-            Some(MovSide::Tgt) => true,
-            Some(MovSide::Src) => false,
-            None => true,
-        },
-        _ => false,
-    }
+/// Calculate the visual line segment count for an [`OutputRow`] in side-by-side
+/// layout given left and right pane column budgets and visual column scroll
+/// offset.
+pub fn side_by_side_row_seg_count(
+    r: &OutputRow,
+    left_cols: usize,
+    right_cols: usize,
+    col_offset: usize,
+) -> usize {
+    let l_segs = if is_left_active(r.kind, r.mov_side) {
+        pane_text_seg_count(&r.old_text(), left_cols, col_offset)
+    } else {
+        0
+    };
+    let r_segs = if is_right_active(r.kind, r.mov_side) {
+        pane_text_seg_count(&r.new_text(), right_cols, col_offset)
+    } else {
+        0
+    };
+    l_segs.max(r_segs).max(1)
 }
 
 fn build_blank_pane_spans(

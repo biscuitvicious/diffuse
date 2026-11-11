@@ -52,6 +52,10 @@ pub const fn gutter_width(line_num_width: usize) -> usize {
     dual_gutter_width(0, line_num_width)
 }
 
+/// Minimum character width required for each pane individually to enable
+/// side-by-side mode by default.
+pub const MIN_SIDE_BY_SIDE_PANE_CHARS: usize = 80;
+
 /// Partition `content_width` into `(left_width, right_width)` reserving 1
 /// column for the center vertical divider between split dual panes.
 #[inline]
@@ -62,11 +66,134 @@ pub const fn split_pane_widths(content_width: usize) -> (usize, usize) {
     (left, right)
 }
 
+/// Returns true if `content_width` is wide enough that both the left and right
+/// panes individually receive at least [`MIN_SIDE_BY_SIDE_PANE_CHARS`] columns.
+#[inline]
+pub const fn is_wide_enough_for_side_by_side(content_width: usize) -> bool {
+    let (left, right) = split_pane_widths(content_width);
+    left >= MIN_SIDE_BY_SIDE_PANE_CHARS && right >= MIN_SIDE_BY_SIDE_PANE_CHARS
+}
+
 /// Visual widths of the line number prefix gutters for split dual-pane diffs
 /// as `(left_gutter_width, right_gutter_width)`.
 #[inline]
 pub const fn split_gutter_widths(old_line_width: usize, new_line_width: usize) -> (usize, usize) {
     (gutter_width(old_line_width), gutter_width(new_line_width))
+}
+
+/// Layout metrics and column budgets for side-by-side (split dual-pane) diffs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitPaneLayout {
+    /// Overall width of the left (pre-image) pane in columns.
+    pub left_w: usize,
+    /// Overall width of the right (post-image) pane in columns.
+    pub right_w: usize,
+    /// Line number gutter width of the left pane in columns.
+    pub left_gw: usize,
+    /// Line number gutter width of the right pane in columns.
+    pub right_gw: usize,
+    /// Available text column budget for the left pane (`max(1)`).
+    pub left_cols: usize,
+    /// Available text column budget for the right pane (`max(1)`).
+    pub right_cols: usize,
+}
+
+/// Compute the full layout metrics and text column budgets for split dual-pane
+/// diffs from total content width and pane line number widths.
+#[inline]
+pub const fn split_pane_layout(
+    content_width: usize,
+    old_line_width: usize,
+    new_line_width: usize,
+) -> SplitPaneLayout {
+    let (left_w, right_w) = split_pane_widths(content_width);
+    let (left_gw, right_gw) = split_gutter_widths(old_line_width, new_line_width);
+    let left_avail = left_w.saturating_sub(left_gw);
+    let right_avail = right_w.saturating_sub(right_gw);
+    let left_cols = if left_avail > 0 { left_avail } else { 1 };
+    let right_cols = if right_avail > 0 { right_avail } else { 1 };
+    SplitPaneLayout {
+        left_w,
+        right_w,
+        left_gw,
+        right_gw,
+        left_cols,
+        right_cols,
+    }
+}
+
+/// Returns whether the left pane displays content for this row.
+#[inline]
+pub const fn is_left_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
+    match kind {
+        RowKind::Ctx | RowKind::Mod | RowKind::Del => true,
+        RowKind::Mov => match mov_side {
+            Some(MovSide::Src) => true,
+            Some(MovSide::Tgt) => false,
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+/// Returns whether the right pane displays content for this row.
+#[inline]
+pub const fn is_right_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
+    match kind {
+        RowKind::Ctx | RowKind::Mod | RowKind::Add => true,
+        RowKind::Mov => match mov_side {
+            Some(MovSide::Tgt) => true,
+            Some(MovSide::Src) => false,
+            None => true,
+        },
+        _ => false,
+    }
+}
+
+/// Returns the 2-character gutter glyph string for the left (pre-image) pane of
+/// a split row.
+#[inline]
+pub const fn split_left_glyph(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
+) -> &'static str {
+    match (group, kind) {
+        (Some(RowGroup::Anchor), RowKind::Mod) => "~ ",
+        (Some(RowGroup::Aux { .. }), RowKind::Del) => "~-",
+        _ => match kind {
+            RowKind::Mod => " ~",
+            RowKind::Del => " -",
+            RowKind::Mov => match mov_side {
+                Some(MovSide::Src) => "≈-",
+                _ => "  ",
+            },
+            _ => "  ",
+        },
+    }
+}
+
+/// Returns the 2-character gutter glyph string for the right (post-image) pane
+/// of a split row.
+#[inline]
+pub const fn split_right_glyph(
+    kind: RowKind,
+    mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
+) -> &'static str {
+    match (group, kind) {
+        (Some(RowGroup::Anchor), RowKind::Mod) => "~ ",
+        (Some(RowGroup::Aux { .. }), RowKind::Add) => "~+",
+        _ => match kind {
+            RowKind::Mod => " ~",
+            RowKind::Add => " +",
+            RowKind::Mov => match mov_side {
+                Some(MovSide::Tgt) => "≈+",
+                _ => "  ",
+            },
+            _ => "  ",
+        },
+    }
 }
 
 /// Static space padding matching line number widths `0..=MAX_LINE_NUM_WIDTH` (0
@@ -439,21 +566,17 @@ pub fn prefix_of_with_mod_side_and_widths(
 pub fn split_left_prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
     old_line: Option<u32>,
     old_line_width: usize,
 ) -> String {
-    if kind == RowKind::Add || mov_side == Some(MovSide::Tgt) {
+    if !is_left_active(kind, mov_side) {
         return static_spaces(gutter_width(old_line_width)).to_string();
     }
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
     let pad = format_line_num(old_line, old_line_width, &mut buf);
-    match kind {
-        RowKind::Ctx => format!("{pad}  "),
-        RowKind::Mod => format!("{pad} ~"),
-        RowKind::Del => format!("{pad} -"),
-        RowKind::Mov if mov_side == Some(MovSide::Src) => format!("{pad}≈-"),
-        _ => format!("{pad}  "),
-    }
+    let glyph = split_left_glyph(kind, mov_side, group);
+    format!("{pad}{glyph}")
 }
 
 /// Plain text gutter prefix for the right (new / post-image) pane of a split
@@ -462,21 +585,17 @@ pub fn split_left_prefix_of(
 pub fn split_right_prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
     new_line: Option<u32>,
     new_line_width: usize,
 ) -> String {
-    if kind == RowKind::Del || mov_side == Some(MovSide::Src) {
+    if !is_right_active(kind, mov_side) {
         return static_spaces(gutter_width(new_line_width)).to_string();
     }
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
     let pad = format_line_num(new_line, new_line_width, &mut buf);
-    match kind {
-        RowKind::Ctx => format!("{pad}  "),
-        RowKind::Mod => format!("{pad} ~"),
-        RowKind::Add => format!("{pad} +"),
-        RowKind::Mov if mov_side == Some(MovSide::Tgt) => format!("{pad}≈+"),
-        _ => format!("{pad}  "),
-    }
+    let glyph = split_right_glyph(kind, mov_side, group);
+    format!("{pad}{glyph}")
 }
 
 /// Generate the span-native coordinate gutter for an arbitrary line number
@@ -827,9 +946,11 @@ pub fn styled_prefix_spans(
 
 /// Generate styled gutter prefix spans for the left (old / pre-image) pane of a
 /// split row.
+#[allow(clippy::too_many_arguments)]
 pub fn styled_split_left_prefix_spans(
     kind: RowKind,
     mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
     old_line: Option<u32>,
     in_hunk: bool,
     bg: Option<Color>,
@@ -837,7 +958,7 @@ pub fn styled_split_left_prefix_spans(
     old_line_width: usize,
 ) -> Vec<StyledSpan> {
     let total_w = gutter_width(old_line_width);
-    if kind == RowKind::Add || mov_side == Some(MovSide::Tgt) {
+    if !is_left_active(kind, mov_side) {
         return vec![StyledSpan::styled(static_spaces(total_w), None, bg)];
     }
     let palette = theme.palette;
@@ -851,41 +972,53 @@ pub fn styled_split_left_prefix_spans(
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
     let pad = format_line_num(old_line, old_line_width, &mut buf);
 
-    match kind {
-        RowKind::Ctx => {
-            vec![ctx_num.span(format!("{pad}  "), bg)]
+    match (group, kind) {
+        (Some(RowGroup::Anchor), RowKind::Mod) => {
+            vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
         }
-        RowKind::Mod => {
-            vec![
-                r#mod.num.span(format!("{pad} "), bg),
-                r#mod.icon.span("~", bg),
-            ]
-        }
-        RowKind::Del => {
-            vec![
-                del.num.span(pad, bg),
-                StyledSpan::styled(" ", Some(del.num.color), bg),
-                del.icon.span("-", bg),
-            ]
-        }
-        RowKind::Mov if mov_side == Some(MovSide::Src) => {
-            vec![
-                del.num.span(pad, bg),
-                mov.icon.span("≈", bg),
-                del.icon.span("-", bg),
-            ]
-        }
-        _ => {
-            vec![ctx_num.span(format!("{pad}  "), bg)]
-        }
+        (Some(RowGroup::Aux { .. }), RowKind::Del) => vec![
+            del.num.span(pad, bg),
+            r#mod.icon.span("~", bg),
+            del.icon.span("-", bg),
+        ],
+        _ => match kind {
+            RowKind::Ctx => {
+                vec![ctx_num.span(format!("{pad}  "), bg)]
+            }
+            RowKind::Mod => {
+                vec![
+                    r#mod.num.span(format!("{pad} "), bg),
+                    r#mod.icon.span("~", bg),
+                ]
+            }
+            RowKind::Del => {
+                vec![
+                    del.num.span(pad, bg),
+                    StyledSpan::styled(" ", Some(del.num.color), bg),
+                    del.icon.span("-", bg),
+                ]
+            }
+            RowKind::Mov if mov_side == Some(MovSide::Src) => {
+                vec![
+                    del.num.span(pad, bg),
+                    mov.icon.span("≈", bg),
+                    del.icon.span("-", bg),
+                ]
+            }
+            _ => {
+                vec![ctx_num.span(format!("{pad}  "), bg)]
+            }
+        },
     }
 }
 
 /// Generate styled gutter prefix spans for the right (new / post-image) pane of
 /// a split row.
+#[allow(clippy::too_many_arguments)]
 pub fn styled_split_right_prefix_spans(
     kind: RowKind,
     mov_side: Option<MovSide>,
+    group: Option<RowGroup>,
     new_line: Option<u32>,
     in_hunk: bool,
     bg: Option<Color>,
@@ -893,7 +1026,7 @@ pub fn styled_split_right_prefix_spans(
     new_line_width: usize,
 ) -> Vec<StyledSpan> {
     let total_w = gutter_width(new_line_width);
-    if kind == RowKind::Del || mov_side == Some(MovSide::Src) {
+    if !is_right_active(kind, mov_side) {
         return vec![StyledSpan::styled(static_spaces(total_w), None, bg)];
     }
     let palette = theme.palette;
@@ -907,29 +1040,39 @@ pub fn styled_split_right_prefix_spans(
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
     let pad = format_line_num(new_line, new_line_width, &mut buf);
 
-    match kind {
-        RowKind::Ctx => {
-            vec![ctx_num.span(format!("{pad}  "), bg)]
+    match (group, kind) {
+        (Some(RowGroup::Anchor), RowKind::Mod) => {
+            vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
         }
-        RowKind::Mod => {
-            vec![
-                r#mod.num.span(format!("{pad} "), bg),
-                r#mod.icon.span("~", bg),
-            ]
-        }
-        RowKind::Add => {
-            vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
-        }
-        RowKind::Mov if mov_side == Some(MovSide::Tgt) => {
-            vec![
-                add.num.span(pad, bg),
-                mov.icon.span("≈", bg),
-                add.icon.span("+", bg),
-            ]
-        }
-        _ => {
-            vec![ctx_num.span(format!("{pad}  "), bg)]
-        }
+        (Some(RowGroup::Aux { .. }), RowKind::Add) => vec![
+            add.num.span(pad, bg),
+            r#mod.icon.span("~", bg),
+            add.icon.span("+", bg),
+        ],
+        _ => match kind {
+            RowKind::Ctx => {
+                vec![ctx_num.span(format!("{pad}  "), bg)]
+            }
+            RowKind::Mod => {
+                vec![
+                    r#mod.num.span(format!("{pad} "), bg),
+                    r#mod.icon.span("~", bg),
+                ]
+            }
+            RowKind::Add => {
+                vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
+            }
+            RowKind::Mov if mov_side == Some(MovSide::Tgt) => {
+                vec![
+                    add.num.span(pad, bg),
+                    mov.icon.span("≈", bg),
+                    add.icon.span("+", bg),
+                ]
+            }
+            _ => {
+                vec![ctx_num.span(format!("{pad}  "), bg)]
+            }
+        },
     }
 }
 

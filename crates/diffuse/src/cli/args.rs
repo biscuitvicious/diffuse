@@ -477,6 +477,27 @@ impl Args {
             Some(false)
         }
     }
+
+    /// Returns the explicit side-by-side preference if specified via CLI flags
+    /// (`--side-by-side` / `--split` -> `Some(true)`, `--unified` ->
+    /// `Some(false)`), or `None` if neither was supplied.
+    pub fn explicit_side_by_side(&self) -> Option<bool> {
+        if self.side_by_side {
+            Some(true)
+        } else if self.unified {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// Resolves whether side-by-side mode is active for a given column width.
+    /// Explicit CLI flags take precedence; otherwise side-by-side is enabled by
+    /// default iff both panes individually become >= 80 characters wide.
+    pub fn resolved_side_by_side(&self, width: usize) -> bool {
+        self.explicit_side_by_side()
+            .unwrap_or_else(|| diffuse_render::is_wide_enough_for_side_by_side(width))
+    }
 }
 
 /// Reusable git diff arguments (revisions, commit ranges, or file pathspecs).

@@ -903,3 +903,77 @@ fn test_cli_line_number_width_flag() {
     assert_eq!(args.line_number_width, Some(0));
     assert_eq!(args.revision.git_revs, vec!["HEAD~1"]);
 }
+
+#[test]
+fn test_cli_side_by_side_and_unified_args_parsing() {
+    // 1. Defaults: neither flag set
+    let args = Args::try_parse_from(["diffuse"]).expect("default args");
+    assert!(!args.side_by_side);
+    assert!(!args.unified);
+    assert_eq!(args.explicit_side_by_side(), None);
+    assert!(!args.resolved_side_by_side(80));
+    assert!(!args.resolved_side_by_side(120));
+    assert!(!args.resolved_side_by_side(160));
+    assert!(args.resolved_side_by_side(161));
+    assert!(args.resolved_side_by_side(200));
+
+    // 2. --side-by-side enables side-by-side
+    let args = Args::try_parse_from(["diffuse", "--side-by-side"]).expect("side-by-side");
+    assert!(args.side_by_side);
+    assert!(!args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(true));
+    assert!(args.resolved_side_by_side(80));
+    assert!(args.resolved_side_by_side(200));
+
+    // 3. --split alias enables side-by-side
+    let args = Args::try_parse_from(["diffuse", "--split"]).expect("split");
+    assert!(args.side_by_side);
+    assert!(!args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(true));
+    assert!(args.resolved_side_by_side(80));
+
+    // 4. --unified enables unified
+    let args = Args::try_parse_from(["diffuse", "--unified"]).expect("unified");
+    assert!(!args.side_by_side);
+    assert!(args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(false));
+    assert!(!args.resolved_side_by_side(80));
+    assert!(!args.resolved_side_by_side(200));
+
+    // 5. Overrides: --side-by-side then --unified -> unified wins
+    let args =
+        Args::try_parse_from(["diffuse", "--side-by-side", "--unified"]).expect("sbs then unified");
+    assert!(!args.side_by_side);
+    assert!(args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(false));
+    assert!(!args.resolved_side_by_side(200));
+
+    // 6. Overrides: --unified then --side-by-side -> side-by-side wins
+    let args =
+        Args::try_parse_from(["diffuse", "--unified", "--side-by-side"]).expect("unified then sbs");
+    assert!(args.side_by_side);
+    assert!(!args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(true));
+    assert!(args.resolved_side_by_side(80));
+
+    // 7. Overrides: --split then --unified -> unified wins
+    let args =
+        Args::try_parse_from(["diffuse", "--split", "--unified"]).expect("split then unified");
+    assert!(!args.side_by_side);
+    assert!(args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(false));
+
+    // 8. Overrides: --unified then --split -> side-by-side wins
+    let args =
+        Args::try_parse_from(["diffuse", "--unified", "--split"]).expect("unified then split");
+    assert!(args.side_by_side);
+    assert!(!args.unified);
+    assert_eq!(args.explicit_side_by_side(), Some(true));
+
+    // 9. Compatible with pager flag and positional revision
+    let args = Args::try_parse_from(["diffuse", "-p", "--side-by-side", "HEAD~1"])
+        .expect("pager with sbs and rev");
+    assert!(args.pager);
+    assert!(args.side_by_side);
+    assert_eq!(args.revision.git_revs, vec!["HEAD~1"]);
+}

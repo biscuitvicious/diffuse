@@ -5,11 +5,7 @@ impl AppState {
         let prev_item = self.flat.get(self.row_idx).cloned();
         let prev_vis_line = self.vis_line;
 
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
-        };
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
 
@@ -119,11 +115,7 @@ impl AppState {
         }
 
         self.hunk_meta = Self::build_hunk_meta(&self.output);
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
-        };
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
         self.anchor = None;

@@ -43,17 +43,25 @@ struct BufferedSession {
     drawn: usize,
     first_frame: Option<(Instant, String)>,
     frames: Vec<String>,
+    width: u16,
+    height: u16,
 }
 
 impl BufferedSession {
     fn new(polls_left: usize) -> Self {
-        let backend = TestBackend::new(WIDTH, HEIGHT);
+        Self::with_dimensions(WIDTH, HEIGHT, polls_left)
+    }
+
+    fn with_dimensions(width: u16, height: u16, polls_left: usize) -> Self {
+        let backend = TestBackend::new(width, height);
         Self {
             terminal: Terminal::new(backend).expect("in-memory terminal must construct"),
             polls_left: Cell::new(polls_left),
             drawn: 0,
             first_frame: None,
             frames: Vec::new(),
+            width,
+            height,
         }
     }
 
@@ -61,8 +69,8 @@ impl BufferedSession {
     fn screen_text(&self) -> String {
         let buffer = self.terminal.backend().buffer();
         let mut text = String::new();
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
+        for y in 0..self.height {
+            for x in 0..self.width {
                 text.push_str(buffer[(x, y)].symbol());
             }
             text.push('\n');
@@ -82,7 +90,7 @@ impl Session for BufferedSession {
     }
 
     fn size(&self) -> (u16, u16) {
-        (WIDTH, HEIGHT)
+        (self.width, self.height)
     }
 
     fn draw_frame(&mut self, state: &mut AppState) -> io::Result<()> {
@@ -139,7 +147,7 @@ fn first_frame_is_presented_promptly() {
         false,
         None,
         None,
-        false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
     let elapsed = started.elapsed();
@@ -197,7 +205,7 @@ fn empty_state_notice_waits_for_the_stream() {
         false,
         None,
         None,
-        false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
 
@@ -248,7 +256,7 @@ fn first_frame_precedes_streamed_files() {
         false,
         None,
         None,
-        false,
+        None,
     )
     .expect("the loop returns after the session disconnects");
 
@@ -300,7 +308,7 @@ fn test_run_session_with_expand_mods_expands_mod_rows() {
         false,
         Some(true),
         None,
-        false,
+        None,
     )
     .expect("the loop returns");
 
@@ -308,4 +316,62 @@ fn test_run_session_with_expand_mods_expands_mod_rows() {
     eprintln!("LAST FRAME:\n{last_frame}");
     assert!(last_frame.contains("┌-"));
     assert!(last_frame.contains("└+"));
+}
+
+#[test]
+fn test_run_session_auto_defaults_side_by_side_on_wide_terminal() {
+    let mut session = BufferedSession::with_dimensions(180, 24, 0);
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    let screen = &session.first_frame.unwrap().1;
+    assert!(
+        screen.contains('│'),
+        "180-col terminal must auto-default to side-by-side with divider '│':\n{screen}"
+    );
+}
+
+#[test]
+fn test_run_session_defaults_to_unified_on_narrow_terminal() {
+    let mut session = BufferedSession::with_dimensions(120, 24, 0);
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    let screen = &session.first_frame.unwrap().1;
+    assert!(
+        !screen.contains('│'),
+        "120-col terminal must default to unified diff (no divider):\n{screen}"
+    );
 }

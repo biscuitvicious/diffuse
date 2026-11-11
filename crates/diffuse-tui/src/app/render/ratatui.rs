@@ -156,7 +156,11 @@ impl AppState {
                     total_hunks: 0,
                     raw_diff: self.raw_diff,
                     side_by_side: self.side_by_side,
-                    expanded_mods_count: self.expanded_mods.len(),
+                    expanded_mods_count: if self.side_by_side {
+                        0
+                    } else {
+                        self.expanded_mods.len()
+                    },
                     total_mods: self.total_mod_rows(),
                     col_offset: self.col_offset,
                     num_buffer: &self.num_buffer,
@@ -279,7 +283,11 @@ impl AppState {
                 total_hunks: file_ref.map_or(0, |fl| fl.hunks.len().max(1)),
                 raw_diff: self.raw_diff,
                 side_by_side: self.side_by_side,
-                expanded_mods_count: self.expanded_mods.len(),
+                expanded_mods_count: if self.side_by_side {
+                    0
+                } else {
+                    self.expanded_mods.len()
+                },
                 total_mods: self.total_mod_rows(),
                 col_offset: self.col_offset,
                 num_buffer: &self.num_buffer,

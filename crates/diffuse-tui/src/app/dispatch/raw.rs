@@ -49,16 +49,12 @@ impl AppState {
                 (row.file_idx, neighbor_coord, neighbor_coord)
             }
         };
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
-        } else {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        };
+        let was_raw = self.raw_diff;
+        self.raw_diff = !self.raw_diff;
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;
-        let was_raw = self.raw_diff;
-        self.raw_diff = !self.raw_diff;
         self.recalculate_line_num_width();
         self.anchor = None;
 

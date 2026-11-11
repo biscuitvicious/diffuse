@@ -14,6 +14,20 @@ use crate::{
 use super::AppState;
 
 impl AppState {
+    /// Build flat rows and hunk starts according to the active representation:
+    /// raw diff, split (side-by-side) with expanded mods suppressed, or visual
+    /// unified with active expanded mods.
+    pub(crate) fn build_current_flat(&self) -> (Vec<FlatRow>, Vec<HunkStart>) {
+        if self.raw_diff {
+            Self::build_raw_flat(&self.output, &self.collapsed_files)
+        } else if self.side_by_side {
+            let empty = HashSet::new();
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &empty)
+        } else {
+            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
+        }
+    }
+
     pub(crate) fn build_visual_flat(
         output: &PipelineOutput,
         collapsed_files: &HashSet<usize>,

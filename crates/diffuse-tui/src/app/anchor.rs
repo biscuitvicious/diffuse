@@ -137,11 +137,7 @@ impl AppState {
         hi: usize,
         fallback: DividerFallback,
     ) {
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods)
-        };
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.bump_content();
         self.hunk_starts = hunk_starts;

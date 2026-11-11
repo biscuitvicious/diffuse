@@ -1394,3 +1394,160 @@ fn test_side_by_side_diff_layout_and_toggle() {
         }
     }
 }
+
+#[test]
+fn test_side_by_side_anchor_and_aux_gutter_icons() {
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,3 +5,6 @@\n \n-use std::fmt::{self, Write};\n+use std::{\n+    borrow::Cow,\n+    fmt::{self, Write},\n+};\n \n";
+    let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        output,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+    state.side_by_side = true;
+    let (w, h) = (120, 24);
+    let buf = state.render_to_buffer(w, h);
+    let mut screen = String::new();
+    for y in 0..h {
+        for x in 0..w {
+            screen.push_str(buf[(x, y)].symbol());
+        }
+        screen.push('\n');
+    }
+    // Anchor row has "~ " icon
+    assert!(
+        screen.contains("~ "),
+        "screen must contain anchor icon '~ ':\n{screen}"
+    );
+    // Aux addition row has "~+" icon
+    assert!(
+        screen.contains("~+"),
+        "screen must contain aux add icon '~+':\n{screen}"
+    );
+}
+
+#[test]
+fn test_side_by_side_aux_deletion_gutter_icon() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -53,3 +67,3 @@\n-    /// movs, notes). At most five segments exist, stored inline. Empty when\n-    /// [`FileCounts::is_empty`].\n-    pub fn segments(&self) -> SmallVec<[CountSegment; 5]> {\n+    /// movs, notes, in_progress, resolved). At most seven segments exist,\n+    /// stored inline. Empty when [`FileCounts::is_empty`].\n+    pub fn segments(&self) -> SmallVec<[CountSegment; 7]> {\n";
+    let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        output,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+    state.side_by_side = true;
+    let (w, h) = (120, 24);
+    let buf = state.render_to_buffer(w, h);
+    let mut screen = String::new();
+    for y in 0..h {
+        for x in 0..w {
+            screen.push_str(buf[(x, y)].symbol());
+        }
+        screen.push('\n');
+    }
+    // Anchor row has "~ " icon
+    assert!(
+        screen.contains("~ "),
+        "screen must contain anchor icon '~ ':\n{screen}"
+    );
+    // Aux deletion row has "~-" icon
+    assert!(
+        screen.contains("~-"),
+        "screen must contain aux del icon '~-':\n{screen}"
+    );
+}
+
+#[test]
+fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
+    let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        output,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true))
+    .with_side_by_side(true);
+
+    assert!(state.side_by_side);
+    assert_eq!(state.expand_mods, Some(true));
+    assert_eq!(state.expanded_mods.len(), 1);
+
+    // 1. In side-by-side mode, flat rows must NOT have ExpandedMod rows
+    assert!(
+        !state.flat.iter().any(|r| r.is_expanded_mod()),
+        "side-by-side mode must not have expanded mod rows in flat list"
+    );
+
+    // 2. Render buffer in side-by-side mode: mod row must only appear ONCE, no
+    //    duplicate
+    let (w, h) = (165, 24);
+    let buf_sbs = state.render_to_buffer(w, h);
+    let mut screen_sbs = String::new();
+    for y in 0..h {
+        let mut line = String::new();
+        for x in 0..w {
+            line.push_str(buf_sbs[(x, y)].symbol());
+        }
+        screen_sbs.push_str(&line);
+        screen_sbs.push('\n');
+    }
+    // Gutter box glyphs ┌ and └ must NOT appear in side-by-side
+    assert!(!screen_sbs.contains("┌-"));
+    assert!(!screen_sbs.contains("└+"));
+
+    // Check that "let a =" appears in exactly one line of content
+    let mod_occurrences = screen_sbs.lines().filter(|l| l.contains("let a =")).count();
+    assert_eq!(
+        mod_occurrences, 1,
+        "mod row must be rendered exactly once in side-by-side mode, but appeared {mod_occurrences} times:\n{screen_sbs}"
+    );
+
+    // 3. Key shortcut 'e' (ToggleExpandAllMods) must be disabled in side-by-side
+    state.execute(TuiCommand::ToggleExpandAllMods);
+    assert!(
+        !state.flat.iter().any(|r| r.is_expanded_mod()),
+        "ToggleExpandAllMods must be disabled in side-by-side mode"
+    );
+
+    // 4. Enter on mod row (ToggleCollapseFile(None)) must be disabled in
+    //    side-by-side
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert!(
+        !state.flat.iter().any(|r| r.is_expanded_mod()),
+        "ToggleCollapseFile on mod row must be disabled in side-by-side mode"
+    );
+
+    // 5. Switching back to unified mode (ToggleSideBySide via '\') restores
+    //    expanded mods!
+    state.execute(TuiCommand::ToggleSideBySide);
+    assert!(!state.side_by_side);
+    assert!(
+        state.flat.iter().any(|r| r.is_expanded_mod()),
+        "switching back to unified mode must restore expanded mod rows"
+    );
+
+    let buf_unified = state.render_to_buffer(w, h);
+    let mut screen_unified = String::new();
+    for y in 0..h {
+        let mut line = String::new();
+        for x in 0..w {
+            line.push_str(buf_unified[(x, y)].symbol());
+        }
+        screen_unified.push_str(&line);
+        screen_unified.push('\n');
+    }
+    assert!(screen_unified.contains("┌-"));
+    assert!(screen_unified.contains("└+"));
+
+    // 6. Switching to side-by-side again turns off expanded mods again!
+    state.execute(TuiCommand::ToggleSideBySide);
+    assert!(state.side_by_side);
+    assert!(
+        !state.flat.iter().any(|r| r.is_expanded_mod()),
+        "switching back to side-by-side mode must suppress expanded mod rows again"
+    );
+}

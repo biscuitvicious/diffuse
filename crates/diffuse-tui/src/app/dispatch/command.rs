@@ -77,10 +77,7 @@ impl AppState {
                 self.show_old_line_gutter = Some(!active);
                 self.bump_content();
             }
-            TuiCommand::ToggleSideBySide => {
-                self.side_by_side = !self.side_by_side;
-                self.bump_content();
-            }
+            TuiCommand::ToggleSideBySide => self.toggle_side_by_side(),
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
             TuiCommand::ToggleTheme => {
                 // Resolve the opposite-mode pair from the theme's asset
@@ -403,5 +400,19 @@ impl AppState {
             }
             TuiCommand::EndMouseDrag => self.on_mouse_drag_end(),
         }
+    }
+
+    /// Toggle between split (side-by-side) and unified diff display modes.
+    ///
+    /// Preserves the active cursor coordinate and screen Y position. In split
+    /// mode, modification row expansion is disabled (each modification is
+    /// displayed on a single row with pre- and post-image panes side-by-side).
+    /// When switching back to unified mode, any expanded modification rows
+    /// previously active are restored.
+    pub fn toggle_side_by_side(&mut self) {
+        let snapshot = self.capture_cursor_snapshot();
+        self.side_by_side = !self.side_by_side;
+        self.rebuild_flat_preserving_snapshot(&snapshot);
+        self.bump_content();
     }
 }

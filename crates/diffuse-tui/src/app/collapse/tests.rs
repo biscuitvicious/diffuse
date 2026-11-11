@@ -1016,3 +1016,88 @@ fn test_append_file_auto_expands_when_expand_mods_some_true() {
     // File 2's mod row should have been auto-expanded into expanded_mods
     assert_eq!(state.expanded_mods.len(), 2);
 }
+
+#[test]
+fn test_side_by_side_toggle_preserves_expanded_mods_state() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
+    let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true));
+
+    assert_eq!(state.expanded_mods.len(), 1);
+    assert!(state.flat.iter().any(|r| r.is_expanded_mod()));
+
+    let mod_row = state
+        .flat
+        .iter()
+        .find_map(|fr| {
+            state
+                .row_of(fr)
+                .filter(|r| r.kind == crate::core::parse::RowKind::Mod)
+        })
+        .unwrap()
+        .clone();
+
+    // 1. Toggle to split mode
+    state.toggle_side_by_side();
+    assert!(state.side_by_side);
+    assert_eq!(state.expanded_mods.len(), 1);
+    assert!(!state.flat.iter().any(|r| r.is_expanded_mod()));
+    assert!(!state.is_mod_expanded(0, &mod_row));
+
+    // 2. Shortcuts in split mode are no-ops
+    state.toggle_expand_all_mods();
+    assert_eq!(state.expanded_mods.len(), 1);
+    assert!(!state.flat.iter().any(|r| r.is_expanded_mod()));
+
+    state.toggle_current_mod_row();
+    assert_eq!(state.expanded_mods.len(), 1);
+    assert!(!state.flat.iter().any(|r| r.is_expanded_mod()));
+
+    // 3. Toggle back to unified mode
+    state.toggle_side_by_side();
+    assert!(!state.side_by_side);
+    assert_eq!(state.expanded_mods.len(), 1);
+    assert!(state.flat.iter().any(|r| r.is_expanded_mod()));
+    assert!(state.is_mod_expanded(0, &mod_row));
+}
+
+#[test]
+fn test_side_by_side_and_expand_mods_initialization_order() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
+
+    // Order 1: with_expand_mods then with_side_by_side
+    let out1 = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let state1 = AppState::new(
+        out1,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true))
+    .with_side_by_side(true);
+
+    assert!(state1.side_by_side);
+    assert_eq!(state1.expanded_mods.len(), 1);
+    assert!(!state1.flat.iter().any(|r| r.is_expanded_mod()));
+
+    // Order 2: with_side_by_side then with_expand_mods
+    let out2 = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let state2 = AppState::new(
+        out2,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_side_by_side(true)
+    .with_expand_mods(Some(true));
+
+    assert!(state2.side_by_side);
+    assert_eq!(state2.expanded_mods.len(), 1);
+    assert!(!state2.flat.iter().any(|r| r.is_expanded_mod()));
+}

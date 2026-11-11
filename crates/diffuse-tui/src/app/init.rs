@@ -156,13 +156,19 @@ impl AppState {
     pub fn with_expand_mods(mut self, expand_mods: Option<bool>) -> Self {
         self.expand_mods = expand_mods;
         if expand_mods == Some(true) {
-            self.expand_all_mods();
+            self.populate_all_expanded_mods();
+            let (flat, hunk_starts) = self.build_current_flat();
+            self.flat = flat;
+            self.hunk_starts = hunk_starts;
         }
         self
     }
 
     pub fn with_side_by_side(mut self, side_by_side: bool) -> Self {
         self.side_by_side = side_by_side;
+        let (flat, hunk_starts) = self.build_current_flat();
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
         self
     }
 

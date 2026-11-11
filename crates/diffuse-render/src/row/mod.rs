@@ -12,25 +12,28 @@ mod tests;
 
 pub use gutter::{
     BOX_PREFIXES, DEFAULT_PAGER_LINE_NUM_WIDTH, ELLIPSIS, GUTTER_SPACES, LINE_NUM_SPACES,
-    MAX_LINE_NUM_BUF_LEN, MAX_LINE_NUM_WIDTH, STATIC_SPACES,
-    continuation_prefix_plain_with_mod_side, continuation_prefix_plain_with_mod_side_and_width,
+    MAX_LINE_NUM_BUF_LEN, MAX_LINE_NUM_WIDTH, MIN_SIDE_BY_SIDE_PANE_CHARS, STATIC_SPACES,
+    SplitPaneLayout, continuation_prefix_plain_with_mod_side,
+    continuation_prefix_plain_with_mod_side_and_width,
     continuation_prefix_plain_with_mod_side_and_widths, continuation_prefix_spans,
     continuation_prefix_spans_with_mod_side, continuation_prefix_spans_with_mod_side_and_width,
     continuation_prefix_spans_with_mod_side_and_widths, continuation_prefix_spans_with_width,
-    dual_gutter_width, format_line_num, gutter_width, prefix_of, prefix_of_with_mod_side,
+    dual_gutter_width, format_line_num, gutter_width, is_left_active, is_right_active,
+    is_wide_enough_for_side_by_side, prefix_of, prefix_of_with_mod_side,
     prefix_of_with_mod_side_and_width, prefix_of_with_mod_side_and_widths, split_gutter_widths,
-    split_left_continuation_prefix_plain, split_left_prefix_of, split_pane_widths,
-    split_right_continuation_prefix_plain, split_right_prefix_of, static_spaces,
-    styled_prefix_spans, styled_prefix_spans_with_width, styled_prefix_spans_with_widths,
-    styled_split_left_continuation_prefix_spans, styled_split_left_prefix_spans,
-    styled_split_right_continuation_prefix_spans, styled_split_right_prefix_spans,
-    write_gutter_prefix,
+    split_left_continuation_prefix_plain, split_left_glyph, split_left_prefix_of,
+    split_pane_layout, split_pane_widths, split_right_continuation_prefix_plain, split_right_glyph,
+    split_right_prefix_of, static_spaces, styled_prefix_spans, styled_prefix_spans_with_width,
+    styled_prefix_spans_with_widths, styled_split_left_continuation_prefix_spans,
+    styled_split_left_prefix_spans, styled_split_right_continuation_prefix_spans,
+    styled_split_right_prefix_spans, write_gutter_prefix,
 };
 pub use note::{note_segment_spans, render_note_segment, write_note_segment};
 pub use raw::{raw_row_spans, render_raw_row, write_raw_row};
 pub use segment::{
-    RowSegmentLine, is_common_only_row, is_pure_deletion_mod, render_row_segment,
-    render_side_by_side_row_segment, row_segment_spans, side_by_side_row_segment_spans,
-    write_row_segment, write_side_by_side_row_segment, write_spans_ansi,
+    RowSegmentLine, is_common_only_row, is_pure_deletion_mod, pane_text_seg_count,
+    render_row_segment, render_side_by_side_row_segment, row_segment_spans,
+    side_by_side_row_seg_count, side_by_side_row_segment_spans, write_row_segment,
+    write_side_by_side_row_segment, write_spans_ansi,
 };
 pub use text::{display_text, expand_runs_tabs, expand_tabs, slice_by_visual_width};

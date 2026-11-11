@@ -61,7 +61,7 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     }
     if ctx.raw_diff {
         trailing.push((Cow::Borrowed("raw diff"), p.status_bar_accent, true));
-    } else if ctx.expanded_mods_count > 0 {
+    } else if !ctx.side_by_side && ctx.expanded_mods_count > 0 {
         let label = if ctx.total_mods > 0 && ctx.expanded_mods_count == ctx.total_mods {
             Cow::Borrowed("expanded mods")
         } else if ctx.expanded_mods_count == 1 {
@@ -425,6 +425,13 @@ mod tests {
         c.raw_diff = true;
         let layout = status_layout(&c);
         assert_eq!(plain(&layout), "raw diff");
+
+        // When in split mode, expanded mods badge is suppressed in favor of split
+        c.raw_diff = false;
+        c.side_by_side = true;
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "split");
+        assert!(!plain(&layout).contains("expanded"));
     }
 
     #[test]

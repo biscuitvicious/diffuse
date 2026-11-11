@@ -348,6 +348,9 @@ impl AppState {
         let new_line_w = self.new_line_num.width;
         let diff_gutter_w = self.gutter_width_for(content_width);
         let diff_text_cols = content_width.saturating_sub(diff_gutter_w).max(1);
+        let (sbs_left_w, sbs_right_w) = split_pane_widths(content_width);
+        let sbs_old_w = self.old_line_num.width;
+        let sbs_new_w = self.new_line_num.width;
         for (idx, item) in self.flat.iter().enumerate().skip(first_idx) {
             let count = counts[idx];
             if vis_i + count <= content_start_vis {
@@ -488,10 +491,6 @@ impl AppState {
                     let seg_count = seg_counts[idx];
 
                     if self.side_by_side {
-                        let (left_w, right_w) = split_pane_widths(content_width);
-                        let sbs_old_w = self.old_line_num.width;
-                        let sbs_new_w = self.new_line_num.width;
-
                         for s_idx in 0..seg_count {
                             if vis_i >= content_start_vis && vis_i < content_end_vis {
                                 let is_selected =
@@ -500,6 +499,7 @@ impl AppState {
                                     styled_split_left_prefix_spans(
                                         r.kind,
                                         r.mov_side,
+                                        r.group,
                                         r.old_line,
                                         in_hunk_extent,
                                         None,
@@ -525,6 +525,7 @@ impl AppState {
                                     styled_split_right_prefix_spans(
                                         r.kind,
                                         r.mov_side,
+                                        r.group,
                                         r.new_line,
                                         in_hunk_extent,
                                         None,
@@ -538,8 +539,8 @@ impl AppState {
                                 let row = side_by_side_row_segment_spans(
                                     r,
                                     s_idx,
-                                    left_w,
-                                    right_w,
+                                    sbs_left_w,
+                                    sbs_right_w,
                                     l_pref,
                                     r_pref,
                                     is_selected,

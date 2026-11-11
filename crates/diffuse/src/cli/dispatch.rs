@@ -326,7 +326,7 @@ fn dispatch_path_diff(
             false,
             args.resolved_expand_mods(true),
             args.line_number_width,
-            args.side_by_side,
+            args.explicit_side_by_side(),
         )?;
         return Ok(());
     }
@@ -436,7 +436,7 @@ fn dispatch_diff_stream(
             false,
             args.resolved_expand_mods(true),
             args.line_number_width,
-            args.side_by_side,
+            args.explicit_side_by_side(),
         )?;
         return Ok(());
     }
@@ -542,7 +542,7 @@ fn dispatch_git_review(
             !args.no_watch,
             args.resolved_expand_mods(true),
             args.line_number_width,
-            args.side_by_side,
+            args.explicit_side_by_side(),
         )?;
         return Ok(());
     }
@@ -637,6 +637,7 @@ fn dispatch_git_review(
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
         let expand_mods = args.resolved_expand_mods(true);
+        let side_by_side = args.resolved_side_by_side(term_width);
         // Stream each file as it is parsed. The total is only known once the
         // stream ends, so the banner carries the position alone, exactly as
         // the TUI does before the total is known.
@@ -650,7 +651,7 @@ fn dispatch_git_review(
                 term_width,
                 expand_mods,
                 args.line_number_width,
-                args.side_by_side,
+                side_by_side,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
@@ -771,6 +772,7 @@ fn consume_and_render(
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
         let expand_mods = args.resolved_expand_mods(true);
+        let side_by_side = args.resolved_side_by_side(term_width);
         // Stream each file as it is parsed. The total is only known once the
         // stream ends, so the banner carries the position alone, exactly as
         // the TUI does before the total is known.
@@ -784,7 +786,7 @@ fn consume_and_render(
                 term_width,
                 expand_mods,
                 args.line_number_width,
-                args.side_by_side,
+                side_by_side,
             );
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();

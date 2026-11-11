@@ -7,7 +7,7 @@ use crate::{
     app::AppState,
     core::wire::OutputFile,
     render::{display_text, width::display_width},
-    types::{FlatRowKind, LineNumTracking},
+    types::{FlatRow, FlatRowKind, LineNumTracking},
 };
 use diffuse_core::ModSide;
 
@@ -40,23 +40,6 @@ pub const EXPAND_GUTTER_WIDTH: usize = 1;
 /// Minimum remaining content columns required for the old-line number gutter
 /// to automatically activate.
 pub const MIN_CONTENT_COLS_FOR_OLD_GUTTER: usize = 100;
-
-#[inline]
-fn pane_text_seg_count(text: &str, cols: usize, col_offset: usize) -> usize {
-    let exp = crate::render::expand_tabs(text, 4);
-    let slice = if col_offset > 0 {
-        use unicode_segmentation::UnicodeSegmentation;
-        exp.graphemes(true).skip(col_offset).collect::<String>()
-    } else {
-        exp.into_owned()
-    };
-    let len = display_width(&slice);
-    if len == 0 {
-        1
-    } else {
-        len.div_ceil(cols.max(1))
-    }
-}
 
 impl AppState {
     /// Bump after any mutation of diff content (files, hunks, rows, flat
@@ -267,22 +250,13 @@ impl AppState {
         self.row_seg_count_with_gutter(idx, content_width, self.gutter_width_for(content_width))
     }
 
-    /// Visual wrapped line segment count for row `idx` given a pre-computed
-    /// line number gutter width.
-    pub(crate) fn row_seg_count_with_gutter(
-        &self,
-        idx: usize,
-        content_width: usize,
-        gutter_w: usize,
-    ) -> usize {
-        let Some(item) = self.flat.get(idx) else {
-            return 1;
-        };
+    /// Visual segment count for non-diff rows (file headers, hunk dividers,
+    /// bottom gap dividers) that span the full viewport width regardless of
+    /// layout mode.
+    fn non_diff_seg_count(&self, item: &FlatRow, content_width: usize) -> Option<usize> {
         match item.kind {
             FlatRowKind::FileHeader => {
-                let Some(file_obj) = self.output.files.get(item.file_idx) else {
-                    return 1;
-                };
+                let file_obj = self.output.files.get(item.file_idx)?;
                 let is_collapsed = self.collapsed_files.contains(&item.file_idx);
                 let txt = crate::view::diff_grid::file_header_text_with_prefix(
                     file_obj,
@@ -292,12 +266,10 @@ impl AppState {
                 );
                 let len = display_width(txt);
                 let text_cols = content_width.max(1);
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+                Some(if len == 0 { 1 } else { len.div_ceil(text_cols) })
             }
             FlatRowKind::HunkDivider { hunk_idx } => {
-                let Some(file) = self.output.files.get(item.file_idx) else {
-                    return 1;
-                };
+                let file = self.output.files.get(item.file_idx)?;
                 let hunks = if !file.raw_hunks.is_empty() {
                     &file.raw_hunks
                 } else {
@@ -310,44 +282,59 @@ impl AppState {
                 );
                 let len = display_width(sep_text);
                 let text_cols = content_width.max(1);
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+                Some(if len == 0 { 1 } else { len.div_ceil(text_cols) })
             }
             FlatRowKind::BottomGapDivider { .. } => {
-                self.bottom_gap_seg_count(item.file_idx, content_width)
+                Some(self.bottom_gap_seg_count(item.file_idx, content_width))
             }
-            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
-                let Some(r) = self.row_of(item) else {
-                    return 1;
-                };
-                let text = match item.kind {
-                    FlatRowKind::ExpandedMod {
-                        side: ModSide::Del, ..
-                    } => r.old_text(),
-                    FlatRowKind::ExpandedMod {
-                        side: ModSide::Add, ..
-                    } => r.new_text(),
-                    _ => r.text(),
-                };
-                if self.raw_diff {
-                    let text_cols = content_width.saturating_sub(gutter_w).max(1);
-                    let exp = crate::render::expand_tabs(&text, 4);
-                    let len = display_width(exp);
-                    if len == 0 { 1 } else { len.div_ceil(text_cols) }
-                } else {
-                    let text_cols = content_width.saturating_sub(gutter_w).max(1);
-                    let disp = display_text(
-                        &text,
-                        r.is_aux(),
-                        r.kind,
-                        &r.runs,
-                        self.col_offset,
-                        self.word_diff,
-                    );
-                    let exp = crate::render::expand_tabs(&disp, 4);
-                    let len = display_width(exp);
-                    if len == 0 { 1 } else { len.div_ceil(text_cols) }
-                }
-            }
+            _ => None,
+        }
+    }
+
+    /// Visual wrapped line segment count for row `idx` given a pre-computed
+    /// line number gutter width.
+    pub(crate) fn row_seg_count_with_gutter(
+        &self,
+        idx: usize,
+        content_width: usize,
+        gutter_w: usize,
+    ) -> usize {
+        let Some(item) = self.flat.get(idx) else {
+            return 1;
+        };
+        if let Some(segs) = self.non_diff_seg_count(item, content_width) {
+            return segs;
+        }
+        let Some(r) = self.row_of(item) else {
+            return 1;
+        };
+        let text = match item.kind {
+            FlatRowKind::ExpandedMod {
+                side: ModSide::Del, ..
+            } => r.old_text(),
+            FlatRowKind::ExpandedMod {
+                side: ModSide::Add, ..
+            } => r.new_text(),
+            _ => r.text(),
+        };
+        if self.raw_diff {
+            let text_cols = content_width.saturating_sub(gutter_w).max(1);
+            let exp = crate::render::expand_tabs(&text, 4);
+            let len = display_width(exp);
+            if len == 0 { 1 } else { len.div_ceil(text_cols) }
+        } else {
+            let text_cols = content_width.saturating_sub(gutter_w).max(1);
+            let disp = display_text(
+                &text,
+                r.is_aux(),
+                r.kind,
+                &r.runs,
+                self.col_offset,
+                self.word_diff,
+            );
+            let exp = crate::render::expand_tabs(&disp, 4);
+            let len = display_width(exp);
+            if len == 0 { 1 } else { len.div_ceil(text_cols) }
         }
     }
 
@@ -363,83 +350,13 @@ impl AppState {
         let Some(item) = self.flat.get(idx) else {
             return 1;
         };
-        match item.kind {
-            FlatRowKind::FileHeader => {
-                let Some(file_obj) = self.output.files.get(item.file_idx) else {
-                    return 1;
-                };
-                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let txt = crate::view::diff_grid::file_header_text_with_prefix(
-                    file_obj,
-                    self.file_badge(item.file_idx),
-                    is_collapsed,
-                    self.output.common_directory_prefix().as_deref(),
-                );
-                let len = display_width(txt);
-                let text_cols = content_width.max(1);
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
-            }
-            FlatRowKind::HunkDivider { hunk_idx } => {
-                let Some(file) = self.output.files.get(item.file_idx) else {
-                    return 1;
-                };
-                let hunks = if !file.raw_hunks.is_empty() {
-                    &file.raw_hunks
-                } else {
-                    &file.hunks
-                };
-                let h = &hunks[hunk_idx];
-                let sep_text = format!(
-                    "@@ -{},{} +{},{} @@",
-                    h.old_start, h.old_count, h.new_start, h.new_count
-                );
-                let len = display_width(sep_text);
-                let text_cols = content_width.max(1);
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
-            }
-            FlatRowKind::BottomGapDivider { .. } => {
-                self.bottom_gap_seg_count(item.file_idx, content_width)
-            }
-            FlatRowKind::DiffRow { .. } | FlatRowKind::ExpandedMod { .. } => {
-                let Some(r) = self.row_of(item) else {
-                    return 1;
-                };
-                match r.kind {
-                    diffuse_core::parse::RowKind::Ctx => {
-                        let text = r.old_text();
-                        let l_segs = pane_text_seg_count(&text, left_cols, self.col_offset);
-                        let r_segs = pane_text_seg_count(&text, right_cols, self.col_offset);
-                        l_segs.max(r_segs).max(1)
-                    }
-                    diffuse_core::parse::RowKind::Mod => {
-                        let l_segs = pane_text_seg_count(&r.old_text(), left_cols, self.col_offset);
-                        let r_segs =
-                            pane_text_seg_count(&r.new_text(), right_cols, self.col_offset);
-                        l_segs.max(r_segs).max(1)
-                    }
-                    diffuse_core::parse::RowKind::Del => {
-                        pane_text_seg_count(&r.old_text(), left_cols, self.col_offset).max(1)
-                    }
-                    diffuse_core::parse::RowKind::Add => {
-                        pane_text_seg_count(&r.new_text(), right_cols, self.col_offset).max(1)
-                    }
-                    diffuse_core::parse::RowKind::Mov => {
-                        if r.mov_side == Some(diffuse_core::wire::MovSide::Src) {
-                            pane_text_seg_count(&r.old_text(), left_cols, self.col_offset).max(1)
-                        } else if r.mov_side == Some(diffuse_core::wire::MovSide::Tgt) {
-                            pane_text_seg_count(&r.new_text(), right_cols, self.col_offset).max(1)
-                        } else {
-                            let l_segs =
-                                pane_text_seg_count(&r.old_text(), left_cols, self.col_offset);
-                            let r_segs =
-                                pane_text_seg_count(&r.new_text(), right_cols, self.col_offset);
-                            l_segs.max(r_segs).max(1)
-                        }
-                    }
-                    _ => 1,
-                }
-            }
+        if let Some(segs) = self.non_diff_seg_count(item, content_width) {
+            return segs;
         }
+        let Some(r) = self.row_of(item) else {
+            return 1;
+        };
+        diffuse_render::side_by_side_row_seg_count(r, left_cols, right_cols, self.col_offset)
     }
 
     /// Computes full visual layout mapping: starts, counts, `seg_counts`, and

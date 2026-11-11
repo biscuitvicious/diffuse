@@ -91,7 +91,7 @@ fn run_loop_returns_when_the_terminal_hangs_up() {
         false,
         None,
         None,
-        false,
+        None,
     )
     .expect("run_session returns after the terminal hangs up");
     let elapsed = started.elapsed();

@@ -41,7 +41,7 @@ impl AppState {
     }
 
     pub fn toggle_current_mod_row(&mut self) {
-        if self.raw_diff {
+        if self.raw_diff || self.side_by_side {
             return;
         }
         let Some(item) = self.flat.get(self.row_idx).copied() else {
@@ -64,8 +64,7 @@ impl AppState {
             self.expanded_mods.remove(&key);
         }
 
-        let (flat, hunk_starts) =
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
 
@@ -121,8 +120,7 @@ impl AppState {
         self.expand_mods = Some(true);
         self.populate_all_expanded_mods();
         let cur_item = self.flat.get(self.row_idx).copied();
-        let (flat, hunk_starts) =
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
         if let Some(item) = cur_item {
@@ -143,8 +141,7 @@ impl AppState {
         self.expand_mods = Some(false);
         self.expanded_mods.clear();
         let cur_item = self.flat.get(self.row_idx).copied();
-        let (flat, hunk_starts) =
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
         if let Some(item) = cur_item {
@@ -161,7 +158,7 @@ impl AppState {
     }
 
     pub fn toggle_expand_all_mods(&mut self) {
-        if self.raw_diff {
+        if self.raw_diff || self.side_by_side {
             return;
         }
         let total_mods = self.total_mod_rows();
@@ -185,8 +182,7 @@ impl AppState {
             self.expanded_mods.clear();
         }
 
-        let (flat, hunk_starts) =
-            Self::build_visual_flat(&self.output, &self.collapsed_files, &self.expanded_mods);
+        let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
 

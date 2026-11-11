@@ -2,16 +2,12 @@
 
 use crate::{
     ansi::{SGR_RESET, strip_ansi},
-    core::{
-        ModGlyph, ModSide,
-        parse::RowKind,
-        wire::{MovSide, OutputRow},
-    },
+    core::{ModGlyph, ModSide, wire::OutputRow},
     row::{
         continuation_prefix_plain_with_mod_side_and_width,
         continuation_prefix_spans_with_mod_side_and_width, display_text, expand_tabs, gutter_width,
-        prefix_of_with_mod_side_and_width, render_side_by_side_row_segment, split_gutter_widths,
-        split_pane_widths, styled_prefix_spans_with_width,
+        prefix_of_with_mod_side_and_width, render_side_by_side_row_segment,
+        side_by_side_row_seg_count, split_pane_layout, styled_prefix_spans_with_width,
         styled_split_left_continuation_prefix_spans, styled_split_left_prefix_spans,
         styled_split_right_continuation_prefix_spans, styled_split_right_prefix_spans,
         write_row_segment,
@@ -214,103 +210,17 @@ pub(crate) fn render_side_by_side_row_line(
     old_line_num_width: usize,
     new_line_num_width: usize,
 ) {
-    let (left_w, right_w) = split_pane_widths(width);
-    if left_w == 0 && right_w == 0 {
+    let layout = split_pane_layout(width, old_line_num_width, new_line_num_width);
+    if layout.left_w == 0 && layout.right_w == 0 {
         return;
     }
-    let (left_gw, right_gw) = split_gutter_widths(old_line_num_width, new_line_num_width);
-    let left_cols = left_w.saturating_sub(left_gw).max(1);
-    let right_cols = right_w.saturating_sub(right_gw).max(1);
 
-    let seg_count = match r.kind {
-        RowKind::Ctx => {
-            let text = r.old_text();
-            let exp = expand_tabs(&text, 4);
-            let len = display_width(&exp);
-            let l_segs = if len == 0 { 1 } else { len.div_ceil(left_cols) };
-            let r_segs = if len == 0 {
-                1
-            } else {
-                len.div_ceil(right_cols)
-            };
-            l_segs.max(r_segs)
-        }
-        RowKind::Mod => {
-            let old_txt = r.old_text();
-            let exp_old = expand_tabs(&old_txt, 4);
-            let len_old = display_width(&exp_old);
-            let l_segs = if len_old == 0 {
-                1
-            } else {
-                len_old.div_ceil(left_cols)
-            };
-            let new_txt = r.new_text();
-            let exp_new = expand_tabs(&new_txt, 4);
-            let len_new = display_width(&exp_new);
-            let r_segs = if len_new == 0 {
-                1
-            } else {
-                len_new.div_ceil(right_cols)
-            };
-            l_segs.max(r_segs)
-        }
-        RowKind::Del => {
-            let old_txt = r.old_text();
-            let exp = expand_tabs(&old_txt, 4);
-            let len = display_width(&exp);
-            if len == 0 { 1 } else { len.div_ceil(left_cols) }
-        }
-        RowKind::Add => {
-            let new_txt = r.new_text();
-            let exp = expand_tabs(&new_txt, 4);
-            let len = display_width(&exp);
-            if len == 0 {
-                1
-            } else {
-                len.div_ceil(right_cols)
-            }
-        }
-        RowKind::Mov => {
-            if r.mov_side == Some(MovSide::Src) {
-                let old_txt = r.old_text();
-                let exp = expand_tabs(&old_txt, 4);
-                let len = display_width(&exp);
-                if len == 0 { 1 } else { len.div_ceil(left_cols) }
-            } else if r.mov_side == Some(MovSide::Tgt) {
-                let new_txt = r.new_text();
-                let exp = expand_tabs(&new_txt, 4);
-                let len = display_width(&exp);
-                if len == 0 {
-                    1
-                } else {
-                    len.div_ceil(right_cols)
-                }
-            } else {
-                let old_txt = r.old_text();
-                let exp_old = expand_tabs(&old_txt, 4);
-                let len_old = display_width(&exp_old);
-                let l_segs = if len_old == 0 {
-                    1
-                } else {
-                    len_old.div_ceil(left_cols)
-                };
-                let new_txt = r.new_text();
-                let exp_new = expand_tabs(&new_txt, 4);
-                let len_new = display_width(&exp_new);
-                let r_segs = if len_new == 0 {
-                    1
-                } else {
-                    len_new.div_ceil(right_cols)
-                };
-                l_segs.max(r_segs)
-            }
-        }
-        _ => 1,
-    };
+    let seg_count = side_by_side_row_seg_count(r, layout.left_cols, layout.right_cols, 0);
 
     let mut left_pfx = styled_split_left_prefix_spans(
         r.kind,
         r.mov_side,
+        r.group,
         r.old_line,
         false,
         None,
@@ -320,6 +230,7 @@ pub(crate) fn render_side_by_side_row_line(
     let mut right_pfx = styled_split_right_prefix_spans(
         r.kind,
         r.mov_side,
+        r.group,
         r.new_line,
         false,
         None,
@@ -356,7 +267,18 @@ pub(crate) fn render_side_by_side_row_line(
             &right_cont_pfx
         };
         let line = render_side_by_side_row_segment(
-            r, s_idx, left_w, right_w, lp, rp, false, false, 0, true, true, theme,
+            r,
+            s_idx,
+            layout.left_w,
+            layout.right_w,
+            lp,
+            rp,
+            false,
+            false,
+            0,
+            true,
+            true,
+            theme,
         );
         out.push_str(&line);
         out.push_str(SGR_RESET);

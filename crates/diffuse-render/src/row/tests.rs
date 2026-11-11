@@ -2508,54 +2508,154 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     assert_eq!(split_pane_widths(2), (0, 1));
     assert_eq!(split_pane_widths(3), (1, 1));
 
-    // 2. split_gutter_widths
+    // 2. split_gutter_widths and split_pane_layout
     assert_eq!(split_gutter_widths(3, 4), (5, 6));
     assert_eq!(split_gutter_widths(0, 0), (2, 2));
 
+    let layout = split_pane_layout(80, 3, 4);
+    assert_eq!(
+        layout,
+        SplitPaneLayout {
+            left_w: 39,
+            right_w: 40,
+            left_gw: 5,
+            right_gw: 6,
+            left_cols: 34,
+            right_cols: 34,
+        }
+    );
+    let narrow_layout = split_pane_layout(1, 0, 0);
+    assert_eq!(narrow_layout.left_cols, 1);
+    assert_eq!(narrow_layout.right_cols, 1);
+
+    // 2b. is_left_active and is_right_active
+    assert!(is_left_active(RowKind::Ctx, None));
+    assert!(is_left_active(RowKind::Mod, None));
+    assert!(is_left_active(RowKind::Del, None));
+    assert!(!is_left_active(RowKind::Add, None));
+    assert!(is_left_active(RowKind::Mov, Some(MovSide::Src)));
+    assert!(!is_left_active(RowKind::Mov, Some(MovSide::Tgt)));
+
+    assert!(is_right_active(RowKind::Ctx, None));
+    assert!(is_right_active(RowKind::Mod, None));
+    assert!(!is_right_active(RowKind::Del, None));
+    assert!(is_right_active(RowKind::Add, None));
+    assert!(!is_right_active(RowKind::Mov, Some(MovSide::Src)));
+    assert!(is_right_active(RowKind::Mov, Some(MovSide::Tgt)));
+
+    // 2c. split_left_glyph and split_right_glyph
+    assert_eq!(split_left_glyph(RowKind::Ctx, None, None), "  ");
+    assert_eq!(split_left_glyph(RowKind::Mod, None, None), " ~");
+    assert_eq!(split_left_glyph(RowKind::Del, None, None), " -");
+    assert_eq!(
+        split_left_glyph(RowKind::Mov, Some(MovSide::Src), None),
+        "≈-"
+    );
+    assert_eq!(
+        split_left_glyph(RowKind::Mod, None, Some(RowGroup::Anchor)),
+        "~ "
+    );
+    assert_eq!(
+        split_left_glyph(RowKind::Del, None, Some(RowGroup::Aux { anchor: 0 })),
+        "~-"
+    );
+
+    assert_eq!(split_right_glyph(RowKind::Ctx, None, None), "  ");
+    assert_eq!(split_right_glyph(RowKind::Mod, None, None), " ~");
+    assert_eq!(split_right_glyph(RowKind::Add, None, None), " +");
+    assert_eq!(
+        split_right_glyph(RowKind::Mov, Some(MovSide::Tgt), None),
+        "≈+"
+    );
+    assert_eq!(
+        split_right_glyph(RowKind::Mod, None, Some(RowGroup::Anchor)),
+        "~ "
+    );
+    assert_eq!(
+        split_right_glyph(RowKind::Add, None, Some(RowGroup::Aux { anchor: 1 })),
+        "~+"
+    );
+
     // 3. Plain prefixes: left (old) side with width 3
     assert_eq!(
-        split_left_prefix_of(RowKind::Ctx, None, Some(42), 3),
+        split_left_prefix_of(RowKind::Ctx, None, None, Some(42), 3),
         " 42  "
     );
     assert_eq!(
-        split_left_prefix_of(RowKind::Mod, None, Some(42), 3),
+        split_left_prefix_of(RowKind::Mod, None, None, Some(42), 3),
         " 42 ~"
     );
     assert_eq!(
-        split_left_prefix_of(RowKind::Del, None, Some(42), 3),
+        split_left_prefix_of(RowKind::Del, None, None, Some(42), 3),
         " 42 -"
     );
-    assert_eq!(split_left_prefix_of(RowKind::Add, None, None, 3), "     ");
     assert_eq!(
-        split_left_prefix_of(RowKind::Mov, Some(MovSide::Src), Some(42), 3),
+        split_left_prefix_of(RowKind::Add, None, None, None, 3),
+        "     "
+    );
+    assert_eq!(
+        split_left_prefix_of(RowKind::Mov, Some(MovSide::Src), None, Some(42), 3),
         " 42≈-"
     );
     assert_eq!(
-        split_left_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, 3),
+        split_left_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, None, 3),
         "     "
     );
 
     // 4. Plain prefixes: right (new) side with width 4
     assert_eq!(
-        split_right_prefix_of(RowKind::Ctx, None, Some(105), 4),
+        split_right_prefix_of(RowKind::Ctx, None, None, Some(105), 4),
         " 105  "
     );
     assert_eq!(
-        split_right_prefix_of(RowKind::Mod, None, Some(105), 4),
+        split_right_prefix_of(RowKind::Mod, None, None, Some(105), 4),
         " 105 ~"
     );
     assert_eq!(
-        split_right_prefix_of(RowKind::Add, None, Some(105), 4),
+        split_right_prefix_of(RowKind::Add, None, None, Some(105), 4),
         " 105 +"
     );
-    assert_eq!(split_right_prefix_of(RowKind::Del, None, None, 4), "      ");
     assert_eq!(
-        split_right_prefix_of(RowKind::Mov, Some(MovSide::Tgt), Some(105), 4),
+        split_right_prefix_of(RowKind::Del, None, None, None, 4),
+        "      "
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, Some(105), 4),
         " 105≈+"
     );
     assert_eq!(
-        split_right_prefix_of(RowKind::Mov, Some(MovSide::Src), None, 4),
+        split_right_prefix_of(RowKind::Mov, Some(MovSide::Src), None, None, 4),
         "      "
+    );
+
+    // Anchor and aux plain prefixes
+    assert_eq!(
+        split_left_prefix_of(RowKind::Mod, None, Some(RowGroup::Anchor), Some(42), 3),
+        " 42~ "
+    );
+    assert_eq!(
+        split_left_prefix_of(
+            RowKind::Del,
+            None,
+            Some(RowGroup::Aux { anchor: 0 }),
+            Some(42),
+            3
+        ),
+        " 42~-"
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Mod, None, Some(RowGroup::Anchor), Some(105), 4),
+        " 105~ "
+    );
+    assert_eq!(
+        split_right_prefix_of(
+            RowKind::Add,
+            None,
+            Some(RowGroup::Aux { anchor: 1 }),
+            Some(105),
+            4
+        ),
+        " 105~+"
     );
 
     // 5. Styled prefix spans: width parity
@@ -2568,30 +2668,119 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     };
 
     let s_l_ctx =
-        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(42), false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Ctx, None, None, Some(42), false, None, &theme, 3);
     assert_eq!(span_len(&s_l_ctx), 5);
     let s_l_mod =
-        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3);
     assert_eq!(span_len(&s_l_mod), 5);
     let s_l_del =
-        styled_split_left_prefix_spans(RowKind::Del, None, Some(42), false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Del, None, None, Some(42), false, None, &theme, 3);
     assert_eq!(span_len(&s_l_del), 5);
-    let s_l_add = styled_split_left_prefix_spans(RowKind::Add, None, None, false, None, &theme, 3);
+    let s_l_add =
+        styled_split_left_prefix_spans(RowKind::Add, None, None, None, false, None, &theme, 3);
     assert_eq!(span_len(&s_l_add), 5);
     assert_eq!(s_l_add[0].text, "     ");
 
-    let s_r_ctx =
-        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(105), false, None, &theme, 4);
+    let s_r_ctx = styled_split_right_prefix_spans(
+        RowKind::Ctx,
+        None,
+        None,
+        Some(105),
+        false,
+        None,
+        &theme,
+        4,
+    );
     assert_eq!(span_len(&s_r_ctx), 6);
-    let s_r_mod =
-        styled_split_right_prefix_spans(RowKind::Mod, None, Some(105), false, None, &theme, 4);
+    let s_r_mod = styled_split_right_prefix_spans(
+        RowKind::Mod,
+        None,
+        None,
+        Some(105),
+        false,
+        None,
+        &theme,
+        4,
+    );
     assert_eq!(span_len(&s_r_mod), 6);
-    let s_r_add =
-        styled_split_right_prefix_spans(RowKind::Add, None, Some(105), false, None, &theme, 4);
+    let s_r_add = styled_split_right_prefix_spans(
+        RowKind::Add,
+        None,
+        None,
+        Some(105),
+        false,
+        None,
+        &theme,
+        4,
+    );
     assert_eq!(span_len(&s_r_add), 6);
-    let s_r_del = styled_split_right_prefix_spans(RowKind::Del, None, None, false, None, &theme, 4);
+    let s_r_del =
+        styled_split_right_prefix_spans(RowKind::Del, None, None, None, false, None, &theme, 4);
     assert_eq!(span_len(&s_r_del), 6);
     assert_eq!(s_r_del[0].text, "      ");
+
+    // Anchor and aux styled prefix spans
+    let s_l_anchor = styled_split_left_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(RowGroup::Anchor),
+        Some(42),
+        false,
+        None,
+        &theme,
+        3,
+    );
+    assert_eq!(span_len(&s_l_anchor), 5);
+    assert_eq!(s_l_anchor[1].text, "~ ");
+
+    let s_l_aux_del = styled_split_left_prefix_spans(
+        RowKind::Del,
+        None,
+        Some(RowGroup::Aux { anchor: 0 }),
+        Some(42),
+        false,
+        None,
+        &theme,
+        3,
+    );
+    assert_eq!(span_len(&s_l_aux_del), 5);
+    assert_eq!(s_l_aux_del[1].text, "~");
+    assert_eq!(s_l_aux_del[2].text, "-");
+
+    let s_r_anchor = styled_split_right_prefix_spans(
+        RowKind::Mod,
+        None,
+        Some(RowGroup::Anchor),
+        Some(105),
+        false,
+        None,
+        &theme,
+        4,
+    );
+    assert_eq!(span_len(&s_r_anchor), 6);
+    assert_eq!(s_r_anchor[1].text, "~ ");
+
+    let s_r_aux_add = styled_split_right_prefix_spans(
+        RowKind::Add,
+        None,
+        Some(RowGroup::Aux { anchor: 1 }),
+        Some(105),
+        false,
+        None,
+        &theme,
+        4,
+    );
+    assert_eq!(span_len(&s_r_aux_add), 6);
+    assert_eq!(s_r_aux_add[1].text, "~");
+    assert_eq!(s_r_aux_add[2].text, "+");
+
+    // Minimum split pane width threshold
+    assert_eq!(MIN_SIDE_BY_SIDE_PANE_CHARS, 80);
+    assert!(!is_wide_enough_for_side_by_side(80));
+    assert!(!is_wide_enough_for_side_by_side(120));
+    assert!(!is_wide_enough_for_side_by_side(160));
+    assert!(is_wide_enough_for_side_by_side(161));
+    assert!(is_wide_enough_for_side_by_side(200));
 
     // 6. Continuation prefixes
     let s_l_cont = styled_split_left_continuation_prefix_spans(None, 3);
@@ -2625,9 +2814,9 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         group: None,
     };
     let l_pref =
-        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Ctx, None, None, Some(10), false, None, &theme, 3);
     let r_pref =
-        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3);
+        styled_split_right_prefix_spans(RowKind::Ctx, None, None, Some(10), false, None, &theme, 3);
     let line = side_by_side_row_segment_spans(
         &ctx_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
     );
@@ -2679,9 +2868,9 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         group: None,
     };
     let l_pref =
-        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3);
     let r_pref =
-        styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3);
+        styled_split_right_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3);
     let line = side_by_side_row_segment_spans(
         &mod_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
     );
@@ -2724,8 +2913,9 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         group: None,
     };
     let l_pref =
-        styled_split_left_prefix_spans(RowKind::Del, None, Some(5), false, None, &theme, 3);
-    let r_pref = styled_split_right_prefix_spans(RowKind::Del, None, None, false, None, &theme, 3);
+        styled_split_left_prefix_spans(RowKind::Del, None, None, Some(5), false, None, &theme, 3);
+    let r_pref =
+        styled_split_right_prefix_spans(RowKind::Del, None, None, None, false, None, &theme, 3);
     let line = side_by_side_row_segment_spans(
         &del_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
     );
@@ -2761,9 +2951,10 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         wholesale: false,
         group: None,
     };
-    let l_pref = styled_split_left_prefix_spans(RowKind::Add, None, None, false, None, &theme, 3);
+    let l_pref =
+        styled_split_left_prefix_spans(RowKind::Add, None, None, None, false, None, &theme, 3);
     let r_pref =
-        styled_split_right_prefix_spans(RowKind::Add, None, Some(6), false, None, &theme, 3);
+        styled_split_right_prefix_spans(RowKind::Add, None, None, Some(6), false, None, &theme, 3);
     let line = side_by_side_row_segment_spans(
         &add_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
     );
@@ -2790,8 +2981,17 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         0,
         left_w,
         right_w,
-        &styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
-        &styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        &styled_split_left_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3),
+        &styled_split_right_prefix_spans(
+            RowKind::Mod,
+            None,
+            None,
+            Some(42),
+            false,
+            None,
+            &theme,
+            3,
+        ),
         false,
         false,
         0,
@@ -2821,6 +3021,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
     let l_pref = styled_split_left_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Src),
+        None,
         Some(15),
         false,
         None,
@@ -2830,6 +3031,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
     let r_pref = styled_split_right_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Src),
+        None,
         None,
         false,
         None,
@@ -2885,6 +3087,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         RowKind::Mov,
         Some(MovSide::Tgt),
         None,
+        None,
         false,
         None,
         &theme,
@@ -2893,6 +3096,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
     let r_pref = styled_split_right_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Tgt),
+        None,
         Some(25),
         false,
         None,
@@ -3015,7 +3219,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         0,
         30,
         0,
-        styled_split_left_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3),
+        styled_split_left_prefix_spans(RowKind::Ctx, None, None, Some(10), false, None, &theme, 3),
         vec![],
         false,
         false,
@@ -3033,7 +3237,7 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         0,
         30,
         vec![],
-        styled_split_right_prefix_spans(RowKind::Ctx, None, Some(10), false, None, &theme, 3),
+        styled_split_right_prefix_spans(RowKind::Ctx, None, None, Some(10), false, None, &theme, 3),
         false,
         false,
         0,
@@ -3050,8 +3254,8 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         0,
         left_w,
         right_w,
-        styled_split_left_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
-        styled_split_right_prefix_spans(RowKind::Mod, None, Some(42), false, None, &theme, 3),
+        styled_split_left_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3),
+        styled_split_right_prefix_spans(RowKind::Mod, None, None, Some(42), false, None, &theme, 3),
         true,
         false,
         0,
