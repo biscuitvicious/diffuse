@@ -16,6 +16,14 @@ pub const MIN_RATIO_CODE: f64 = 0.35;
 pub const MIN_RATIO_COMMENT: f64 = 0.35;
 pub const MIN_RATIO_COMMENT_OFFSET: f64 = 0.65;
 
+/// Minimum whole-line character similarity ratio for a statement head keyword
+/// match when salient character overlap is zero (0.40).
+pub const MIN_RATIO_KEYWORD_ZERO_SALIENT: f64 = 0.40;
+
+/// Maximum offset drift allowed for a statement head keyword match when salient
+/// character overlap is zero (1 line).
+pub const MAX_OFFSET_KEYWORD_ZERO_SALIENT: usize = 1;
+
 /// Floor for the char scale — the exact inverse of the salient regime: a
 /// pair where either line carries no salient tokens has no salient ratio,
 /// and is scored on non-whitespace chars instead. Calibrated at 0.20 by a

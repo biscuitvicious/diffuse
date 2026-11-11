@@ -3834,8 +3834,8 @@ fn dp_prefers_long_verbatim_chain_over_duplicate_anchor_rival() {
 fn test_keyword_head_admission_gating() {
     let rs = lang_profile("rs");
 
-    // Case 1: In-place rename with zero offset drift and char overlap >= 0.40 pairs
-    // as mod.
+    // Case 1: In-place rename with zero offset drift and char overlap >=
+    // MIN_RATIO_KEYWORD_ZERO_SALIENT (0.40) pairs as mod.
     let cluster_inplace =
         return_cluster(vec![("    let a = 1;", 10)], vec![("    let b = 2;", 10)]);
     let sol_inplace = solve_cluster(&cluster_inplace, rs);

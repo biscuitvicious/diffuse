@@ -29,8 +29,9 @@ use super::{
         mask_overlap, mod_pair_needs_scoring, token_intersection_bound,
     },
     config::{
-        MIN_RATIO_CHAR_SCALE, MIN_RATIO_CODE, MIN_RATIO_COMMENT, MIN_RATIO_COMMENT_OFFSET, Weights,
-        cluster_bandwidth_min, cluster_bandwidth_slack, cluster_budget,
+        MAX_OFFSET_KEYWORD_ZERO_SALIENT, MIN_RATIO_CHAR_SCALE, MIN_RATIO_CODE, MIN_RATIO_COMMENT,
+        MIN_RATIO_COMMENT_OFFSET, MIN_RATIO_KEYWORD_ZERO_SALIENT, Weights, cluster_bandwidth_min,
+        cluster_bandwidth_slack, cluster_budget,
     },
     tokens::{DpTokens, calc_common_indent, dp_tokens, trim_trailing_delims},
 };
@@ -1357,8 +1358,9 @@ pub(crate) fn solve_cluster_matrix(
                             let mut is_prefix_containment = None;
                             let keyword_head_admissible_fast = same_indent_head_match
                                 && (salient_bound > 0
-                                    || (offset_diff <= 1
-                                        && (char_bound as f64 / total as f64) >= 0.40));
+                                    || (offset_diff <= MAX_OFFSET_KEYWORD_ZERO_SALIENT
+                                        && (char_bound as f64 / total as f64)
+                                            >= MIN_RATIO_KEYWORD_ZERO_SALIENT));
                             let could_be_valid_mod_fast = if is_char_scale_pair {
                                 (char_bound as f64 / total as f64) >= min_exact
                             } else {
@@ -1534,8 +1536,9 @@ pub(crate) fn solve_cluster_matrix(
                                 };
                             let keyword_head_admissible = same_indent_head_match
                                 && (matched_salient > 0
-                                    || (offset_diff <= 1
-                                        && (matched as f64 / total as f64) >= 0.40));
+                                    || (offset_diff <= MAX_OFFSET_KEYWORD_ZERO_SALIENT
+                                        && (matched as f64 / total as f64)
+                                            >= MIN_RATIO_KEYWORD_ZERO_SALIENT));
                             let is_valid_mod_pair = if is_char_scale_pair {
                                 (matched as f64 / total as f64) >= min_exact
                             } else if (om.comment || nm.comment) && offset_diff > 0 {

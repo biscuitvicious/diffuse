@@ -7,7 +7,8 @@ use crate::{cluster::ChangeCluster, similarity::TokenInterner};
 use super::{
     arena::DpRowMeta,
     config::{
-        MIN_RATIO_CHAR_SCALE, MIN_RATIO_CODE, MIN_RATIO_COMMENT, MIN_RATIO_COMMENT_OFFSET, Weights,
+        MAX_OFFSET_KEYWORD_ZERO_SALIENT, MIN_RATIO_CHAR_SCALE, MIN_RATIO_CODE, MIN_RATIO_COMMENT,
+        MIN_RATIO_COMMENT_OFFSET, MIN_RATIO_KEYWORD_ZERO_SALIENT, Weights,
     },
     tokens::DpTokens,
 };
@@ -371,7 +372,9 @@ pub(crate) fn mod_pair_needs_scoring(
         && nm.head_is_keyword
         && !om.survives_in_new;
     let keyword_head_admissible = same_indent_head_match
-        && (salient_bound > 0 || (offset_diff <= 1 && (char_bound as f64 / total as f64) >= 0.40));
+        && (salient_bound > 0
+            || (offset_diff <= MAX_OFFSET_KEYWORD_ZERO_SALIENT
+                && (char_bound as f64 / total as f64) >= MIN_RATIO_KEYWORD_ZERO_SALIENT));
     let can_have_containment = indent_shift <= w.max_indent_shift
         && (om.comment == nm.comment)
         && ((om.stripped_len >= w.min_containment_len && nm.stripped_len >= w.min_containment_len)

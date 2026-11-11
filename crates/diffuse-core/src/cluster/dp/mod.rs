@@ -39,8 +39,9 @@ pub use block::{BlockMatch, block_anchor, block_lcs};
 pub(crate) use bounds::{cell_touches_band_edge, is_statement_start, mod_pair_needs_scoring};
 pub use config::{
     DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
-    DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_MIN_CONTAINMENT_LEN, MAX_BLOCK_K, MIN_RATIO_CHAR_SCALE,
-    MIN_RATIO_CODE, MIN_RATIO_COMMENT, MIN_RATIO_COMMENT_OFFSET, Weights, cluster_bandwidth_min,
+    DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_MIN_CONTAINMENT_LEN, MAX_BLOCK_K,
+    MAX_OFFSET_KEYWORD_ZERO_SALIENT, MIN_RATIO_CHAR_SCALE, MIN_RATIO_CODE, MIN_RATIO_COMMENT,
+    MIN_RATIO_COMMENT_OFFSET, MIN_RATIO_KEYWORD_ZERO_SALIENT, Weights, cluster_bandwidth_min,
     cluster_bandwidth_slack, cluster_budget, cluster_product_cap, set_cluster_bandwidth_min,
     set_cluster_bandwidth_slack, set_cluster_budget, set_cluster_product_cap,
 };
