@@ -3076,3 +3076,44 @@ fn test_aux_delimiter_run_with_whitespace_variation() {
         aux_runs
     );
 }
+
+#[test]
+fn test_residual_declaration_roles_and_compatibility() {
+    use super::residual::{
+        are_roles_compatible, declaration_role, is_import_statement, non_ws_char_similarity,
+    };
+
+    // Declarations
+    assert_eq!(declaration_role("pub struct Foo {"), Some("struct"));
+    assert_eq!(declaration_role("pub(crate) enum Bar {"), Some("enum"));
+    assert_eq!(
+        declaration_role("export interface Baz {"),
+        Some("interface")
+    );
+    assert_eq!(declaration_role("async fn run()"), Some("fn"));
+    assert_eq!(
+        declaration_role("pub const MAX: usize = 10;"),
+        Some("const")
+    );
+    assert_eq!(declaration_role("let x = 1;"), None);
+    assert_eq!(declaration_role(""), None);
+
+    // Compatibility
+    assert!(are_roles_compatible("struct", "enum"));
+    assert!(are_roles_compatible("interface", "type"));
+    assert!(are_roles_compatible("const", "static"));
+    assert!(!are_roles_compatible("struct", "fn"));
+    assert!(!are_roles_compatible("fn", "const"));
+
+    // Imports
+    assert!(is_import_statement("use std::collections::HashMap;"));
+    assert!(is_import_statement("import { foo } from 'bar';"));
+    assert!(is_import_statement("require('fs')"));
+    assert!(!is_import_statement("let user = null;"));
+
+    // Char similarity
+    let sim = non_ws_char_similarity("let abc = 123;", "let abd = 123;");
+    assert!(sim > 0.8);
+    let zero = non_ws_char_similarity("", "abc");
+    assert_eq!(zero, 0.0);
+}

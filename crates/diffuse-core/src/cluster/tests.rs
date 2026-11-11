@@ -3875,7 +3875,8 @@ fn test_affine_diagonal_continuity_and_detour_penalization() {
         ("    c = calculate_step(x, 3);", 12),
     ];
     // New block: 3 corresponding modifications on the diagonal,
-    // plus an inserted line between 1 and 2 that happens to be an exact verbatim twin of line 2.
+    // plus an inserted line between 1 and 2 that happens to be an exact verbatim
+    // twin of line 2.
     let new_lines = vec![
         ("    a = calculate_step(y, 1);", 10),
         ("    b = calculate_step(x, 2);", 11), // inserted verbatim twin at offset drift
@@ -3885,8 +3886,9 @@ fn test_affine_diagonal_continuity_and_detour_penalization() {
     let cluster = return_cluster(old_lines, new_lines);
     let sol = solve_cluster(&cluster, rs);
 
-    // Diagonal continuity and detour penalty keep line 10 paired with 10, line 11 with 12, line 12 with 13,
-    // treating line 11 (new) as an inserted Add rather than taking a detour.
+    // Diagonal continuity and detour penalty keep line 10 paired with 10, line 11
+    // with 12, line 12 with 13, treating line 11 (new) as an inserted Add
+    // rather than taking a detour.
     assert!(
         pairs_with(&sol, 10, 10),
         "line 10 must pair with line 10: {}",

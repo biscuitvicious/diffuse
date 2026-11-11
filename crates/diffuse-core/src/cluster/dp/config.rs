@@ -161,9 +161,11 @@ pub struct Weights {
     /// Score bonus for pairs sharing a contiguous (trimmed) prefix or suffix
     /// containing at least `min_containment_len` salient characters.
     pub contiguous_boundary_bonus: f64,
-    /// Continuity reward per consecutive step along a diagonal Mod/Mov run (40.0).
+    /// Continuity reward per consecutive step along a diagonal Mod/Mov run
+    /// (40.0).
     pub diagonal_run_bonus: f64,
-    /// Penalty for switching from a diagonal run into an isolated gap step (50.0).
+    /// Penalty for switching from a diagonal run into an isolated gap step
+    /// (50.0).
     pub detour_open_penalty: f64,
 }
 

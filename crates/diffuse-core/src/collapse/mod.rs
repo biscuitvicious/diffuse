@@ -23,6 +23,7 @@ pub mod assemble;
 pub mod aux;
 pub mod invariants;
 pub mod reflow;
+pub mod residual;
 pub mod walk;
 
 #[cfg(test)]
@@ -40,6 +41,7 @@ pub use invariants::{
     check_no_orphaned_continuation_dels, check_reflow_cluster_confinement,
 };
 pub use reflow::{ReflowFilter, pass_filter_reflows};
+pub use residual::pass_residual_pairing;
 pub use walk::pass_sort_ordered_walk;
 
 /// Results of the initial pairing pass.
@@ -89,12 +91,15 @@ pub fn collapse_hunk_rows(
     );
 
     // Pass 1: DP cluster pairing engine
-    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+    let mut p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
     let t2 = Instant::now();
     T_COLLAPSE[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
+
+    // Pass 1.5: Tier 2 residual evidence matching engine
+    pass_residual_pairing(h, &mut p1, old_content, new_content, profile);
 
     let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: FxHashMap<usize, usize> =

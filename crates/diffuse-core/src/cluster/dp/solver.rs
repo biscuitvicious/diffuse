@@ -1596,16 +1596,15 @@ pub(crate) fn solve_cluster_matrix(
                                 0.0
                             };
 
-                            let s = base
-                                + continuity_bonus
-                                + w.matched_char_reward * matched as f64
-                                - penalty
-                                - w.row_cost
-                                - indent_penalty
-                                - survives_penalty
-                                + syntax
-                                + boundary_bonus
-                                + (effective_close_bonus + open_bonus) * proximity_gate;
+                            let s =
+                                base + continuity_bonus + w.matched_char_reward * matched as f64
+                                    - penalty
+                                    - w.row_cost
+                                    - indent_penalty
+                                    - survives_penalty
+                                    + syntax
+                                    + boundary_bonus
+                                    + (effective_close_bonus + open_bonus) * proximity_gate;
                             if let Some(target) = grid.get_mut(i + 1, j + 1)
                                 && s > target.score
                             {
@@ -1712,21 +1711,20 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let s = base
-                            + calc_block_score(
+                        let s =
+                            base + calc_block_score(
                                 bm_matched,
                                 bm_moved_lines,
                                 ot.chars,
                                 pblock.chars,
                                 k,
-                            )
-                            + syntax
-                            + close_bonus
-                            - if is_diagonal_run {
-                                w.detour_open_penalty
-                            } else {
-                                0.0
-                            };
+                            ) + syntax
+                                + close_bonus
+                                - if is_diagonal_run {
+                                    w.detour_open_penalty
+                                } else {
+                                    0.0
+                                };
                         if let Some(target) = grid.get_mut(i + 1, j + k)
                             && s > target.score
                         {
@@ -1830,21 +1828,20 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let s = base
-                            + calc_block_score(
+                        let s =
+                            base + calc_block_score(
                                 bm_matched,
                                 bm_moved_lines,
                                 new_tokens[j].chars,
                                 pblock.chars,
                                 k,
-                            )
-                            + syntax
-                            + close_bonus
-                            - if is_diagonal_run {
-                                w.detour_open_penalty
-                            } else {
-                                0.0
-                            };
+                            ) + syntax
+                                + close_bonus
+                                - if is_diagonal_run {
+                                    w.detour_open_penalty
+                                } else {
+                                    0.0
+                                };
                         if let Some(target) = grid.get_mut(i + k, j + 1)
                             && s > target.score
                         {

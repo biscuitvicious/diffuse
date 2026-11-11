@@ -2769,3 +2769,66 @@ fn test_keyword_only_match_across_offset_drift_rejected() {
         "keyword-only lines sharing zero salient tokens must not pair across offsets: {spurious_mod:?}"
     );
 }
+
+#[test]
+fn test_tier2_residual_declaration_pairing() {
+    let diff = r#"diff --git a/src/types.rs b/src/types.rs
+--- a/src/types.rs
++++ b/src/types.rs
+@@ -20,6 +20,6 @@ ctx_before
+-pub enum Side {
+-    Old,
+-    New,
+-}
++pub struct DiffCoord {
++    pub line: u32,
++}
+ ctx_after
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let type_mod = rows.iter().find(|r| {
+        r.kind == crate::parse::RowKind::Mod && r.old_line == Some(20) && r.new_line == Some(20)
+    });
+    assert!(
+        type_mod.is_some(),
+        "residual declaration replacement pub enum Side <-> pub struct DiffCoord must pair in Tier 2: {rows:?}"
+    );
+}
+
+#[test]
+fn test_tier2_residual_rival_in_content_prevents_theft() {
+    let diff = r#"diff --git a/src/types.rs b/src/types.rs
+--- a/src/types.rs
++++ b/src/types.rs
+@@ -20,6 +20,6 @@ ctx_before
+-pub enum Side {
+-    Old,
+-    New,
+-}
++pub struct DiffCoord {
++    pub line: u32,
++}
+ ctx_after
+"#;
+
+    let mut new_content = std::collections::HashMap::new();
+    // Simulate that `pub enum Side {` was moved elsewhere in the new file snapshot.
+    new_content.insert(
+        "src/types.rs".to_string(),
+        "ctx_before\npub struct DiffCoord {\n    pub line: u32,\n}\nctx_after\npub enum Side {\n    Old,\n    New,\n}\n".to_string(),
+    );
+
+    let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let spurious_mod = rows.iter().find(|r| {
+        r.kind == crate::parse::RowKind::Mod && r.old_line == Some(20) && r.new_line == Some(20)
+    });
+    assert!(
+        spurious_mod.is_none(),
+        "residual pairing must not steal a line that has a verbatim twin elsewhere in content: {rows:?}"
+    );
+}
