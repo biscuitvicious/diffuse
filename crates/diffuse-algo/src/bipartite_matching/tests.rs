@@ -262,3 +262,34 @@ fn test_bipartite_matcher_solve_end_to_end() {
     assert_eq!(matches[1], RelocationMatch::new((0, 1), (1, 1)));
     assert_eq!(matches[2], RelocationMatch::new((0, 2), (1, 2)));
 }
+
+#[test]
+fn test_bipartite_matcher_solve_filtered() {
+    let hunk_lens = [5, 5];
+    let grid = HunkGridNeighborhood::new(&hunk_lens);
+
+    let mut matcher = BipartiteMatcher::new();
+    matcher.add_source("fn a()", (0, 0));
+    matcher.add_source("fn b()", (0, 1));
+
+    matcher.add_target("fn a()", (1, 0));
+    matcher.add_target("fn b()", (1, 1));
+
+    let runs = [vec![(0, 1)]];
+
+    // Filter disallowing (0, 0) -> (1, 0)
+    let result = matcher.solve_filtered(
+        &[],
+        &grid,
+        &grid,
+        |_| false,
+        |_| false,
+        runs,
+        |_| false,
+        |src, tgt| !(src.1 == 0 && tgt.1 == 0),
+    );
+
+    let matches: Vec<_> = result.collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0], RelocationMatch::new((0, 1), (1, 1)));
+}

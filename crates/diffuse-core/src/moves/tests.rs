@@ -1,7 +1,7 @@
 //! Unit tests for exact move detection and block move rules.
 
 use super::*;
-use crate::parse::{AddLine, DelLine, FileStatus, Hunk, Row};
+use crate::parse::{AddLine, CtxLine, DelLine, FileStatus, Hunk, Row};
 
 fn del(num: u32, text: &str) -> Row {
     Row::Del(DelLine::new(num, text))
@@ -9,6 +9,10 @@ fn del(num: u32, text: &str) -> Row {
 
 fn add(num: u32, text: &str) -> Row {
     Row::Add(AddLine::new(num, text))
+}
+
+fn ctx(old_num: u32, new_num: u32, text: &str) -> Row {
+    Row::Ctx(CtxLine::new(old_num, new_num, text))
 }
 
 fn file(hunks: Vec<Hunk>) -> DiffFile {
@@ -413,4 +417,73 @@ fn test_move_with_changed_indentation_populates_runs_on_both_source_and_target()
         tgt.cached_runs(),
         "MovSrc and MovTgt must carry identical cached_runs"
     );
+}
+
+#[test]
+fn test_cross_cluster_moves_rejects_single_line_move() {
+    let mut f = file(vec![
+        hunk(vec![del(10, "single_line_statement();")]),
+        hunk(vec![add(90, "single_line_statement();")]),
+    ]);
+    // Pre-pass requires contiguous group of >= 2 lines, so single-line move is
+    // ignored
+    mark_cross_cluster_moves_with_profile(&mut f, None);
+    assert!(!f.hunks[0].rows[0].is_moved());
+    assert!(!f.hunks[1].rows[0].is_moved());
+
+    // Normal post-pass mark_moves DOES match it
+    mark_moves(&mut f);
+    assert!(f.hunks[0].rows[0].is_moved());
+    assert!(f.hunks[1].rows[0].is_moved());
+}
+
+#[test]
+fn test_cross_cluster_moves_accepts_contiguous_group() {
+    let mut f = file(vec![
+        hunk(vec![
+            del(10, "first_statement();"),
+            del(11, "second_statement();"),
+        ]),
+        hunk(vec![
+            add(90, "first_statement();"),
+            add(91, "second_statement();"),
+        ]),
+    ]);
+    mark_cross_cluster_moves_with_profile(&mut f, None);
+    assert!(f.hunks[0].rows[0].is_moved());
+    assert!(f.hunks[0].rows[1].is_moved());
+    assert!(f.hunks[1].rows[0].is_moved());
+    assert!(f.hunks[1].rows[1].is_moved());
+}
+
+#[test]
+fn test_cross_cluster_moves_ignores_intra_cluster_matches() {
+    // Within the same cluster (no Row::Ctx between del and add), pre-pass ignores
+    // it
+    let mut f = file(vec![hunk(vec![
+        del(10, "first_statement();"),
+        del(11, "second_statement();"),
+        add(20, "first_statement();"),
+        add(21, "second_statement();"),
+    ])]);
+    mark_cross_cluster_moves_with_profile(&mut f, None);
+    assert!(!f.hunks[0].rows[0].is_moved());
+    assert!(!f.hunks[0].rows[1].is_moved());
+    assert!(!f.hunks[0].rows[2].is_moved());
+    assert!(!f.hunks[0].rows[3].is_moved());
+
+    // When separated by Row::Ctx into different clusters within the same hunk, it
+    // matches
+    let mut f2 = file(vec![hunk(vec![
+        del(10, "first_statement();"),
+        del(11, "second_statement();"),
+        ctx(12, 12, "unchanged_context();"),
+        add(20, "first_statement();"),
+        add(21, "second_statement();"),
+    ])]);
+    mark_cross_cluster_moves_with_profile(&mut f2, None);
+    assert!(f2.hunks[0].rows[0].is_moved());
+    assert!(f2.hunks[0].rows[1].is_moved());
+    assert!(f2.hunks[0].rows[3].is_moved());
+    assert!(f2.hunks[0].rows[4].is_moved());
 }

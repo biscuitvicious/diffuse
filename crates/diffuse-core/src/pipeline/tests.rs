@@ -2832,3 +2832,75 @@ fn test_tier2_residual_rival_in_content_prevents_theft() {
         "residual pairing must not steal a line that has a verbatim twin elsewhere in content: {rows:?}"
     );
 }
+
+#[test]
+fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest.join("../..");
+    let Ok(repo) = diffuse_git::Repository::open(&repo_root) else {
+        return;
+    };
+    let target = diffuse_git::ReviewTarget::from_repo_args(
+        diffuse_git::Repo::from_root(&repo_root),
+        vec!["scrollbar-grab-drag^!".to_string()],
+        false,
+    );
+    let Ok(repo_diff) =
+        diffuse_git::diff_repository(&repo, &target, 4, diffuse_git::WhitespaceMode::Exact)
+    else {
+        return;
+    };
+
+    let f = repo_diff
+        .files
+        .into_iter()
+        .find(|f| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must be in diff");
+    let new_c = repo_diff.new_content.get(&f.path).map(|s| s.as_str());
+    let old_c = repo_diff
+        .old_content
+        .get(f.old_path.as_deref().unwrap_or(&f.path))
+        .map(|s| s.as_str());
+    let out = crate::pipeline::file::process_single_diff_file(
+        f,
+        new_c,
+        old_c,
+        None,
+        &crate::pipeline::PipelineOptions::default(),
+    );
+
+    let rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
+
+    // Verify that Old line 330 is NOT stolen into a spurious Mod with New line 352
+    let spurious_mod = rows.iter().find(|r| {
+        r.kind == crate::parse::RowKind::Mod && r.old_line == Some(330) && r.new_line == Some(352)
+    });
+    assert!(
+        spurious_mod.is_none(),
+        "Old line 330 must not be paired into a spurious Mod with New line 352"
+    );
+
+    // Old line 330 must be marked as Mov
+    let old_330 = rows
+        .iter()
+        .find(|r| r.old_line == Some(330))
+        .expect("Old line 330 must exist");
+    assert_eq!(
+        old_330.kind,
+        crate::parse::RowKind::Mov,
+        "Old line 330 must be Mov, got {:?}",
+        old_330.kind
+    );
+
+    // New line 326 must be marked as Mov
+    let new_326 = rows
+        .iter()
+        .find(|r| r.new_line == Some(326))
+        .expect("New line 326 must exist");
+    assert_eq!(
+        new_326.kind,
+        crate::parse::RowKind::Mov,
+        "New line 326 must be Mov, got {:?}",
+        new_326.kind
+    );
+}

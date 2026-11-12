@@ -35,6 +35,55 @@ pub fn mark_moves_with_profile(
     f: &mut DiffFile,
     profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) {
+    mark_moves_internal(f, profile, |_, _| true, false);
+}
+
+/// Pre-pass: marks only strong cross-cluster contiguous moved blocks prior to
+/// hunk collapse, preventing intra-cluster DP from stealing relocated lines
+/// into spurious Mod rows.
+#[tracing::instrument(
+    level = "debug",
+    skip(f, profile),
+    fields(path = %f.path, hunk_count = f.hunks.len())
+)]
+pub fn mark_cross_cluster_moves_with_profile(
+    f: &mut DiffFile,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
+) {
+    let row_clusters: Vec<Vec<usize>> = f.hunks.iter().map(hunk_row_clusters).collect();
+    let is_cross_cluster = |src: &(usize, usize), tgt: &(usize, usize)| -> bool {
+        src.0 != tgt.0 || row_clusters[src.0][src.1] != row_clusters[tgt.0][tgt.1]
+    };
+    mark_moves_internal(f, profile, is_cross_cluster, true);
+}
+
+fn hunk_row_clusters(h: &crate::parse::Hunk) -> Vec<usize> {
+    let mut clusters = Vec::with_capacity(h.rows.len());
+    let mut cluster_id = 0;
+    let mut prev_was_change = false;
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            if prev_was_change {
+                cluster_id += 1;
+                prev_was_change = false;
+            }
+            clusters.push(usize::MAX);
+        } else {
+            prev_was_change = true;
+            clusters.push(cluster_id);
+        }
+    }
+    clusters
+}
+
+fn mark_moves_internal<F>(
+    f: &mut DiffFile,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
+    can_match: F,
+    require_contiguous_group: bool,
+) where
+    F: Fn(&(usize, usize), &(usize, usize)) -> bool,
+{
     // Leading-indent-insensitive: a line reflowed to a different indentation
     // is still a move, not a change. Trailing whitespace is NOT stripped —
     // trimming the right side would cause trailing-space cleanup hunks (like
@@ -83,6 +132,13 @@ pub fn mark_moves_with_profile(
         }
     }
 
+    if require_contiguous_group {
+        runs.retain(|r| r.len() >= 2);
+        if runs.is_empty() {
+            return;
+        }
+    }
+
     let hunk_lens: Vec<usize> = f.hunks.iter().map(|h| h.rows.len()).collect();
     let grid = HunkGridNeighborhood::new(&hunk_lens);
 
@@ -105,18 +161,59 @@ pub fn mark_moves_with_profile(
         }
     };
 
-    let relocation_matches = matcher.solve(
+    let relocation_matches = matcher.solve_filtered(
         &candidate_sources,
         &grid,
         &grid,
         |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Del(d) if key(&d.text).is_empty()),
         |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Add(a) if key(&a.text).is_empty()),
-        runs,
+        runs.clone(),
         is_trivial_line,
+        can_match,
     );
 
+    let mut matches_vec: Vec<_> = relocation_matches.into_iter().collect();
+
+    if require_contiguous_group {
+        // Enforce that both source AND target lines form a contiguous block
+        // of >= 2 lines in the same target hunk.
+        let mut target_of: rustc_hash::FxHashMap<(usize, usize), (usize, usize)> =
+            rustc_hash::FxHashMap::default();
+        for m in &matches_vec {
+            target_of.insert(m.source_pos, m.target_pos);
+        }
+
+        let mut accepted_sources: rustc_hash::FxHashSet<(usize, usize)> =
+            rustc_hash::FxHashSet::default();
+        for run in &runs {
+            let mut i = 0;
+            while i < run.len() {
+                if let Some(&tgt_start) = target_of.get(&run[i]) {
+                    let mut j = i + 1;
+                    while j < run.len() {
+                        if let Some(&tgt_next) = target_of.get(&run[j]) {
+                            let expected_tgt = (tgt_start.0, tgt_start.1 + (j - i));
+                            if tgt_next == expected_tgt {
+                                j += 1;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    if j - i >= 2 {
+                        accepted_sources.extend(run[i..j].iter().copied());
+                    }
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        matches_vec.retain(|m| accepted_sources.contains(&m.source_pos));
+    }
+
     let mut move_count = 0;
-    for m in relocation_matches {
+    for m in matches_vec {
         let (hi, ri) = m.source_pos;
         let (ah, ar) = m.target_pos;
         let del_line = match &f.hunks[hi].rows[ri] {

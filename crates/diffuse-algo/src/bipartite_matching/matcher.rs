@@ -19,11 +19,24 @@ where
     K: Eq + Hash + Clone,
     P: Copy + Eq + Hash,
 {
-    let mut counts: FxHashMap<&K, usize> = FxHashMap::default();
+    greedy_multiset_match_filtered(sources, targets, |_, _| true)
+}
+
+/// Greedily matches source and target items by key equality into relocation
+/// matches, subject to an admission filter.
+pub fn greedy_multiset_match_filtered<K, P, F>(
+    sources: &[PositionedItem<K, P>],
+    targets: &[PositionedItem<K, P>],
+    can_match: F,
+) -> Vec<RelocationMatch<P>>
+where
+    K: Eq + Hash + Clone,
+    P: Copy + Eq + Hash,
+    F: Fn(&P, &P) -> bool,
+{
     let mut targets_by_key: FxHashMap<&K, Vec<P>> = FxHashMap::default();
 
     for target in targets {
-        *counts.entry(&target.key).or_insert(0) += 1;
         targets_by_key
             .entry(&target.key)
             .or_default()
@@ -39,18 +52,12 @@ where
     let mut matches: Vec<RelocationMatch<P>> = Vec::new();
 
     for source in sources {
-        let n = counts.get(&source.key).copied().unwrap_or(0);
-        if n == 0 {
-            continue;
-        }
-        counts.insert(&source.key, n - 1);
-
-        let cursor = target_cursor.entry(&source.key).or_insert(0);
         if let Some(positions) = targets_by_key.get(&source.key) {
+            let cursor = target_cursor.entry(&source.key).or_insert(0);
             while *cursor < positions.len() {
                 let pos = positions[*cursor];
                 *cursor += 1;
-                if !used_targets.contains(&pos) {
+                if !used_targets.contains(&pos) && can_match(&source.position, &pos) {
                     used_targets.insert(pos);
                     matches.push(RelocationMatch::new(source.position, pos));
                     break;
@@ -76,6 +83,34 @@ pub fn expand_neighborhood_matches<P, N, Fs, Ft>(
     Fs: Fn(&P) -> bool,
     Ft: Fn(&P) -> bool,
 {
+    expand_neighborhood_matches_filtered(
+        matches,
+        candidate_sources,
+        neighborhood_source,
+        neighborhood_target,
+        can_expand_source,
+        can_expand_target,
+        |_, _| true,
+    );
+}
+
+/// Expands existing matches to adjacent items satisfying predicate conditions
+/// subject to an admission filter.
+pub fn expand_neighborhood_matches_filtered<P, N, Fs, Ft, Ffilt>(
+    matches: &mut Vec<RelocationMatch<P>>,
+    candidate_sources: &[P],
+    neighborhood_source: &N,
+    neighborhood_target: &N,
+    can_expand_source: Fs,
+    can_expand_target: Ft,
+    can_match: Ffilt,
+) where
+    P: Copy + Eq + Hash,
+    N: SpatialNeighborhood<P>,
+    Fs: Fn(&P) -> bool,
+    Ft: Fn(&P) -> bool,
+    Ffilt: Fn(&P, &P) -> bool,
+{
     let mut pair_of: FxHashMap<P, P> = FxHashMap::default();
     let mut used_targets: FxHashSet<P> = FxHashSet::default();
 
@@ -97,6 +132,7 @@ pub fn expand_neighborhood_matches<P, N, Fs, Ft>(
             && let Some(cand_tgt) = neighborhood_target.successor(&pred_tgt)
             && !used_targets.contains(&cand_tgt)
             && can_expand_target(&cand_tgt)
+            && can_match(&src, &cand_tgt)
         {
             target_candidate = Some(cand_tgt);
         }
@@ -108,6 +144,7 @@ pub fn expand_neighborhood_matches<P, N, Fs, Ft>(
             && let Some(cand_tgt) = neighborhood_target.predecessor(&succ_tgt)
             && !used_targets.contains(&cand_tgt)
             && can_expand_target(&cand_tgt)
+            && can_match(&src, &cand_tgt)
         {
             target_candidate = Some(cand_tgt);
         }
@@ -213,14 +250,49 @@ where
         I: IntoIterator<Item = P>,
         Ftriv: Fn(&P) -> bool,
     {
-        let mut matches = self.match_multiset();
-        expand_neighborhood_matches(
+        self.solve_filtered(
+            candidate_sources,
+            neighborhood_source,
+            neighborhood_target,
+            can_expand_source,
+            can_expand_target,
+            runs,
+            is_trivial,
+            |_, _| true,
+        )
+    }
+
+    /// Solves the bipartite matching problem with neighborhood expansion and
+    /// spatial cohesion filtering, subject to a source-target admission filter.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solve_filtered<N, Fs, Ft, I, Ftriv, Ffilt>(
+        &self,
+        candidate_sources: &[P],
+        neighborhood_source: &N,
+        neighborhood_target: &N,
+        can_expand_source: Fs,
+        can_expand_target: Ft,
+        runs: impl IntoIterator<Item = I>,
+        is_trivial: Ftriv,
+        can_match: Ffilt,
+    ) -> RelocationMatches<P>
+    where
+        N: SpatialNeighborhood<P>,
+        Fs: Fn(&P) -> bool,
+        Ft: Fn(&P) -> bool,
+        I: IntoIterator<Item = P>,
+        Ftriv: Fn(&P) -> bool,
+        Ffilt: Fn(&P, &P) -> bool,
+    {
+        let mut matches = greedy_multiset_match_filtered(&self.sources, &self.targets, &can_match);
+        expand_neighborhood_matches_filtered(
             &mut matches,
             candidate_sources,
             neighborhood_source,
             neighborhood_target,
             can_expand_source,
             can_expand_target,
+            &can_match,
         );
         filter_cohesion_runs(&mut matches, runs, is_trivial);
         RelocationMatches::new(matches)

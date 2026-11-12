@@ -20,7 +20,7 @@ use crate::{
     counts::file_counts,
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_replacement},
-    moves::mark_moves_with_profile,
+    moves::{mark_cross_cluster_moves_with_profile, mark_moves_with_profile},
     notes::{NoteStatus, query_notes_for_file},
     parse::{DiffFile, Row, RowKind},
     visible::Side as VisibleSide,
@@ -225,6 +225,10 @@ pub fn process_single_diff_file(
         t1.duration_since(t_start).as_micros() as u64,
         atomic::Ordering::Relaxed,
     );
+
+    // Pre-pass: mark cross-cluster strong move groups before hunk collapse so
+    // intra-cluster DP does not steal relocated lines into spurious Mod rows.
+    mark_cross_cluster_moves_with_profile(&mut f, profile);
 
     // Collapse runs first on pre-move rows (source dels survive the collapse).
     let collapse_hunk = |h: &mut crate::parse::Hunk| {
