@@ -8,39 +8,22 @@ use super::{Args, SubCommand, ThemeTarget, is_terminal_interactive, route_mode};
 
 #[test]
 fn piped_diff_is_stream_mode() {
-    assert!(route_mode(false, false, None, &[], false, true));
+    assert!(route_mode(None, &[], false, true));
 }
 
 #[test]
 fn interactive_stdin_is_git_mode() {
-    assert!(!route_mode(false, false, None, &[], true, false));
-}
-
-#[test]
-fn explicit_json_flag_is_diff_stream_mode() {
-    assert!(route_mode(true, false, None, &[], true, false));
-}
-
-#[test]
-fn explicit_jsonl_flag_is_diff_stream_mode() {
-    assert!(route_mode(false, true, None, &[], true, false));
+    assert!(!route_mode(None, &[], true, false));
 }
 
 #[test]
 fn diff_file_flag_is_diff_stream_mode() {
-    assert!(route_mode(false, false, Some("x.diff"), &[], true, false));
+    assert!(route_mode(Some("x.diff"), &[], true, false));
 }
 
 #[test]
 fn git_args_are_always_git_mode() {
-    assert!(!route_mode(
-        false,
-        false,
-        None,
-        &["HEAD".into()],
-        false,
-        false
-    ));
+    assert!(!route_mode(None, &["HEAD".into()], false, false));
 }
 
 #[test]

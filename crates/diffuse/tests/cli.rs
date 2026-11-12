@@ -2813,3 +2813,90 @@ index 0000000..1111111 100644
     assert!(plain.contains("println!(\"old\");"));
     assert!(plain.contains("println!(\"new\");"));
 }
+
+#[test]
+fn git_review_json_with_rev_and_open_stdin_does_not_hang() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path();
+    let repo = init_repo(repo_dir).unwrap();
+    commit_files(&repo, "initial", &[("file.rs", "line 1\n")]).unwrap();
+    commit_files(&repo, "second", &[("file.rs", "line 1\nline 2\n")]).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--json")
+        .arg("HEAD~1..HEAD")
+        .current_dir(repo_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_millis(1500) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        status.is_some(),
+        "diffuse --json HEAD~1..HEAD with open stdin pipe hung and had to be killed"
+    );
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let wire: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("must emit valid JSON");
+    assert_eq!(wire["files"].as_array().unwrap().len(), 1);
+    assert_eq!(wire["files"][0]["path"], "file.rs");
+}
+
+#[test]
+fn git_review_subcommand_json_with_rev_does_not_hang() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path();
+    let repo = init_repo(repo_dir).unwrap();
+    commit_files(&repo, "initial", &[("file.rs", "line 1\n")]).unwrap();
+    commit_files(&repo, "second", &[("file.rs", "line 1\nline 2\n")]).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("review")
+        .arg("--json")
+        .arg("HEAD~1..HEAD")
+        .current_dir(repo_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_millis(1500) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        status.is_some(),
+        "diffuse review --json HEAD~1 with open stdin pipe hung and had to be killed"
+    );
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let wire: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("must emit valid JSON");
+    assert_eq!(wire["files"].as_array().unwrap().len(), 1);
+    assert_eq!(wire["files"][0]["path"], "file.rs");
+}

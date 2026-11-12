@@ -595,7 +595,7 @@ fn test_output_hunk_counts() {
     assert_eq!(counts.dels, 1);
     assert_eq!(counts.adds, 1);
     assert_eq!(counts.mods, 1);
-    assert_eq!(counts.movs, 2);
+    assert_eq!(counts.movs, 1);
     assert_eq!(counts.notes, 0);
 }
 

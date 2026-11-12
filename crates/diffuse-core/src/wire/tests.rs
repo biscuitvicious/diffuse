@@ -417,6 +417,19 @@ fn test_output_file_counts_and_fence_invariants() {
     assert!(file.validate_invariants().is_err());
     file.counts.adds = 1;
 
+    // Hunk count exceeds file count
+    file.hunks[0].rows.push(OutputRow {
+        kind: RowKind::Add,
+        mov_side: None,
+        new_line: Some(2),
+        old_line: None,
+        runs: vec![make_run(RunKind::Add, "line 2")],
+        wholesale: false,
+        group: None,
+    });
+    assert!(file.validate_invariants().is_err());
+    file.hunks[0].rows.pop();
+
     // Overlapping fences
     file.new_line_count = 100;
     file.fences = vec![

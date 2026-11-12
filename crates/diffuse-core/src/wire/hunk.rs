@@ -125,10 +125,10 @@ impl OutputHunk {
     }
 
     /// Aggregated line-level change counts for this hunk's rows, mirroring
-    /// [`crate::counts::file_counts`] row semantics (moved sources and
-    /// targets both count as relocations; context and separators excluded).
-    /// Notes attach at file level, so `notes` is always 0 — note counts
-    /// are never attributed to hunks.
+    /// [`crate::counts::file_counts`] row semantics (relocations count at
+    /// target side; source side is absorbed; context and separators
+    /// excluded). Notes attach at file level, so `notes` is always 0 — note
+    /// counts are never attributed to hunks.
     pub fn counts(&self) -> FileCounts {
         let mut counts = FileCounts::default();
         for r in &self.rows {
@@ -136,7 +136,7 @@ impl OutputHunk {
                 RowKind::Del => counts.dels += 1,
                 RowKind::Add => counts.adds += 1,
                 RowKind::Mod => counts.mods += 1,
-                RowKind::Mov => counts.movs += 1,
+                RowKind::Mov if r.mov_side != Some(MovSide::Src) => counts.movs += 1,
                 _ => {}
             }
         }

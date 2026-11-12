@@ -459,6 +459,35 @@ impl OutputFile {
                 ));
             }
 
+            let mut sum_hunk_counts = FileCounts::default();
+            for (h_idx, h) in self.hunks.iter().enumerate() {
+                let hc = h.counts();
+                if hc.adds > self.counts.adds
+                    || hc.dels > self.counts.dels
+                    || hc.mods > self.counts.mods
+                    || hc.movs > self.counts.movs
+                {
+                    return Err(format!(
+                        "{}: hunk {h_idx} counts ({hc:?}) exceed file counts ({:?})",
+                        self.path, self.counts
+                    ));
+                }
+                sum_hunk_counts.adds += hc.adds;
+                sum_hunk_counts.dels += hc.dels;
+                sum_hunk_counts.mods += hc.mods;
+                sum_hunk_counts.movs += hc.movs;
+            }
+            if sum_hunk_counts.adds != self.counts.adds
+                || sum_hunk_counts.dels != self.counts.dels
+                || sum_hunk_counts.mods != self.counts.mods
+                || sum_hunk_counts.movs != self.counts.movs
+            {
+                return Err(format!(
+                    "{}: hunk counts sum ({sum_hunk_counts:?}) does not match file counts ({:?})",
+                    self.path, self.counts
+                ));
+            }
+
             let ext = self.path.rsplit('.').next().unwrap_or("");
             let profile = diffuse_syntax::registry::lang_profile(ext);
 

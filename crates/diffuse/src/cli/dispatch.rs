@@ -27,14 +27,12 @@ use crate::notes_cli;
 /// Decide whether an invocation routes to non-interactive diff stream parsing
 /// (`true`) or to the git review/direct reviewer (`false`).
 pub fn route_mode(
-    is_json: bool,
-    is_jsonl: bool,
     diff_opt: Option<&str>,
     git_revs: &[String],
     stdin_tty: bool,
     has_piped_stdin: bool,
 ) -> bool {
-    if is_json || is_jsonl || diff_opt.is_some() {
+    if diff_opt.is_some() {
         return true;
     }
     if !git_revs.is_empty() || stdin_tty {
@@ -176,41 +174,29 @@ pub fn dispatch(args: &Args) -> io::Result<()> {
         }
     }
 
-    let (has_piped_stdin, reader) = if explicit_cmd.is_none()
-        && !stdin_tty
-        && git_revs.is_empty()
-        && !is_json
-        && !is_jsonl
-        && diff_opt.is_none()
-    {
-        use std::io::Read;
-        let mut buf = [0u8; 4096];
-        match io::stdin().read(&mut buf) {
-            Ok(n) if n > 0 && !buf[..n].trim_ascii().is_empty() => {
-                let chained =
-                    io::BufReader::new(io::Cursor::new(buf[..n].to_vec()).chain(io::stdin()));
-                (
-                    true,
-                    Some(Box::new(chained) as Box<dyn io::BufRead + Send + 'static>),
-                )
+    let (has_piped_stdin, reader) =
+        if explicit_cmd.is_none() && !stdin_tty && git_revs.is_empty() && diff_opt.is_none() {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            match io::stdin().read(&mut buf) {
+                Ok(n) if n > 0 && !buf[..n].trim_ascii().is_empty() => {
+                    let chained =
+                        io::BufReader::new(io::Cursor::new(buf[..n].to_vec()).chain(io::stdin()));
+                    (
+                        true,
+                        Some(Box::new(chained) as Box<dyn io::BufRead + Send + 'static>),
+                    )
+                }
+                _ => (false, None),
             }
-            _ => (false, None),
-        }
-    } else {
-        (false, None)
-    };
+        } else {
+            (false, None)
+        };
 
     let is_diff_stream = match explicit_cmd {
         Some("parse") => true,
-        Some("review") => is_json || is_jsonl,
-        _ => route_mode(
-            is_json,
-            is_jsonl,
-            diff_opt.as_deref(),
-            &git_revs,
-            stdin_tty,
-            has_piped_stdin,
-        ),
+        Some("review") => false,
+        _ => route_mode(diff_opt.as_deref(), &git_revs, stdin_tty, has_piped_stdin),
     };
 
     if is_diff_stream {
