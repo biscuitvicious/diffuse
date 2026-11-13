@@ -3,7 +3,9 @@
 
 use std::{hash::Hash, iter::FusedIterator};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use super::SpatialNeighborhood;
 
 /// A matched relocation pairing a source position to a target position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -98,16 +100,21 @@ impl<P: Copy> FusedIterator for RelocationMatches<P> {}
 
 /// Filters candidate matches based on spatial clustering and block cohesion
 /// rules.
-pub fn filter_cohesion_runs<P, I, F>(
+pub fn filter_cohesion_runs<P, I, F, N>(
     matches: &mut Vec<RelocationMatch<P>>,
     runs: impl IntoIterator<Item = I>,
     is_trivial: F,
+    neighborhood_target: &N,
 ) where
     P: Copy + Eq + Hash,
     I: IntoIterator<Item = P>,
     F: Fn(&P) -> bool,
+    N: SpatialNeighborhood<P>,
 {
-    let moved_sources: FxHashSet<P> = matches.iter().map(|m| m.source_pos).collect();
+    let target_of: FxHashMap<P, P> = matches
+        .iter()
+        .map(|m| (m.source_pos, m.target_pos))
+        .collect();
     let mut unmark_positions: FxHashSet<P> = FxHashSet::default();
 
     for run_iter in runs {
@@ -117,18 +124,18 @@ pub fn filter_cohesion_runs<P, I, F>(
         }
 
         let first_pos = run[0];
-        let first_moved = moved_sources.contains(&first_pos);
+        let first_moved = target_of.contains_key(&first_pos);
         let first_trivial = is_trivial(&first_pos);
 
         let has_nontrivial_move = run
             .iter()
-            .any(|pos| moved_sources.contains(pos) && !is_trivial(pos));
+            .any(|pos| target_of.contains_key(pos) && !is_trivial(pos));
 
         if !first_moved || first_trivial || !has_nontrivial_move {
             unmark_positions.extend(
                 run.iter()
                     .copied()
-                    .filter(|pos| moved_sources.contains(pos)),
+                    .filter(|pos| target_of.contains_key(pos)),
             );
             continue;
         }
@@ -143,15 +150,15 @@ pub fn filter_cohesion_runs<P, I, F>(
             let moved_in_run: Vec<P> = run
                 .iter()
                 .copied()
-                .filter(|pos| moved_sources.contains(pos))
+                .filter(|pos| target_of.contains_key(pos))
                 .collect();
             if moved_in_run.len() < 2
-                || !moved_sources.contains(&run[0])
+                || !target_of.contains_key(&run[0])
                 || moved_in_run.len() < run.len()
             {
                 let prefix_len = run
                     .iter()
-                    .take_while(|pos| moved_sources.contains(pos))
+                    .take_while(|pos| target_of.contains_key(pos))
                     .count();
                 if prefix_len < 2 || prefix_len < moved_in_run.len() {
                     unmark_positions.extend(moved_in_run);
@@ -161,22 +168,31 @@ pub fn filter_cohesion_runs<P, I, F>(
                         run.iter()
                             .skip(prefix_len)
                             .copied()
-                            .filter(|pos| moved_sources.contains(pos)),
+                            .filter(|pos| target_of.contains_key(pos)),
                     );
                 }
             }
         }
 
-        // If only isolated trivial lines at the end of the run moved, unmark
-        // them
+        // Trivial lines must only move if they are contiguous with a moved predecessor
+        // in BOTH source and target.
         for i in 0..run.len() {
             let pos = run[i];
-            if moved_sources.contains(&pos)
-                && is_trivial(&pos)
-                && i > 0
-                && !moved_sources.contains(&run[i - 1])
-            {
-                unmark_positions.insert(pos);
+            if target_of.contains_key(&pos) && is_trivial(&pos) {
+                if i == 0 {
+                    unmark_positions.insert(pos);
+                } else {
+                    let prev = run[i - 1];
+                    if unmark_positions.contains(&prev) || !target_of.contains_key(&prev) {
+                        unmark_positions.insert(pos);
+                    } else {
+                        let prev_tgt = target_of[&prev];
+                        let tgt = target_of[&pos];
+                        if !neighborhood_target.is_contiguous_successor(&prev_tgt, &tgt) {
+                            unmark_positions.insert(pos);
+                        }
+                    }
+                }
             }
         }
     }

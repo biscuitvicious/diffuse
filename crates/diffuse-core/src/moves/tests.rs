@@ -487,3 +487,111 @@ fn test_cross_cluster_moves_ignores_intra_cluster_matches() {
     assert!(f2.hunks[0].rows[3].is_moved());
     assert!(f2.hunks[0].rows[4].is_moved());
 }
+
+#[test]
+fn test_non_salient_lines_stick_to_move_group_and_are_not_stolen() {
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+    let mut f = file(vec![hunk(vec![
+        del(5, "if handled {"),
+        add(10, "if handled {"),
+        add(11, "    break;"),
+        add(12, "}"),
+        ctx(20, 20, "context_between();"),
+        del(100, "hit_indicator_code();"),
+        del(101, "    break;"),
+        del(102, "}"),
+        add(30, "hit_indicator_code();"),
+        add(31, "    break;"),
+        add(32, "}"),
+    ])]);
+
+    mark_moves_with_profile(&mut f, rs);
+
+    // The hit_indicator block del(100..=102) must match add(30..=32)
+    let add_30 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(30))
+        .unwrap();
+    let add_31 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(31))
+        .unwrap();
+    let add_32 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(32))
+        .unwrap();
+
+    assert!(add_30.is_moved(), "add 30 hit_indicator must be moved");
+    assert!(
+        add_31.is_moved(),
+        "add 31 break; must stick to hit_indicator and be moved"
+    );
+    assert!(
+        add_32.is_moved(),
+        "add 32 }} must stick to hit_indicator and be moved"
+    );
+
+    // The handled block add(11..=12) must NOT steal break; and }
+    let add_11 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(11))
+        .unwrap();
+    let add_12 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(12))
+        .unwrap();
+    assert!(
+        !add_11.is_moved(),
+        "add 11 break; must NOT be moved (stolen)"
+    );
+    assert!(!add_12.is_moved(), "add 12 }} must NOT be moved (stolen)");
+}
+
+#[test]
+fn test_three_line_trivial_context_run_still_splits_clusters() {
+    // A context run of blank/delimiter lines with no salient code still
+    // establishes a cluster boundary when it spans at least 3 lines, so a
+    // trimmed-only (reindented) pair across it is a cross-cluster relocation.
+    let mut f = file(vec![hunk(vec![
+        del(10, "  first_statement();"),
+        del(11, "  second_statement();"),
+        ctx(12, 12, ""),
+        ctx(13, 13, "}"),
+        ctx(14, 14, ""),
+        add(20, "    first_statement();"),
+        add(21, "    second_statement();"),
+    ])]);
+    mark_moves_with_profile(&mut f, None);
+    for (idx, expect_moved) in [(0, true), (1, true), (5, true), (6, true)] {
+        assert_eq!(
+            f.hunks[0].rows[idx].is_moved(),
+            expect_moved,
+            "row {idx} moved-bit mismatch"
+        );
+    }
+}
+
+#[test]
+fn test_pre_pass_locks_trimmed_pair_across_trivial_context() {
+    // The pre-pass is a broad shield: ANY context row (even a single blank
+    // line) separates clusters for its purposes, so a trimmed-only pair
+    // across it is locked in before collapse can steal either side into a
+    // spurious Mod. The main pass applies the narrower salient-aware rule.
+    let mut f = file(vec![hunk(vec![
+        del(10, "  first_statement();"),
+        del(11, "  second_statement();"),
+        ctx(12, 12, ""),
+        add(20, "    first_statement();"),
+        add(21, "    second_statement();"),
+    ])]);
+    mark_cross_cluster_moves_with_profile(&mut f, None);
+    assert!(f.hunks[0].rows[0].is_moved());
+    assert!(f.hunks[0].rows[1].is_moved());
+    assert!(f.hunks[0].rows[3].is_moved());
+    assert!(f.hunks[0].rows[4].is_moved());
+}

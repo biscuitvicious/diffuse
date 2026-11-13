@@ -119,40 +119,53 @@ pub fn expand_neighborhood_matches_filtered<P, N, Fs, Ft, Ffilt>(
         used_targets.insert(m.target_pos);
     }
 
-    for &src in candidate_sources {
-        if !can_expand_source(&src) {
-            continue;
-        }
+    let mut remaining: Vec<P> = candidate_sources
+        .iter()
+        .copied()
+        .filter(|src| can_expand_source(src))
+        .collect();
 
-        let mut target_candidate: Option<P> = None;
+    loop {
+        let mut matched_any = false;
+        remaining.retain(|&src| {
+            let mut target_candidate: Option<P> = None;
 
-        // Check predecessor
-        if let Some(pred_src) = neighborhood_source.predecessor(&src)
-            && let Some(&pred_tgt) = pair_of.get(&pred_src)
-            && let Some(cand_tgt) = neighborhood_target.successor(&pred_tgt)
-            && !used_targets.contains(&cand_tgt)
-            && can_expand_target(&cand_tgt)
-            && can_match(&src, &cand_tgt)
-        {
-            target_candidate = Some(cand_tgt);
-        }
+            // Check predecessor
+            if let Some(pred_src) = neighborhood_source.predecessor(&src)
+                && let Some(&pred_tgt) = pair_of.get(&pred_src)
+                && let Some(cand_tgt) = neighborhood_target.successor(&pred_tgt)
+                && !used_targets.contains(&cand_tgt)
+                && can_expand_target(&cand_tgt)
+                && can_match(&src, &cand_tgt)
+            {
+                target_candidate = Some(cand_tgt);
+            }
 
-        // Check successor
-        if target_candidate.is_none()
-            && let Some(succ_src) = neighborhood_source.successor(&src)
-            && let Some(&succ_tgt) = pair_of.get(&succ_src)
-            && let Some(cand_tgt) = neighborhood_target.predecessor(&succ_tgt)
-            && !used_targets.contains(&cand_tgt)
-            && can_expand_target(&cand_tgt)
-            && can_match(&src, &cand_tgt)
-        {
-            target_candidate = Some(cand_tgt);
-        }
+            // Check successor
+            if target_candidate.is_none()
+                && let Some(succ_src) = neighborhood_source.successor(&src)
+                && let Some(&succ_tgt) = pair_of.get(&succ_src)
+                && let Some(cand_tgt) = neighborhood_target.predecessor(&succ_tgt)
+                && !used_targets.contains(&cand_tgt)
+                && can_expand_target(&cand_tgt)
+                && can_match(&src, &cand_tgt)
+            {
+                target_candidate = Some(cand_tgt);
+            }
 
-        if let Some(cand_tgt) = target_candidate {
-            used_targets.insert(cand_tgt);
-            pair_of.insert(src, cand_tgt);
-            matches.push(RelocationMatch::new(src, cand_tgt));
+            if let Some(cand_tgt) = target_candidate {
+                used_targets.insert(cand_tgt);
+                pair_of.insert(src, cand_tgt);
+                matches.push(RelocationMatch::new(src, cand_tgt));
+                matched_any = true;
+                false
+            } else {
+                true
+            }
+        });
+
+        if !matched_any {
+            break;
         }
     }
 }
@@ -294,7 +307,7 @@ where
             can_expand_target,
             &can_match,
         );
-        filter_cohesion_runs(&mut matches, runs, is_trivial);
+        filter_cohesion_runs(&mut matches, runs, is_trivial, neighborhood_target);
         RelocationMatches::new(matches)
     }
 }

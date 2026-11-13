@@ -2833,6 +2833,11 @@ fn test_tier2_residual_rival_in_content_prevents_theft() {
     );
 }
 
+// The `hit_indicator` block in dispatch.rs (scrollbar-grab-drag^!) moved
+// with its indentation adjusted: the pre-pass must lock the trimmed-only
+// pairs as a strong cross-cluster move group before collapse can steal
+// either side into a spurious Mod (e.g. Old 330 with New 352, which share
+// only the `saturating_sub(1)` token).
 #[test]
 fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2902,5 +2907,27 @@ fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
         crate::parse::RowKind::Mov,
         "New line 326 must be Mov, got {:?}",
         new_326.kind
+    );
+
+    // Verify that new lines 305 and 306 (break; and }) are NOT marked Mov (they
+    // must not steal break; and })
+    let new_305 = rows
+        .iter()
+        .find(|r| r.new_line == Some(305))
+        .expect("New line 305 must exist");
+    assert_ne!(
+        new_305.kind,
+        crate::parse::RowKind::Mov,
+        "New line 305 (break;) must not be Mov (stolen from hit_indicator)"
+    );
+
+    let new_306 = rows
+        .iter()
+        .find(|r| r.new_line == Some(306))
+        .expect("New line 306 must exist");
+    assert_ne!(
+        new_306.kind,
+        crate::parse::RowKind::Mov,
+        "New line 306 (}}) must not be Mov (stolen from hit_indicator)"
     );
 }

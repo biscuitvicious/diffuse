@@ -128,13 +128,16 @@ fn test_neighborhood_expansion() {
 
 #[test]
 fn test_cohesion_run_filtering() {
+    let hunk_lens = [10, 10];
+    let grid = HunkGridNeighborhood::new(&hunk_lens);
+
     // Run 1: First line did not move -> all unmarked
     let mut matches1 = vec![
         RelocationMatch::new((0, 1), (1, 1)),
         RelocationMatch::new((0, 2), (1, 2)),
     ];
     let run1 = [(0, 0), (0, 1), (0, 2)];
-    filter_cohesion_runs(&mut matches1, [run1], |_| false);
+    filter_cohesion_runs(&mut matches1, [run1], |_| false, &grid);
     assert!(matches1.is_empty());
 
     // Run 2: First line is trivial -> all unmarked
@@ -143,7 +146,7 @@ fn test_cohesion_run_filtering() {
         RelocationMatch::new((0, 1), (1, 1)),
     ];
     let run2 = [(0, 0), (0, 1)];
-    filter_cohesion_runs(&mut matches2, [run2], |p| p.1 == 0);
+    filter_cohesion_runs(&mut matches2, [run2], |p| p.1 == 0, &grid);
     assert!(matches2.is_empty());
 
     // Run 3: Entire run moved -> all retained
@@ -153,7 +156,7 @@ fn test_cohesion_run_filtering() {
         RelocationMatch::new((0, 2), (1, 2)),
     ];
     let run3 = [(0, 0), (0, 1), (0, 2)];
-    filter_cohesion_runs(&mut matches3, [run3], |_| false);
+    filter_cohesion_runs(&mut matches3, [run3], |_| false, &grid);
     assert_eq!(matches3.len(), 3);
 
     // Run 4: Prefix >= 2 moved -> prefix retained, rest unmarked
@@ -162,13 +165,13 @@ fn test_cohesion_run_filtering() {
         RelocationMatch::new((0, 1), (1, 1)),
     ];
     let run4 = [(0, 0), (0, 1), (0, 2), (0, 3)];
-    filter_cohesion_runs(&mut matches4, [run4], |_| false);
+    filter_cohesion_runs(&mut matches4, [run4], |_| false, &grid);
     assert_eq!(matches4.len(), 2);
 
     // Run 5: Prefix < 2 moved -> all unmarked
     let mut matches5 = vec![RelocationMatch::new((0, 0), (1, 0))];
     let run5 = [(0, 0), (0, 1), (0, 2)];
-    filter_cohesion_runs(&mut matches5, [run5], |_| false);
+    filter_cohesion_runs(&mut matches5, [run5], |_| false, &grid);
     assert!(matches5.is_empty());
 
     // Run 6: Isolated moved lines after unmoved line -> all unmarked
@@ -177,13 +180,13 @@ fn test_cohesion_run_filtering() {
         RelocationMatch::new((0, 2), (1, 2)),
     ];
     let run6 = [(0, 0), (0, 1), (0, 2)];
-    filter_cohesion_runs(&mut matches6, [run6], |_| false);
+    filter_cohesion_runs(&mut matches6, [run6], |_| false, &grid);
     assert!(matches6.is_empty());
 
     // Run 7: Empty run
     let mut matches7 = vec![RelocationMatch::new((0, 0), (1, 0))];
     let empty_run: [(usize, usize); 0] = [];
-    filter_cohesion_runs(&mut matches7, [empty_run], |_| false);
+    filter_cohesion_runs(&mut matches7, [empty_run], |_| false, &grid);
     assert_eq!(matches7.len(), 1);
 
     // Run 8: Isolated moved line after unmoved line causes entire run to be
@@ -194,8 +197,23 @@ fn test_cohesion_run_filtering() {
         RelocationMatch::new((0, 3), (1, 3)),
     ];
     let run8 = [(0, 0), (0, 1), (0, 2), (0, 3)];
-    filter_cohesion_runs(&mut matches8, [run8], |_| false);
+    filter_cohesion_runs(&mut matches8, [run8], |_| false, &grid);
     assert!(matches8.is_empty());
+
+    // Run 9: Severed target contiguity on trivial line — source is contiguous
+    // (0,0)..(0,2), but target for trivial line (0,2) jumps to (1,8) instead of
+    // (1,2). The severed trivial line (0,2) must be unmarked; prefix
+    // (0,0)..(0,1) retained.
+    let mut matches9 = vec![
+        RelocationMatch::new((0, 0), (1, 0)),
+        RelocationMatch::new((0, 1), (1, 1)),
+        RelocationMatch::new((0, 2), (1, 8)),
+    ];
+    let run9 = [(0, 0), (0, 1), (0, 2)];
+    filter_cohesion_runs(&mut matches9, [run9], |p| p.1 == 2, &grid);
+    assert_eq!(matches9.len(), 2);
+    assert_eq!(matches9[0], RelocationMatch::new((0, 0), (1, 0)));
+    assert_eq!(matches9[1], RelocationMatch::new((0, 1), (1, 1)));
 }
 
 #[test]

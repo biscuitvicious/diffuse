@@ -35,7 +35,23 @@ pub fn mark_moves_with_profile(
     f: &mut DiffFile,
     profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) {
-    mark_moves_internal(f, profile, |_, _| true, false);
+    // Salient-aware cluster boundaries: a context run only separates clusters
+    // when it contains substantive code or spans at least 3 lines. Trivial
+    // delimiter context (like `};` or blank lines) keeps adjacent change groups
+    // in the same cluster. Trimmed-only matches (indentation reflows) are only
+    // accepted when the source and target are in different clusters, preventing
+    // nearby indentation changes from being misclassified as relocations. Exact-
+    // text matches are always allowed regardless of cluster membership (see the
+    // bypass inside `mark_moves_internal`'s `full_can_match`).
+    let row_clusters: Vec<Vec<usize>> = f
+        .hunks
+        .iter()
+        .map(|h| hunk_row_clusters_salient(h, profile))
+        .collect();
+    let can_match = move |src: &(usize, usize), tgt: &(usize, usize)| -> bool {
+        src.0 != tgt.0 || row_clusters[src.0][src.1] != row_clusters[tgt.0][tgt.1]
+    };
+    mark_moves_internal(f, profile, can_match, false, true);
 }
 
 /// Pre-pass: marks only strong cross-cluster contiguous moved blocks prior to
@@ -50,13 +66,26 @@ pub fn mark_cross_cluster_moves_with_profile(
     f: &mut DiffFile,
     profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) {
+    // Deliberately syntax-blind clusters (ANY context row splits): the
+    // pre-pass is a shield, not a philosopher. It runs before hunk collapse,
+    // and anything it does not lock in is exposed to collapse, which pairs
+    // leftovers by content similarity — producing spurious Mods like a
+    // reindented line paired with a content-similar but unrelated line.
+    // A too-narrow (salient-aware) shield lets such pairs through to be
+    // stolen; a locked Mov is muted and excluded from counts, while a
+    // spurious Mod actively misclaims one line became another. The main pass
+    // below still applies the precise salient-aware rule to leftovers, and
+    // the exact-text bypass stays scoped to it (`allow_exact_bypass`).
     let row_clusters: Vec<Vec<usize>> = f.hunks.iter().map(hunk_row_clusters).collect();
     let is_cross_cluster = |src: &(usize, usize), tgt: &(usize, usize)| -> bool {
         src.0 != tgt.0 || row_clusters[src.0][src.1] != row_clusters[tgt.0][tgt.1]
     };
-    mark_moves_internal(f, profile, is_cross_cluster, true);
+    mark_moves_internal(f, profile, is_cross_cluster, true, false);
 }
 
+/// Assigns a cluster ID to each row in a hunk. Any context row is treated as a
+/// cluster boundary: consecutive Del/Add rows with no context between them
+/// share the same cluster ID.
 fn hunk_row_clusters(h: &crate::parse::Hunk) -> Vec<usize> {
     let mut clusters = Vec::with_capacity(h.rows.len());
     let mut cluster_id = 0;
@@ -76,11 +105,94 @@ fn hunk_row_clusters(h: &crate::parse::Hunk) -> Vec<usize> {
     clusters
 }
 
+/// Assigns a cluster ID to each row in a hunk using salient-aware boundaries.
+/// A context run only establishes a cluster boundary when it contains
+/// substantive (salient) code or spans at least 3 lines. Trivial delimiter
+/// context (like `};` or blank lines) keeps adjacent change groups in the
+/// same cluster, preventing incidental indentation-reflow from being
+/// misclassified as a cross-cluster relocation.
+fn hunk_row_clusters_salient(
+    h: &crate::parse::Hunk,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
+) -> Vec<usize> {
+    let mut clusters = Vec::with_capacity(h.rows.len());
+    let mut cluster_id = 0;
+    let mut ctx_run: Vec<&Row> = Vec::new();
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            ctx_run.push(r);
+            clusters.push(usize::MAX);
+        } else {
+            if !ctx_run.is_empty() {
+                let is_boundary = ctx_run.len() >= 3
+                    || ctx_run
+                        .iter()
+                        .any(|cr| is_salient_move_line(cr.text(), profile));
+                if is_boundary {
+                    cluster_id += 1;
+                }
+                ctx_run.clear();
+            }
+            clusters.push(cluster_id);
+        }
+    }
+    clusters
+}
+
+fn is_salient_move_line(
+    text: &str,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
+) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some(p) = profile {
+        if p.classify_exact_close(trimmed) != diffuse_syntax::profile::CloseDelimiter::None
+            || p.is_expression_open(trimmed)
+            || p.is_block_close(trimmed)
+        {
+            return false;
+        }
+    } else {
+        if diffuse_syntax::profile::CloseDelimiter::default_classify_exact(trimmed)
+            != diffuse_syntax::profile::CloseDelimiter::None
+            || trimmed == "{"
+            || trimmed == "("
+            || trimmed == "["
+        {
+            return false;
+        }
+    }
+
+    let s = trimmed.trim_end_matches(';').trim();
+    if matches!(
+        s,
+        "break"
+            | "continue"
+            | "return"
+            | "else"
+            | "else {"
+            | "} else"
+            | "} else {"
+            | "do"
+            | "do {"
+            | "{"
+            | "}"
+            | "};"
+    ) {
+        return false;
+    }
+
+    crate::lcs::line_has_salient_token(trimmed, profile)
+}
+
 fn mark_moves_internal<F>(
     f: &mut DiffFile,
     profile: Option<&diffuse_syntax::profile::LangProfile>,
     can_match: F,
     require_contiguous_group: bool,
+    allow_exact_bypass: bool,
 ) where
     F: Fn(&(usize, usize), &(usize, usize)) -> bool,
 {
@@ -98,7 +210,7 @@ fn mark_moves_internal<F>(
         for (ri, r) in h.rows.iter().enumerate() {
             if let Row::Add(add_line) = r {
                 let k = key(&add_line.text);
-                if !k.is_empty() {
+                if !k.is_empty() && is_salient_move_line(&add_line.text, profile) {
                     matcher.add_target(k, (hi, ri));
                 }
             }
@@ -117,10 +229,10 @@ fn mark_moves_internal<F>(
         for (ri, r) in h.rows.iter().enumerate() {
             if let Row::Del(del_line) = r {
                 let k = key(&del_line.text);
-                if k.is_empty() {
-                    candidate_sources.push((hi, ri));
-                } else {
+                if !k.is_empty() && is_salient_move_line(&del_line.text, profile) {
                     matcher.add_source(k, (hi, ri));
+                } else {
+                    candidate_sources.push((hi, ri));
                 }
                 run.push((hi, ri));
             } else if !run.is_empty() {
@@ -142,41 +254,38 @@ fn mark_moves_internal<F>(
     let hunk_lens: Vec<usize> = f.hunks.iter().map(|h| h.rows.len()).collect();
     let grid = HunkGridNeighborhood::new(&hunk_lens);
 
-    let is_trivial_line = |pos: &(usize, usize)| {
-        let text = f.hunks[pos.0].rows[pos.1].text();
-        let s = text.trim();
-        if s.is_empty() {
+    let is_trivial_line =
+        |pos: &(usize, usize)| !is_salient_move_line(f.hunks[pos.0].rows[pos.1].text(), profile);
+
+    let full_can_match = |src: &(usize, usize), tgt: &(usize, usize)| -> bool {
+        let src_row = &f.hunks[src.0].rows[src.1];
+        let tgt_row = &f.hunks[tgt.0].rows[tgt.1];
+        // Exact-text matches bypass cluster gating (main pass only):
+        // byte-identical lines are relocations regardless of cluster
+        // membership. The cross-cluster pre-pass sets `allow_exact_bypass`
+        // to false so it keeps its cross-cluster-only contract.
+        if allow_exact_bypass && src_row.text() == tgt_row.text() {
             return true;
         }
-        if let Some(p) = profile {
-            p.classify_exact_close(s) != diffuse_syntax::profile::CloseDelimiter::None
-                || p.is_expression_open(s)
-                || p.is_block_close(s)
-        } else {
-            diffuse_syntax::profile::CloseDelimiter::default_classify_exact(s)
-                != diffuse_syntax::profile::CloseDelimiter::None
-                || s == "{"
-                || s == "("
-                || s == "["
-        }
+        key(src_row.text()) == key(tgt_row.text()) && can_match(src, tgt)
     };
 
     let relocation_matches = matcher.solve_filtered(
         &candidate_sources,
         &grid,
         &grid,
-        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Del(d) if key(&d.text).is_empty()),
-        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Add(a) if key(&a.text).is_empty()),
+        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Del(_)),
+        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Add(_)),
         runs.clone(),
         is_trivial_line,
-        can_match,
+        full_can_match,
     );
 
     let mut matches_vec: Vec<_> = relocation_matches.into_iter().collect();
 
     if require_contiguous_group {
         // Enforce that both source AND target lines form a contiguous block
-        // of >= 2 lines in the same target hunk.
+        // of >= 2 lines in the same target hunk, containing at least one salient line.
         let mut target_of: rustc_hash::FxHashMap<(usize, usize), (usize, usize)> =
             rustc_hash::FxHashMap::default();
         for m in &matches_vec {
@@ -200,7 +309,10 @@ fn mark_moves_internal<F>(
                         }
                         break;
                     }
-                    if j - i >= 2 {
+                    let has_salient = run[i..j].iter().any(|pos| {
+                        is_salient_move_line(f.hunks[pos.0].rows[pos.1].text(), profile)
+                    });
+                    if j - i >= 2 && has_salient {
                         accepted_sources.extend(run[i..j].iter().copied());
                     }
                     i = j;
