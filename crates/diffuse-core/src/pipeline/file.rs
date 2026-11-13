@@ -20,7 +20,10 @@ use crate::{
     counts::file_counts,
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_replacement},
-    moves::{mark_cross_cluster_moves_with_profile, mark_moves_with_profile},
+    moves::{
+        absorb_mov_tails, mark_cross_cluster_moves_with_profile, mark_moves_with_profile,
+        resolve_mov_pairs_by_line,
+    },
     notes::{NoteStatus, query_notes_for_file},
     parse::{DiffFile, Row, RowKind},
     visible::Side as VisibleSide,
@@ -228,7 +231,25 @@ pub fn process_single_diff_file(
 
     // Pre-pass: mark cross-cluster strong move groups before hunk collapse so
     // intra-cluster DP does not steal relocated lines into spurious Mod rows.
-    mark_cross_cluster_moves_with_profile(&mut f, profile);
+    let pre_locked = mark_cross_cluster_moves_with_profile(&mut f, profile);
+    // Snapshot locked line numbers: collapse shifts row indices, but line
+    // numbers are stable identifiers for re-seeding the post-collapse
+    // absorption with the pre-pass-locked blocks.
+    let mut pre_lines: Vec<(u32, u32)> = pre_locked
+        .iter()
+        .filter_map(|&(s, t)| {
+            let old_line = f.hunks.get(s.0)?.rows.get(s.1)?.old_line()?;
+            let new_line = f.hunks.get(t.0)?.rows.get(t.1)?.new_line()?;
+            Some((old_line, new_line))
+        })
+        .collect();
+    // Extend the pre-pass shield to uniform-Δ tails before collapse can
+    // pair the trailing leftovers into spurious Mods. No Ctx breaking
+    // yet: keep collapse input stable and create no orphans for it.
+    // Absorbed line pairs join the snapshot: the shield's own extensions
+    // are Mov rows too, and the post-collapse pass must see their pairs.
+    let pre_absorbed = absorb_mov_tails(&mut f, &pre_locked, profile, false);
+    pre_lines.extend(pre_absorbed);
 
     // Collapse runs first on pre-move rows (source dels survive the collapse).
     let collapse_hunk = |h: &mut crate::parse::Hunk| {
@@ -251,7 +272,18 @@ pub fn process_single_diff_file(
     );
 
     // Mark moves after collapse: creates Row::Mov pairs.
-    mark_moves_with_profile(&mut f, profile);
+    let main_locked = mark_moves_with_profile(&mut f, profile);
+    // Sweep uniform-Δ trailing rows (Del/Add leftovers and misassigned
+    // Ctx) into the locked blocks; orphans stay as plain leftovers.
+    // Pre-pass-locked blocks are re-seeded by line number (their recorded
+    // positions went stale across collapse); the main pass skips
+    // already-moved rows, so without this they would never be extended.
+    let mut seeded = resolve_mov_pairs_by_line(&f, &pre_lines);
+    seeded.extend(main_locked);
+    let _ = absorb_mov_tails(&mut f, &seeded, profile, true);
+    // The post-collapse return value (newly absorbed pairs) is not used: a
+    // subsequent index-shifting pass does not follow, so there is no caller
+    // that needs to re-resolve positions. The side-effect on `f` is what matters.
     let t3 = Instant::now();
     T_STAGE[2].fetch_add(
         t3.duration_since(t2).as_micros() as u64,

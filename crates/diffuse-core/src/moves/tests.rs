@@ -15,6 +15,16 @@ fn ctx(old_num: u32, new_num: u32, text: &str) -> Row {
     Row::Ctx(CtxLine::new(old_num, new_num, text))
 }
 
+fn mod_row(old_num: u32, new_num: u32, old_text: &str, new_text: &str) -> Row {
+    Row::Mod {
+        old_line: DelLine::new(old_num, old_text),
+        new_line: AddLine::new(new_num, new_text),
+        spans: Spans::default(),
+        cached_runs: Vec::new(),
+        is_anchor: false,
+    }
+}
+
 fn file(hunks: Vec<Hunk>) -> DiffFile {
     DiffFile {
         path: "m.rs".into(),
@@ -594,4 +604,288 @@ fn test_pre_pass_locks_trimmed_pair_across_trivial_context() {
     assert!(f.hunks[0].rows[1].is_moved());
     assert!(f.hunks[0].rows[3].is_moved());
     assert!(f.hunks[0].rows[4].is_moved());
+}
+
+#[test]
+fn test_indent_width_counts_leading_whitespace() {
+    assert_eq!(super::indent_width("    x();"), 4);
+    assert_eq!(super::indent_width("x();"), 0);
+    assert_eq!(super::indent_width(""), 0);
+    assert_eq!(super::indent_width("   "), 3);
+}
+
+#[test]
+fn test_pair_delta_requires_trimmed_equal_non_blank() {
+    assert_eq!(super::pair_delta("    a();", "        a();"), Some(4));
+    assert_eq!(super::pair_delta("        a();", "    a();"), Some(-4));
+    assert_eq!(super::pair_delta("a();", "a();"), Some(0));
+    assert_eq!(super::pair_delta("    a();", "    b();"), None);
+    assert_eq!(super::pair_delta("", "    "), None);
+    assert_eq!(super::pair_delta("    a();", ""), None);
+}
+
+#[test]
+fn test_tail_pair_matches_requires_uniform_delta_and_exact_text() {
+    // Same trimmed text at the expected delta matches.
+    assert!(super::tail_pair_matches("    };", "        };", 4));
+    // Same trimmed text at a different delta does not.
+    assert!(!super::tail_pair_matches("    };", "            };", 4));
+    // Different text does not match.
+    assert!(!super::tail_pair_matches("    };", "        {", 4));
+    // Trailing-whitespace differences break the match (exactness).
+    assert!(!super::tail_pair_matches("    a();  ", "        a();", 4));
+    // Blank pairs match by position alone, regardless of delta.
+    assert!(super::tail_pair_matches("", "", 4));
+    assert!(super::tail_pair_matches("   ", "\t", -2));
+    // Blank/non-blank never matches.
+    assert!(!super::tail_pair_matches("", "        };", 4));
+    assert!(!super::tail_pair_matches("    };", "", 4));
+}
+
+// Miniature of the dispatch.rs hit_indicator topology: a locked core block,
+// trailing Add leftovers, and old trailing rows mis-paired as Ctx far away.
+// The main pass locks the core but cannot touch the trailing rows; tail
+// absorption (Phase 2) must sweep them into the move at uniform delta.
+#[test]
+fn test_mov_tail_absorbs_uniform_shift_continuation() {
+    // NOTE: the boundary ctx sits *between* the runs in row order (forcing
+    // the cluster split) but its line numbers live outside the move (old 5
+    // before the core, new 50 after the trailing rows), mirroring the real
+    // dispatch case where the mid-hunk context precedes the block in file
+    // order. File-order tail stepping therefore skips it.
+    let mut f = file(vec![hunk(vec![
+        del(10, "    core_a();"),
+        del(11, "        core_b();"),
+        ctx(5, 50, "real_code();"),
+        add(20, "        core_a();"),
+        add(21, "            core_b();"),
+        add(22, "        };"),
+        add(23, ""),
+        ctx(12, 100, "    };"),
+        ctx(13, 101, ""),
+    ])]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    // Core locked by the main pass (trimmed-only, cross-cluster).
+    assert!(f.hunks[0].rows[0].is_moved());
+    assert!(f.hunks[0].rows[1].is_moved());
+    assert!(f.hunks[0].rows[3].is_moved());
+    assert!(f.hunks[0].rows[4].is_moved());
+    // Trailing rows untouched by the main pass.
+    assert!(!f.hunks[0].rows[5].is_moved());
+    assert!(!f.hunks[0].rows[6].is_moved());
+
+    let _ = super::absorb_mov_tails(&mut f, &locked, None, true);
+
+    // Tail absorbed at Δ=+4: old 12/13 + new 22/23 join the move.
+    for line in [12, 13] {
+        let row = f.hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.old_line() == Some(line))
+            .unwrap_or_else(|| panic!("old line {line} must exist"));
+        assert!(row.is_moved(), "old line {line} must be absorbed");
+    }
+    for line in [22, 23] {
+        let row = f.hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.new_line() == Some(line))
+            .unwrap_or_else(|| panic!("new line {line} must exist"));
+        assert!(row.is_moved(), "new line {line} must be absorbed");
+    }
+    // Orphaned far partners fall back to plain leftovers.
+    for line in [100, 101] {
+        let row = f.hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.new_line() == Some(line))
+            .unwrap_or_else(|| panic!("new line {line} must exist"));
+        assert!(
+            !row.is_moved(),
+            "orphaned far partner (new {line}) must stay a leftover"
+        );
+    }
+}
+
+#[test]
+fn test_resolve_mov_pairs_by_line_drops_stale_pairs() {
+    // Exact-text bypass locks old 10 <-> new 20; the other rows never lock.
+    let mut f = file(vec![hunk(vec![
+        del(10, "moved line"),
+        add(20, "moved line"),
+        del(11, "other old"),
+        add(21, "other new"),
+    ])]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    assert_eq!(locked.len(), 1);
+
+    // A locked line pair re-resolves to the same positions.
+    assert_eq!(resolve_mov_pairs_by_line(&f, &[(10, 20)]), locked);
+    // Rows that are not moves, half-moved pairs, and unknown lines drop.
+    assert!(resolve_mov_pairs_by_line(&f, &[(11, 21)]).is_empty());
+    assert!(resolve_mov_pairs_by_line(&f, &[(10, 21)]).is_empty());
+    assert!(resolve_mov_pairs_by_line(&f, &[(99, 99)]).is_empty());
+}
+
+#[test]
+fn test_tail_absorption_stops_when_delta_changes_mid_run() {
+    // Core has delta +4 (old indent 4 -> new indent 8).
+    // Tail row 1 (old 12, new 22): delta +4 -> matches and absorbed.
+    // Tail row 2 (old 13, new 23): delta +8 (old indent 4 -> new indent 12) ->
+    // delta drift, stops. Tail row 3 (old 14, new 24): delta +4 -> not absorbed
+    // because run was terminated.
+    //
+    // The `ctx(5, 50, "boundary();")` between the del and add runs is required
+    // to split them into different clusters. `mark_moves_with_profile` only
+    // locks trimmed-only (re-indented) pairs that are cross-cluster, so without
+    // the boundary the core would not be locked and there would be nothing for
+    // tail absorption to extend.
+    let mut f = file(vec![hunk(vec![
+        del(10, "    core_a();"),
+        del(11, "        core_b();"),
+        ctx(5, 50, "boundary();"),
+        add(20, "        core_a();"),
+        add(21, "            core_b();"),
+        del(12, "    tail_1();"),
+        del(13, "    tail_2();"),
+        del(14, "    tail_3();"),
+        add(22, "        tail_1();"),
+        add(23, "            tail_2();"),
+        add(24, "        tail_3();"),
+    ])]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    assert_eq!(locked.len(), 2);
+
+    let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
+    assert_eq!(absorbed, vec![(12, 22)]);
+
+    let row_12 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.old_line() == Some(12))
+        .unwrap();
+    let row_13 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.old_line() == Some(13))
+        .unwrap();
+    let row_14 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.old_line() == Some(14))
+        .unwrap();
+
+    assert!(
+        row_12.is_moved(),
+        "tail_1 must be absorbed at uniform delta"
+    );
+    assert!(
+        !row_13.is_moved(),
+        "tail_2 must NOT be absorbed due to delta drift"
+    );
+    assert!(
+        !row_14.is_moved(),
+        "tail_3 must NOT be absorbed after run termination"
+    );
+}
+
+#[test]
+fn test_tail_absorption_stops_at_real_edit() {
+    // Core has delta +4.
+    // Tail row 1 (old 12, new 22): identical text shifted by +4 -> absorbed.
+    // Tail row 2 (old 13, new 23): substantive edit ("value_a" vs "value_b") ->
+    // stops immediately.
+    //
+    // The `ctx(5, 50, "boundary();")` between the del and add runs is required
+    // to split them into different clusters so the core is locked by the
+    // cross-cluster trimmed-match rule (see Phase 3 comment in
+    // `test_tail_absorption_stops_when_delta_changes_mid_run`).
+    let mut f = file(vec![hunk(vec![
+        del(10, "    core_a();"),
+        del(11, "        core_b();"),
+        ctx(5, 50, "boundary();"),
+        add(20, "        core_a();"),
+        add(21, "            core_b();"),
+        del(12, "    tail_same();"),
+        del(13, "    compute(value_a);"),
+        add(22, "        tail_same();"),
+        add(23, "        compute(value_b);"),
+    ])]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    assert_eq!(locked.len(), 2);
+
+    let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
+    assert_eq!(absorbed, vec![(12, 22)]);
+
+    let row_13 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.old_line() == Some(13))
+        .unwrap();
+    let row_23 = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.new_line() == Some(23))
+        .unwrap();
+    assert!(
+        !row_13.is_moved(),
+        "old 13 is a real edit and must not be absorbed"
+    );
+    assert!(
+        !row_23.is_moved(),
+        "new 23 is a real edit and must not be absorbed"
+    );
+}
+
+#[test]
+fn test_tail_absorption_stops_before_mod_or_already_moved_row() {
+    // Core has delta +4.
+    // Next row in file order is a Mod row (not Del/Add/Ctx).
+    // Tail absorption must not attempt to claim or break Mod rows.
+    //
+    // The `ctx(5, 50, "boundary();")` is present for the same cluster-split
+    // reason as the other Phase 3 tests: without it the core del/add run is
+    // in the same cluster and `mark_moves_with_profile` does not lock it.
+    let mut f = file(vec![hunk(vec![
+        del(10, "    core_a();"),
+        del(11, "        core_b();"),
+        ctx(5, 50, "boundary();"),
+        add(20, "        core_a();"),
+        add(21, "            core_b();"),
+        mod_row(12, 22, "    let x = 1;", "        let x = 1;"),
+    ])]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    assert_eq!(locked.len(), 2);
+
+    let absorbed = super::absorb_mov_tails(&mut f, &locked, None, true);
+    assert!(absorbed.is_empty(), "Mod row must terminate tail walk");
+}
+
+#[test]
+fn test_tail_absorption_hunk_boundary_confinement() {
+    // Core spans hunk 0 (source dels) and hunk 1 (target adds). Neither hunk has
+    // subsequent rows. Hunk 2 contains candidates with matching text and delta,
+    // but residing in an unrelated hunk. Tail absorption must remain confined to
+    // the hunks containing the core move block.
+    let mut f = file(vec![
+        hunk(vec![del(10, "    core_a();"), del(11, "        core_b();")]),
+        hunk(vec![
+            add(20, "        core_a();"),
+            add(21, "            core_b();"),
+        ]),
+        hunk(vec![
+            del(12, "    tail_candidate();"),
+            add(22, "        tail_candidate();"),
+        ]),
+    ]);
+    let locked = mark_moves_with_profile(&mut f, None);
+    assert_eq!(locked.len(), 2);
+
+    let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
+    assert!(
+        absorbed.is_empty(),
+        "Tail absorption must not cross hunk boundaries"
+    );
+    assert!(!f.hunks[2].rows[0].is_moved());
+    assert!(!f.hunks[2].rows[1].is_moved());
 }

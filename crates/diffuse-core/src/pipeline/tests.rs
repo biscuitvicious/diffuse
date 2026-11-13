@@ -2931,3 +2931,134 @@ fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
         "New line 306 (}}) must not be Mov (stolen from hit_indicator)"
     );
 }
+
+// The `hit_indicator` move in dispatch.rs (scrollbar-grab-drag^!) must have
+// the Mov-Ctx tail shape: the locked core (old 315-335 <-> new 310-331)
+// absorbs the uniform-Δ trailing continuation (old 336-337 <-> new 332-333),
+// the broken Ctx far partners stay plain Add leftovers (new 363, 365), and
+// absorption stops at the genuine `vis_line` split (old 355, new 351-352).
+#[test]
+fn test_dispatch_move_block_absorbs_uniform_tail() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest.join("../..");
+    let Ok(repo) = diffuse_git::Repository::open(&repo_root) else {
+        return;
+    };
+    let target = diffuse_git::ReviewTarget::from_repo_args(
+        diffuse_git::Repo::from_root(&repo_root),
+        vec!["scrollbar-grab-drag^!".to_string()],
+        false,
+    );
+    let Ok(repo_diff) =
+        diffuse_git::diff_repository(&repo, &target, 4, diffuse_git::WhitespaceMode::Exact)
+    else {
+        return;
+    };
+
+    let f = repo_diff
+        .files
+        .into_iter()
+        .find(|f| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must be in diff");
+    let new_c = repo_diff.new_content.get(&f.path).map(|s| s.as_str());
+    let old_c = repo_diff
+        .old_content
+        .get(f.old_path.as_deref().unwrap_or(&f.path))
+        .map(|s| s.as_str());
+    let out = crate::pipeline::file::process_single_diff_file(
+        f,
+        new_c,
+        old_c,
+        None,
+        &crate::pipeline::PipelineOptions::default(),
+    );
+
+    let rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
+    let kind_of_old = |line: u32| {
+        rows.iter()
+            .find(|r| r.old_line == Some(line))
+            .unwrap_or_else(|| panic!("Old line {line} must exist"))
+            .kind
+    };
+    let kind_of_new = |line: u32| {
+        rows.iter()
+            .find(|r| r.new_line == Some(line))
+            .unwrap_or_else(|| panic!("New line {line} must exist"))
+            .kind
+    };
+
+    // Locked core: old 315-335 and new 310-331 are all Mov.
+    for line in 315..=335 {
+        assert_eq!(
+            kind_of_old(line),
+            crate::parse::RowKind::Mov,
+            "Old line {line} must be Mov (move core)"
+        );
+    }
+    for line in 310..=331 {
+        assert_eq!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mov,
+            "New line {line} must be Mov (move core)"
+        );
+    }
+
+    // Absorbed uniform-Δ tail: old 336-337 and new 332-333 join the move.
+    for line in 336..=337 {
+        assert_eq!(
+            kind_of_old(line),
+            crate::parse::RowKind::Mov,
+            "Old line {line} must be Mov (absorbed tail)"
+        );
+    }
+    for line in 332..=333 {
+        assert_eq!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mov,
+            "New line {line} must be Mov (absorbed tail)"
+        );
+    }
+
+    // Absorbed uniform-Δ tail (verified: the whole continuation through
+    // old 354 / new 350 is a rigid +4 shift): old 336-354 and new 332-350
+    // are all Mov, including the blank pair (old 338 / new 334) and the
+    // broken Ctx rows (old 336-337, new 345).
+    for line in 336..=354 {
+        assert_eq!(
+            kind_of_old(line),
+            crate::parse::RowKind::Mov,
+            "Old line {line} must be Mov (absorbed tail)"
+        );
+    }
+    for line in 332..=350 {
+        assert_eq!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mov,
+            "New line {line} must be Mov (absorbed tail)"
+        );
+    }
+
+    // Orphaned Ctx far partners fall back to plain leftovers.
+    for line in [363, 364, 365] {
+        assert_ne!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mov,
+            "New line {line} must not be Mov (orphaned far partner)"
+        );
+    }
+
+    // The genuine `vis_line` split edit stops the tail: old 355 stays a
+    // Del, new 351-352 stay Adds.
+    assert_ne!(
+        kind_of_old(355),
+        crate::parse::RowKind::Mov,
+        "Old line 355 must not be Mov (genuine edit stops the tail)"
+    );
+    for line in [351, 352] {
+        assert_ne!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mov,
+            "New line {line} must not be Mov (genuine edit stops the tail)"
+        );
+    }
+}
