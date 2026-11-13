@@ -22,7 +22,7 @@ use crate::{
     merge::{RunKind, is_wholesale_replacement},
     moves::{
         absorb_mov_tails, mark_cross_cluster_moves_with_profile, mark_moves_with_profile,
-        resolve_mov_pairs_by_line,
+        relocate_tail_orphans, resolve_mov_pairs_by_line,
     },
     notes::{NoteStatus, query_notes_for_file},
     parse::{DiffFile, Row, RowKind},
@@ -249,7 +249,7 @@ pub fn process_single_diff_file(
     // Absorbed line pairs join the snapshot: the shield's own extensions
     // are Mov rows too, and the post-collapse pass must see their pairs.
     let pre_absorbed = absorb_mov_tails(&mut f, &pre_locked, profile, false);
-    pre_lines.extend(pre_absorbed);
+    pre_lines.extend(pre_absorbed.absorbed);
 
     // Collapse runs first on pre-move rows (source dels survive the collapse).
     let collapse_hunk = |h: &mut crate::parse::Hunk| {
@@ -280,7 +280,11 @@ pub fn process_single_diff_file(
     // already-moved rows, so without this they would never be extended.
     let mut seeded = resolve_mov_pairs_by_line(&f, &pre_lines);
     seeded.extend(main_locked);
-    let _ = absorb_mov_tails(&mut f, &seeded, profile, true);
+    let absorption = absorb_mov_tails(&mut f, &seeded, profile, true);
+    // Ctx breaking emits orphans inline amid the move runs, shredding the
+    // del/add runs into single-row micro-clusters. Relocate them to the
+    // neighboring run edges (dels up, adds down) to restore contiguity.
+    relocate_tail_orphans(&mut f, &absorption.del_orphans, &absorption.add_orphans);
     // The post-collapse return value (newly absorbed pairs) is not used: a
     // subsequent index-shifting pass does not follow, so there is no caller
     // that needs to re-resolve positions. The side-effect on `f` is what matters.

@@ -499,15 +499,43 @@ enum TailAction {
 /// no orphans for collapse to mis-pair) and true for the post-collapse
 /// call (also break misassigned `Ctx` rows).
 ///
-/// Returns the absorbed `(old line, new line)` pairs. Line numbers (not
-/// positions) are returned so a later stage can re-resolve them after an
-/// index-shifting pass via [`resolve_mov_pairs_by_line`].
+/// The outcome of one [`absorb_mov_tails`] call. Line numbers (not row
+/// positions) are reported so a later stage can re-resolve absorbed pairs
+/// after an index-shifting pass via [`resolve_mov_pairs_by_line`], and
+/// relocate the Ctx-break orphans via [`relocate_tail_orphans`].
+#[derive(Debug, Default)]
+pub struct TailAbsorption {
+    /// Absorbed `(old line, new line)` pairs.
+    pub absorbed: Vec<(u32, u32)>,
+    /// Old lines orphaned by breaking a `Ctx` row on the new side.
+    pub del_orphans: Vec<u32>,
+    /// New lines orphaned by breaking a `Ctx` row on the old side.
+    pub add_orphans: Vec<u32>,
+}
+
+/// Absorbs uniform-Δ trailing runs into locked move blocks ("Mov-Ctx").
+///
+/// Starting from each locked move block's tail, pairs successive old/new
+/// trailing rows while [`tail_pair_matches`] holds at the block's delta,
+/// converting them to `MovSrc`/`MovTgt` (breaking `Ctx` pairs where the
+/// tail was misassigned, orphaning the far partners as plain leftovers)
+/// and stopping at the first genuine edit, delta change, `Mod` row, or
+/// already-moved row. Locked pairs that no longer resolve to
+/// `MovSrc`/`MovTgt` (e.g. recorded before an index-shifting pass) are
+/// skipped.
+///
+/// `locked` holds the applied `(source, target)` row positions from the
+/// marking pass that ran immediately before, so positions are fresh.
+/// `allow_ctx_break` is false for the pre-collapse call (claim free
+/// `Del`/`Add` leftovers only, keeping collapse input stable and creating
+/// no orphans for collapse to mis-pair) and true for the post-collapse
+/// call (also break misassigned `Ctx` rows).
 pub fn absorb_mov_tails(
     f: &mut DiffFile,
     locked: &[MovePair],
     profile: Option<&diffuse_syntax::profile::LangProfile>,
     allow_ctx_break: bool,
-) -> Vec<(u32, u32)> {
+) -> TailAbsorption {
     use rustc_hash::{FxHashMap, FxHashSet};
 
     // Validate locked pairs against current rows: only pairs that still
@@ -527,7 +555,7 @@ pub fn absorb_mov_tails(
         }
     }
     if tgt_of.is_empty() {
-        return Vec::new();
+        return TailAbsorption::default();
     }
 
     // Plan (read-only): one action per claimed row. `claimed` keeps runs
@@ -560,14 +588,20 @@ pub fn absorb_mov_tails(
         ..
     } = plan;
     if actions.is_empty() {
-        return absorbed_lines;
+        return TailAbsorption {
+            absorbed: absorbed_lines,
+            ..TailAbsorption::default()
+        };
     }
 
     // Apply: rebuild each touched hunk, expanding broken Ctx rows into
     // [Mov, orphan-leftover] pairs. Planning and apply share the same
     // pre-edit rows, so kinds always match; anything unexpected is kept
-    // as-is rather than dropped.
+    // as-is rather than dropped. Orphan line numbers are collected inline
+    // so the caller can relocate them out of the move runs afterwards.
     let mut absorbed = 0;
+    let mut del_orphans = Vec::new();
+    let mut add_orphans = Vec::new();
     for (hi, hunk) in f.hunks.iter_mut().enumerate() {
         if !actions.keys().any(|&(h, _)| h == hi) {
             continue;
@@ -618,6 +652,7 @@ pub fn absorb_mov_tails(
                         };
                         absorbed += 1;
                         let orphan_num = ctx.new_pos;
+                        add_orphans.push(orphan_num);
                         let text = ctx.text.clone();
                         rebuilt.push(Row::MovSrc {
                             line: DelLine::new(ctx.old_pos, ctx.text),
@@ -638,6 +673,7 @@ pub fn absorb_mov_tails(
                         };
                         absorbed += 1;
                         let orphan_num = ctx.old_pos;
+                        del_orphans.push(orphan_num);
                         let text = ctx.text.clone();
                         rebuilt.push(Row::MovTgt {
                             line: AddLine::new(ctx.new_pos, ctx.text),
@@ -664,7 +700,326 @@ pub fn absorb_mov_tails(
         }),
         "Every Row::MovTgt and Row::MovSrc must have matching line text"
     );
-    absorbed_lines
+    // Without Ctx breaking only free Del/Add leftovers are claimed, so no
+    // orphans can exist.
+    crate::ensure!(
+        allow_ctx_break || (del_orphans.is_empty() && add_orphans.is_empty()),
+        "pre-collapse absorption must not orphan lines"
+    );
+    TailAbsorption {
+        absorbed: absorbed_lines,
+        del_orphans,
+        add_orphans,
+    }
+}
+
+/// Relocates Ctx-break orphans out of the move runs they were emitted
+/// into, restoring change-cluster contiguity (a run of dels followed by
+/// a run of adds, instead of alternating single-row micro-clusters).
+///
+/// Placement is by line contiguity, not block kind: a `Del` unit moves to
+/// directly after the row carrying its preceding old line, and an `Add`
+/// unit moves to directly before the first row below carrying a greater
+/// new line (normally its following new line). Whatever kind those rows
+/// are — `Del`, `Ctx`, `MovSrc`, even `Mod` — they are the orphan's file
+/// neighbors, so adjacency restores file order. Units are the orphan plus
+/// file-adjacent same-kind leftovers, which travel as one block. `Mov`
+/// rows never move, so move pairing is unaffected; `Sep` rows (and `Mod`
+/// rows, conservatively) are never crossed. New-line monotonicity is
+/// preserved by construction on the add side (dels carry no new lines).
+/// Del orphans are processed in ascending file order and add orphans in
+/// descending file order, so previously placed units become merge targets
+/// and relative file order is preserved. Orphans whose line — or whose
+/// neighbor line — can no longer be found in the hunk are left in place.
+pub fn relocate_tail_orphans(f: &mut DiffFile, del_orphans: &[u32], add_orphans: &[u32]) {
+    use rustc_hash::FxHashSet;
+
+    // Del orphans move up in file order; each placed unit becomes the
+    // merge target for the next, so relative order is preserved.
+    let mut dels: Vec<u32> = del_orphans.to_vec();
+    dels.sort_unstable();
+    dels.dedup();
+    let mut placed: FxHashSet<u32> = FxHashSet::default();
+    let mut moved: FxHashSet<u32> = FxHashSet::default();
+    while let Some(&seed) = dels.iter().find(|l| !placed.contains(l)) {
+        // Mark the seed first: a unit that aborts (boundary, vanished
+        // line) still counts as handled, or this loop would spin.
+        placed.insert(seed);
+        relocate_del_unit(f, seed, &mut placed, &mut moved);
+    }
+
+    // Mirror image, bottom-up.
+    let mut adds: Vec<u32> = add_orphans.to_vec();
+    adds.sort_unstable();
+    adds.dedup();
+    let mut placed: FxHashSet<u32> = FxHashSet::default();
+    let mut moved: FxHashSet<u32> = FxHashSet::default();
+    while let Some(&seed) = adds.iter().rev().find(|l| !placed.contains(l)) {
+        placed.insert(seed);
+        relocate_add_unit(f, seed, &mut placed, &mut moved);
+    }
+}
+
+/// Relocates one del-orphan unit: the seed orphan plus file-adjacent
+/// pre-existing `Del` leftovers chained to it move as one file-ordered
+/// block to directly after the seed's preceding old line. The anchor
+/// line itself never joins (it stays put as the merge target), nor do
+/// already-moved lines.
+fn relocate_del_unit(
+    f: &mut DiffFile,
+    seed: u32,
+    placed: &mut rustc_hash::FxHashSet<u32>,
+    moved: &mut rustc_hash::FxHashSet<u32>,
+) {
+    let Some((hi, _ri)) = find_del_row(f, seed) else {
+        return;
+    };
+    // Anchor: the row carrying the seed's preceding old line, whatever
+    // kind it is. Without that neighbor row in this hunk there is no
+    // line-contiguity target, so the unit stays in place.
+    let Some(want) = seed.checked_sub(1) else {
+        return;
+    };
+    let Some(anchor_pos) = f.hunks[hi]
+        .rows
+        .iter()
+        .position(|r| r.old_line() == Some(want))
+    else {
+        return;
+    };
+    let anchor = anchor_pos + 1;
+    // Expand the unit along file-adjacent Del leftovers; the walk stops
+    // at the anchor line itself (it stays put as the merge target) and
+    // at any cluster boundary. Chain membership needs no positional
+    // bound: only lines adjacent through same-kind leftovers can join,
+    // so the unit is always one file-contiguous run.
+    let mut unit: Vec<u32> = vec![seed];
+    let mut k = 0;
+    while k < unit.len() {
+        let line = unit[k];
+        k += 1;
+        let Some(front) = find_del_row_in(&f.hunks[hi], line) else {
+            continue;
+        };
+        for next in [line.checked_sub(1), line.checked_add(1)]
+            .into_iter()
+            .flatten()
+        {
+            if unit.contains(&next) || moved.contains(&next) || next == want {
+                continue;
+            }
+            let Some(pos) = find_del_row_in(&f.hunks[hi], next) else {
+                continue;
+            };
+            if rows_between_are_boundary(&f.hunks[hi].rows, front, pos) {
+                continue;
+            }
+            unit.push(next);
+        }
+    }
+    // Never cross a file boundary or a paired Mod row to reach the anchor.
+    let member_pos: Vec<usize> = unit
+        .iter()
+        .filter_map(|&l| find_del_row_in(&f.hunks[hi], l))
+        .collect();
+    if member_pos.len() != unit.len() {
+        return;
+    }
+    let lo = member_pos.iter().copied().fold(anchor_pos, usize::min);
+    let top = member_pos.iter().copied().fold(anchor_pos, usize::max);
+    // Only rows strictly between the anchor row and the unit can be
+    // crossed; the anchor row itself (any kind) is the target.
+    if lo < top
+        && f.hunks[hi].rows[lo + 1..top]
+            .iter()
+            .any(|r| matches!(r, Row::Mod { .. } | Row::Sep(_)))
+    {
+        return;
+    }
+    for line in &unit {
+        placed.insert(*line);
+        moved.insert(*line);
+    }
+    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, anchor, true);
+}
+
+/// Mirror image of [`relocate_del_unit`]: the add unit moves down to just
+/// before the first row below carrying a greater new line — normally the
+/// row of its following new line. Rows the unit slides past must sort
+/// below all of it, so hunk row order stays monotonic in new-line numbers
+/// (rows with no new line — dels, move sources — are always crossable).
+/// A `Mod`/`Sep` boundary or the hunk end leaves the unit in place.
+fn relocate_add_unit(
+    f: &mut DiffFile,
+    seed: u32,
+    placed: &mut rustc_hash::FxHashSet<u32>,
+    moved: &mut rustc_hash::FxHashSet<u32>,
+) {
+    let Some((hi, _ri)) = find_add_row(f, seed) else {
+        return;
+    };
+    // Unit: the seed plus file-adjacent smaller `Add` leftovers, chaining
+    // across the non-add rows (the MovSrc halves of the same broken Ctx
+    // run). Larger lines never join: the first greater line below is the
+    // anchor, and absorbing it would drag the unit past its own target.
+    let mut unit: Vec<u32> = vec![seed];
+    let mut k = 0;
+    while k < unit.len() {
+        let line = unit[k];
+        k += 1;
+        let Some(front) = find_add_row_in(&f.hunks[hi], line) else {
+            continue;
+        };
+        for next in [line.checked_sub(1), line.checked_add(1)]
+            .into_iter()
+            .flatten()
+        {
+            if unit.contains(&next) || moved.contains(&next) || next > seed {
+                continue;
+            }
+            let Some(pos) = find_add_row_in(&f.hunks[hi], next) else {
+                continue;
+            };
+            if rows_between_are_boundary(&f.hunks[hi].rows, front, pos) {
+                continue;
+            }
+            unit.push(next);
+        }
+    }
+    let max_line = unit
+        .iter()
+        .copied()
+        .max()
+        .expect("unit always contains the seed");
+    let Some(bottom) = unit
+        .iter()
+        .filter_map(|&l| find_add_row_in(&f.hunks[hi], l))
+        .max()
+    else {
+        return;
+    };
+    let len = f.hunks[hi].rows.len();
+    let mut anchor = None;
+    let mut j = bottom;
+    while j + 1 < len {
+        j += 1;
+        match &f.hunks[hi].rows[j] {
+            Row::Mod { .. } | Row::Sep(_) => break,
+            row if row.new_line().is_some_and(|n| n > max_line) => {
+                anchor = Some(j);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(anchor) = anchor else {
+        return;
+    };
+    for line in &unit {
+        placed.insert(*line);
+        moved.insert(*line);
+    }
+    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, anchor, false);
+}
+
+/// Whether any `Ctx`/`Mod`/`Sep` row sits strictly between `a` and `b`.
+fn rows_between_are_boundary(rows: &[Row], a: usize, b: usize) -> bool {
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    rows.get(lo + 1..hi).is_some_and(|between| {
+        between
+            .iter()
+            .any(|r| matches!(r, Row::Ctx(_) | Row::Mod { .. } | Row::Sep(_)))
+    })
+}
+
+/// Moves a file-ordered unit of same-kind leftover rows to `anchor`, the
+/// index the unit's first row must end up at (pre-removal coordinates).
+/// `del_lines` selects which row kinds the unit's line numbers refer to —
+/// old lines for dels, new lines for adds — since the two number spaces
+/// overlap. Moves happen within one hunk, so removals above the anchor
+/// shift it down by one each; removals below it never move it. Members
+/// always sit below the anchor under the placement rules above, so the
+/// shift count is zero in practice; the arithmetic stays general.
+fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_lines: bool) {
+    let mut idx: Vec<usize> = unit
+        .iter()
+        .filter_map(|&line| {
+            rows.iter().position(|r| match r {
+                Row::Del(d) => del_lines && d.num == line,
+                Row::AuxDel { line: l, .. } => del_lines && l.num == line,
+                Row::Add(a) => !del_lines && a.num == line,
+                Row::AuxAdd { line: l, .. } => !del_lines && l.num == line,
+                _ => false,
+            })
+        })
+        .collect();
+    if idx.len() != unit.len() {
+        return;
+    }
+    // Remove descending so earlier indices stay valid; removals below the
+    // anchor never shift it, removals above it shift it down by one each.
+    idx.sort_unstable_by(|a, b| b.cmp(a));
+    let mut removed: Vec<(usize, Row)> = Vec::with_capacity(idx.len());
+    for i in idx {
+        removed.push((i, rows.remove(i)));
+    }
+    let shift = removed.iter().filter(|(i, _)| *i < anchor).count();
+    let at = (anchor - shift).min(rows.len());
+    // Re-emit the unit file-ordered (all members are same-kind rows).
+    removed.sort_by_key(|(_, r)| match r {
+        Row::Del(d) => d.num,
+        Row::AuxDel { line, .. } => line.num,
+        Row::Add(a) => a.num,
+        Row::AuxAdd { line, .. } => line.num,
+        _ => unreachable!("unit members are always same-kind leftover rows"),
+    });
+    rows.splice(at..at, removed.into_iter().map(|(_, r)| r));
+}
+
+/// Position within one hunk of the `Del` row carrying `old_line`.
+fn find_del_row_in(hunk: &crate::parse::Hunk, old_line: u32) -> Option<usize> {
+    hunk.rows.iter().position(|r| match r {
+        Row::Del(d) => d.num == old_line,
+        Row::AuxDel { line, .. } => line.num == old_line,
+        _ => false,
+    })
+}
+
+/// Position within one hunk of the `Add` row carrying `new_line`.
+fn find_add_row_in(hunk: &crate::parse::Hunk, new_line: u32) -> Option<usize> {
+    hunk.rows.iter().position(|r| match r {
+        Row::Add(a) => a.num == new_line,
+        Row::AuxAdd { line, .. } => line.num == new_line,
+        _ => false,
+    })
+}
+
+/// Position of the `Del` row carrying `old_line`, if it still exists.
+fn find_del_row(f: &DiffFile, old_line: u32) -> Option<(usize, usize)> {
+    for (hi, h) in f.hunks.iter().enumerate() {
+        if let Some(ri) = h.rows.iter().position(|r| match r {
+            Row::Del(d) => d.num == old_line,
+            Row::AuxDel { line, .. } => line.num == old_line,
+            _ => false,
+        }) {
+            return Some((hi, ri));
+        }
+    }
+    None
+}
+
+/// Position of the `Add` row carrying `new_line`, if it still exists.
+fn find_add_row(f: &DiffFile, new_line: u32) -> Option<(usize, usize)> {
+    for (hi, h) in f.hunks.iter().enumerate() {
+        if let Some(ri) = h.rows.iter().position(|r| match r {
+            Row::Add(a) => a.num == new_line,
+            Row::AuxAdd { line, .. } => line.num == new_line,
+            _ => false,
+        }) {
+            return Some((hi, ri));
+        }
+    }
+    None
 }
 
 /// Mutable planning state threaded through [`absorb_run_tail`]. Bundled to
@@ -728,7 +1083,6 @@ fn absorb_run_tail(
         Some(d) => d,
         None => return,
     };
-
     // Extend file-order successors on both sides while the pair matches at
     // the fixed block delta. Line numbers strictly increase, so the loop
     // always terminates.

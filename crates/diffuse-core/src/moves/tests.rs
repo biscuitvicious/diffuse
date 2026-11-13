@@ -1,7 +1,7 @@
 //! Unit tests for exact move detection and block move rules.
 
 use super::*;
-use crate::parse::{AddLine, CtxLine, DelLine, FileStatus, Hunk, Row};
+use crate::parse::{AddLine, CtxLine, DelLine, FileStatus, Hunk, Row, Spans};
 
 fn del(num: u32, text: &str) -> Row {
     Row::Del(DelLine::new(num, text))
@@ -13,6 +13,22 @@ fn add(num: u32, text: &str) -> Row {
 
 fn ctx(old_num: u32, new_num: u32, text: &str) -> Row {
     Row::Ctx(CtxLine::new(old_num, new_num, text))
+}
+
+fn movsrc(num: u32, text: &str) -> Row {
+    Row::MovSrc {
+        line: DelLine::new(num, text),
+        spans: Spans::default(),
+        cached_runs: Vec::new(),
+    }
+}
+
+fn movtgt(num: u32, text: &str) -> Row {
+    Row::MovTgt {
+        line: AddLine::new(num, text),
+        spans: Spans::default(),
+        cached_runs: Vec::new(),
+    }
 }
 
 fn mod_row(old_num: u32, new_num: u32, old_text: &str, new_text: &str) -> Row {
@@ -727,6 +743,131 @@ fn test_resolve_mov_pairs_by_line_drops_stale_pairs() {
     assert!(resolve_mov_pairs_by_line(&f, &[(99, 99)]).is_empty());
 }
 
+fn row_sig(r: &Row) -> (String, Option<u32>, Option<u32>) {
+    let kind = match r {
+        Row::Ctx(_) => "ctx",
+        Row::Del(_) => "del",
+        Row::Add(_) => "add",
+        Row::MovSrc { .. } => "movsrc",
+        Row::MovTgt { .. } => "movtgt",
+        _ => "other",
+    }
+    .to_string();
+    (kind, r.old_line(), r.new_line())
+}
+
+#[test]
+fn test_relocate_del_orphans_merge_up_into_preceding_del_run() {
+    // Inline Ctx-break emission interleaves orphans with the move run:
+    // del, mov, del, mov, … — relocation must gather the orphans up into
+    // one contiguous del run behind the preceding del block.
+    let mut f = file(vec![hunk(vec![
+        ctx(1, 1, "c();"),
+        del(308, "d();"),
+        movtgt(310, "m1();"),
+        movtgt(311, "m2();"),
+        del(309, "d();"),
+        movtgt(312, "m3();"),
+        del(310, "d();"),
+        movsrc(320, "s();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[309, 310], &[]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("ctx".to_string(), Some(1), Some(1)),
+            ("del".to_string(), Some(308), None),
+            ("del".to_string(), Some(309), None),
+            ("del".to_string(), Some(310), None),
+            ("movtgt".to_string(), None, Some(310)),
+            ("movtgt".to_string(), None, Some(311)),
+            ("movtgt".to_string(), None, Some(312)),
+            ("movsrc".to_string(), Some(320), None),
+        ],
+        "del orphans must merge up into one contiguous del run"
+    );
+}
+
+#[test]
+fn test_relocate_del_orphan_anchors_after_any_row_kind() {
+    // The anchor is the row carrying old line seed-1, whatever kind it is:
+    // here old 308 sits in a MovSrc row (absorbed into a move), so the
+    // orphan attaches right after it instead of skipping to the del block.
+    let mut f = file(vec![hunk(vec![
+        del(300, "d();"),
+        movsrc(308, "s();"),
+        movtgt(310, "m1();"),
+        del(309, "d();"),
+        movtgt(311, "m2();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[309], &[]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("del".to_string(), Some(300), None),
+            ("movsrc".to_string(), Some(308), None),
+            ("del".to_string(), Some(309), None),
+            ("movtgt".to_string(), None, Some(310)),
+            ("movtgt".to_string(), None, Some(311)),
+        ],
+        "del orphan must sit right after its preceding old line"
+    );
+}
+
+#[test]
+fn test_relocate_add_orphans_merge_down_before_following_line() {
+    // Mirror image: the orphan drops to just before the row carrying new
+    // line seed+1 (here a plain leftover add), preserving file order.
+    let mut f = file(vec![hunk(vec![
+        movsrc(330, "s();"),
+        add(363, "a();"),
+        del(340, "d();"),
+        add(364, "b();"),
+        ctx(342, 352, "c();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[], &[363]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("movsrc".to_string(), Some(330), None),
+            ("del".to_string(), Some(340), None),
+            ("add".to_string(), None, Some(363)),
+            ("add".to_string(), None, Some(364)),
+            ("ctx".to_string(), Some(342), Some(352)),
+        ],
+        "add orphan must sit just before its following new line"
+    );
+}
+
+#[test]
+fn test_relocate_add_orphan_without_following_line_stays() {
+    // No row below carries a greater new line: with no line-contiguity
+    // target the orphan stays in place instead of merging out of order.
+    let mut f = file(vec![hunk(vec![
+        movsrc(330, "s();"),
+        add(363, "a();"),
+        del(340, "d();"),
+        add(351, "b();"),
+        ctx(342, 352, "c();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[], &[363]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("movsrc".to_string(), Some(330), None),
+            ("add".to_string(), None, Some(363)),
+            ("del".to_string(), Some(340), None),
+            ("add".to_string(), None, Some(351)),
+            ("ctx".to_string(), Some(342), Some(352)),
+        ],
+        "orphan add without a following line must stay in place"
+    );
+}
+
 #[test]
 fn test_tail_absorption_stops_when_delta_changes_mid_run() {
     // Core has delta +4 (old indent 4 -> new indent 8).
@@ -757,7 +898,7 @@ fn test_tail_absorption_stops_when_delta_changes_mid_run() {
     assert_eq!(locked.len(), 2);
 
     let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
-    assert_eq!(absorbed, vec![(12, 22)]);
+    assert_eq!(absorbed.absorbed, vec![(12, 22)]);
 
     let row_12 = f.hunks[0]
         .rows
@@ -815,7 +956,7 @@ fn test_tail_absorption_stops_at_real_edit() {
     assert_eq!(locked.len(), 2);
 
     let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
-    assert_eq!(absorbed, vec![(12, 22)]);
+    assert_eq!(absorbed.absorbed, vec![(12, 22)]);
 
     let row_13 = f.hunks[0]
         .rows
@@ -858,7 +999,10 @@ fn test_tail_absorption_stops_before_mod_or_already_moved_row() {
     assert_eq!(locked.len(), 2);
 
     let absorbed = super::absorb_mov_tails(&mut f, &locked, None, true);
-    assert!(absorbed.is_empty(), "Mod row must terminate tail walk");
+    assert!(
+        absorbed.absorbed.is_empty(),
+        "Mod row must terminate tail walk"
+    );
 }
 
 #[test]
@@ -883,7 +1027,7 @@ fn test_tail_absorption_hunk_boundary_confinement() {
 
     let absorbed = super::absorb_mov_tails(&mut f, &locked, None, false);
     assert!(
-        absorbed.is_empty(),
+        absorbed.absorbed.is_empty(),
         "Tail absorption must not cross hunk boundaries"
     );
     assert!(!f.hunks[2].rows[0].is_moved());

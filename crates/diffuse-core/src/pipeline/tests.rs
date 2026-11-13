@@ -3047,6 +3047,44 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
         );
     }
 
+    // Relocated orphans restore cluster contiguity: the del orphans
+    // (309-312) merge up into one contiguous del run with old 308, and
+    // the absorbed MovTgt rows (345-347) sit contiguous with no interleaved
+    // dels — instead of alternating single-row micro-clusters.
+    let hunk_rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
+    let del_positions: Vec<usize> = hunk_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.old_line.is_some_and(|n| (308..=312).contains(&n)))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        del_positions.len(),
+        5,
+        "old lines 308-312 must all be present as del rows"
+    );
+    assert!(
+        del_positions.windows(2).all(|w| w[1] == w[0] + 1),
+        "old lines 308-312 must form one contiguous del run, got positions {del_positions:?}"
+    );
+    assert!(
+        del_positions
+            .iter()
+            .all(|&i| hunk_rows[i].kind == crate::parse::RowKind::Del),
+        "old lines 308-312 must all be plain Del leftovers"
+    );
+    let tgt_positions: Vec<usize> = hunk_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.new_line.is_some_and(|n| (345..=347).contains(&n)))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(tgt_positions.len(), 3);
+    assert!(
+        tgt_positions.windows(2).all(|w| w[1] == w[0] + 1),
+        "new lines 345-347 must form one contiguous Mov run, got positions {tgt_positions:?}"
+    );
+
     // The genuine `vis_line` split edit stops the tail: old 355 stays a
     // Del, new 351-352 stay Adds.
     assert_ne!(
