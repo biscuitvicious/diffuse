@@ -3117,3 +3117,85 @@ fn test_residual_declaration_roles_and_compatibility() {
     let zero = non_ws_char_similarity("", "abc");
     assert_eq!(zero, 0.0);
 }
+
+#[test]
+fn test_normalize_identical_mods_converts_faithful_pair_to_ctx() {
+    let rs = lang_profile("rs");
+    let h = hunk(vec![]);
+    let res = vec![
+        row(RowKind::Ctx, "    handle_event(", Some(920), Some(914)),
+        row(RowKind::Mod, "    );", Some(923), Some(917)),
+        row(RowKind::Ctx, "    assert_eq!(x);", Some(924), Some(921)),
+    ];
+    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
+    assert_eq!(
+        out[1].kind(),
+        RowKind::Ctx,
+        "faithful identical Mod must become Ctx"
+    );
+    assert_eq!(out[1].old_line(), Some(917));
+    assert_eq!(out[1].new_line(), Some(923));
+}
+
+#[test]
+fn test_normalize_identical_mods_keeps_crossed_pair_as_mod() {
+    // Miniature of the theme-light-toggle `);` case: a leftover del with a
+    // higher old line sits before the identical pair, so no Ctx placement
+    // is legal and the pair must stay Mod (never trip the DBC).
+    let rs = lang_profile("rs");
+    let h = hunk(vec![]);
+    let res = vec![
+        row(RowKind::Del, "    assert!(", None, Some(918)),
+        row(RowKind::Mod, "    );", Some(923), Some(917)),
+    ];
+    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
+    assert_eq!(
+        out[1].kind(),
+        RowKind::Mod,
+        "crossed identical pair must stay Mod"
+    );
+}
+
+#[test]
+fn test_normalize_identical_mods_skips_anchors_but_converts_plain() {
+    use crate::parse::Spans;
+    let rs = lang_profile("rs");
+    let h = hunk(vec![]);
+    let anchor = Row::Mod {
+        old_line: DelLine::new(1, "    };"),
+        new_line: AddLine::new(2, "    };"),
+        spans: Spans {
+            del: vec![],
+            add: vec![],
+        },
+        cached_runs: vec![],
+        is_anchor: true,
+    };
+    let res = vec![
+        anchor,
+        row(RowKind::Mod, "    };", Some(4), Some(3)),
+        row(RowKind::Del, "    changed;", None, Some(5)),
+    ];
+    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
+    assert_eq!(out[0].kind(), RowKind::Mod, "anchor Mod must be untouched");
+    assert_eq!(
+        out[1].kind(),
+        RowKind::Ctx,
+        "plain identical Mod must become Ctx"
+    );
+    assert_eq!(out[2].kind(), RowKind::Del);
+}
+
+#[test]
+fn test_normalize_identical_mods_skips_block_anchors() {
+    // A collapse anchor whose joined del_text equals the add text must stay
+    // Mod: absorbed member lines (e.g. opt-2 `win` + `.iter()`) need the
+    // anchor to render, and converting it would drop them from the stream.
+    use rustc_hash::FxHashSet;
+    let rs = lang_profile("rs");
+    let h = hunk(vec![]);
+    let res = vec![row(RowKind::Mod, "    win.iter()", Some(371), Some(371))];
+    let anchors: FxHashSet<u32> = [371].into_iter().collect();
+    let out = pass_normalize_identical_mods(&h, res, rs, &anchors);
+    assert_eq!(out[0].kind(), RowKind::Mod, "block anchor must stay Mod");
+}

@@ -741,17 +741,22 @@ fn test_write_file_header_bar_without_width_ends_with_a_gap() {
 
 #[test]
 fn test_render_file_diff_continuation_lines_indented_gutter_width() {
-    let long_line = "abcdefghij".repeat(10); // 100 characters
+    // NOTE: the pair must be a genuine modification — a fully identical pair
+    // normalizes to Ctx and has no `~` gutter. Only the tail word differs, so
+    // the asserted slices (shared prefix on both sides) hold however the Mod
+    // row renders.
+    let long_line_old = format!("{} {}", "abcdefghij".repeat(9), "bcdefghij");
+    let long_line_new = format!("{} {}", "abcdefghij".repeat(9), "BCDEFGHIJ");
     let diff = format!(
-        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line}\n+{long_line}\n"
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line_old}\n+{long_line_new}\n"
     );
     let new_content = Some(
-        [("a.txt".to_string(), format!("{long_line}\n"))]
+        [("a.txt".to_string(), format!("{long_line_new}\n"))]
             .into_iter()
             .collect(),
     );
     let old_content = Some(
-        [("a.txt".to_string(), format!("{long_line}\n"))]
+        [("a.txt".to_string(), format!("{long_line_old}\n"))]
             .into_iter()
             .collect(),
     );

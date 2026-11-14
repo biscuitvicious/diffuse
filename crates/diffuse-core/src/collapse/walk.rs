@@ -20,6 +20,21 @@ pub fn pass_sort_ordered_walk(
     add_groups: &FxHashMap<usize, RowGroup>,
     add_runs: &FxHashMap<usize, Vec<(RunKind, String)>>,
 ) -> Vec<Row> {
+    // Stage reflow-synthesized Ctx rows alongside `out` rows before
+    // del-anchoring: leftover dels must anchor to synthesized context
+    // exactly as they do to hunk context. (Coincidental-context splitting
+    // routes trivial pairs through reflow instead of hunk passthrough;
+    // without this, dels anchor to earlier rows and sort before their
+    // own context, violating old-line monotonicity.) Reflow Mod rows
+    // keep their existing late placement.
+    let (staged_ctx, staged_mods): (Vec<Row>, Vec<Row>) = reflow
+        .reflow_ctx
+        .into_iter()
+        .partition(|r| matches!(r, Row::Ctx(_)));
+
+    let mut out = out;
+    out.extend(staged_ctx);
+
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
     for &di in &reflow.meaningful_dels {
         let Some(dold) = h.rows[di].old_line() else {
@@ -135,9 +150,9 @@ pub fn pass_sort_ordered_walk(
         let key = (h.rows[ai].new_line().unwrap_or(0), 1.0);
         keyed.push((a, key));
     }
-    for ctx in reflow.reflow_ctx {
-        let key = (ctx.new_line().unwrap_or(0), 1.0);
-        keyed.push((ctx, key));
+    for m in staged_mods {
+        let key = (m.new_line().unwrap_or(0), 1.0);
+        keyed.push((m, key));
     }
 
     keyed.sort_by(|a, b| {
@@ -151,4 +166,64 @@ pub fn pass_sort_ordered_walk(
     });
 
     keyed.into_iter().map(|(r, _)| r).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::{AddLine, CtxLine, DelLine, Hunk, Row};
+
+    fn hunk(rows: Vec<Row>) -> Hunk {
+        Hunk {
+            old_start: 1,
+            old_count: 1,
+            new_start: 1,
+            new_count: 1,
+            section: String::new(),
+            rows,
+            above_ctx: 0,
+            below_ctx: 0,
+        }
+    }
+
+    /// Reflow-synthesized Ctx must anchor leftover dels exactly like hunk
+    /// context (theme-light-toggle `event/tests.rs`: Del 918/919/920 must
+    /// sort after reflow Ctx 917↔923, not before it).
+    #[test]
+    fn test_reflow_ctx_anchors_leftover_dels() {
+        let h = hunk(vec![
+            Row::Del(DelLine::new(917, "    );")),
+            Row::Add(AddLine::new(923, "    );")),
+            Row::Del(DelLine::new(918, "    assert!(")),
+            Row::Del(DelLine::new(919, "        x,")),
+        ]);
+        let reflow = ReflowFilter {
+            meaningful_dels: vec![2, 3],
+            kept_adds: vec![],
+            reflow_ctx: vec![Row::Ctx(CtxLine::new(917, 923, "    );"))],
+        };
+        let out = pass_sort_ordered_walk(
+            &h,
+            vec![],
+            reflow,
+            &FxHashMap::default(),
+            &FxHashMap::default(),
+            &FxHashMap::default(),
+        );
+        let pos = |old: u32| out.iter().position(|r| r.old_line() == Some(old)).unwrap();
+        let ctx_pos = out
+            .iter()
+            .position(|r| matches!(r, Row::Ctx(_)) && r.old_line() == Some(917))
+            .unwrap();
+        assert!(
+            pos(918) > ctx_pos,
+            "Del 918 must follow Ctx 917, got {out:?}"
+        );
+        assert!(
+            pos(919) > ctx_pos,
+            "Del 919 must follow Ctx 917, got {out:?}"
+        );
+        crate::collapse::invariants::check_context_old_line_monotonicity(&out)
+            .expect("normalized stream must satisfy the monotonicity invariant");
+    }
 }

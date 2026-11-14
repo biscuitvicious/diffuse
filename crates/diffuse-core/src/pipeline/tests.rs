@@ -3041,33 +3041,26 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
         );
     }
 
-    // Relocated orphans restore cluster contiguity: the del orphans
-    // (309-312) merge up into one contiguous del run with old 308 —
-    // instead of alternating single-row micro-clusters.
-    let hunk_rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
-    let del_positions: Vec<usize> = hunk_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.old_line.is_some_and(|n| (308..=312).contains(&n)))
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(
-        del_positions.len(),
-        5,
-        "old lines 308-312 must all be present as del rows"
-    );
-    assert!(
-        del_positions.windows(2).all(|w| w[1] == w[0] + 1),
-        "old lines 308-312 must form one contiguous del run, got positions {del_positions:?}"
-    );
-    assert!(
-        del_positions
-            .iter()
-            .all(|&i| hunk_rows[i].kind == crate::parse::RowKind::Del),
-        "old lines 308-312 must all be plain Del leftovers"
-    );
+    // The coincidental `}`/`break;` context barriers (old 309-311 vs new
+    // 345-347) split before pairing, so old 308-312 pair with their true
+    // pre-move partners (new 304-308, uniform -4 shift) instead of stranding
+    // as Del orphans; new 345-347 stay paired with old 349-351 (asserted
+    // below via the absorbed-tail expectations).
+    for (old_line, new_line) in [(308, 304), (309, 305), (310, 306), (311, 307), (312, 308)] {
+        assert_eq!(
+            kind_of_old(old_line),
+            crate::parse::RowKind::Mod,
+            "Old line {old_line} must be Mod (true pre-move partner, not orphan)"
+        );
+        assert_eq!(
+            kind_of_new(new_line),
+            crate::parse::RowKind::Mod,
+            "New line {new_line} must be Mod (true pre-move partner, not orphan)"
+        );
+    }
     // The absorbed tail rows collapse with their partners: new 345-347
     // are Mod rows paired with old 349-351, not Mov leftovers.
+    let hunk_rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
     for (new, old) in [(345, 349), (346, 350), (347, 351)] {
         let row = hunk_rows
             .iter()

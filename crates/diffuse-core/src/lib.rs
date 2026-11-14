@@ -19,6 +19,7 @@ pub mod apply;
 pub mod cluster;
 pub mod collapse;
 pub mod counts;
+pub mod ctx_split;
 pub mod dbc;
 pub mod git;
 pub mod lcs;

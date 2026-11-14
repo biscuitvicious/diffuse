@@ -31,7 +31,7 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use crate::parse::RowGroup;
-pub use assemble::{AssembledMods, pass_assemble_mods};
+pub use assemble::{AssembledMods, pass_assemble_mods, pass_normalize_identical_mods};
 pub(crate) use aux::line_delim_delta;
 #[cfg(test)]
 pub(crate) use aux::relabel_moved_runs;
@@ -67,8 +67,21 @@ pub struct PairingContext<'a> {
 /// Collapse each FIFO del→add pair into a single "mod" row: the new line
 /// with its word-diff spans baked in.
 ///
-/// Composed of 4 pure passes over the diff AST.
+/// Composed of 5 pure passes over the diff AST.
 pub static T_COLLAPSE: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+
+/// New-side line numbers owned by block-transition anchors: their joined
+/// del_text may equal the add text while absorbed member lines still need
+/// the anchor to render, so normalization must leave them Mod.
+fn block_anchor_new_lines(h: &Hunk, p1: &PairingResults) -> FxHashSet<u32> {
+    let mut news = FxHashSet::default();
+    for ai in p1.collapse_blocks.keys().chain(p1.expand_blocks.keys()) {
+        if let Some(n) = h.rows.get(*ai).and_then(|r| r.new_line()) {
+            news.insert(n);
+        }
+    }
+    news
+}
 
 #[tracing::instrument(
     level = "debug",
@@ -82,7 +95,13 @@ pub fn collapse_hunk_rows(
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
     let t0 = Instant::now();
-    let h_norm = pass_shift_hunk(h, profile);
+    let mut h_norm = pass_shift_hunk(h, profile);
+    // Split coincidental context rows (lone `}`, `break;`, blanks) into
+    // Del+Add in place so flanking single-sided clusters merge before any
+    // pairing decision. Runs after the move pre-pass (raw-hunk clustering
+    // preserved) but before every pairing stage below.
+    let (split_rows, split_homes) = crate::ctx_split::split_trivial_ctx_rows(h_norm.rows, profile);
+    h_norm.rows = split_rows;
     let h = &h_norm;
     let t1 = Instant::now();
     T_COLLAPSE[0].fetch_add(
@@ -91,7 +110,13 @@ pub fn collapse_hunk_rows(
     );
 
     // Pass 1: DP cluster pairing engine
-    let mut p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+    let mut p1 = crate::cluster::pairing::dp_pairing_with_splits(
+        h,
+        old_content,
+        new_content,
+        profile,
+        &split_homes,
+    );
     let t2 = Instant::now();
     T_COLLAPSE[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
@@ -131,6 +156,11 @@ pub fn collapse_hunk_rows(
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
     let res = pass_sort_ordered_walk(h, p2.out, p3, &p2.add_spans, &p2.add_groups, &p2.add_runs);
+    // Pass 5: Normalize no-visible-change Mod rows back to Ctx, keeping
+    // each conversion only when the converted stream still satisfies
+    // every collapsed-row invariant (crossed pairs stay Mod).
+    let block_anchor_news = block_anchor_new_lines(h, &p1);
+    let res = pass_normalize_identical_mods(h, res, profile, &block_anchor_news);
     let t5 = Instant::now();
     T_COLLAPSE[4].fetch_add(
         t5.duration_since(t4).as_micros() as u64,

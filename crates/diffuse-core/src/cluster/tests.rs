@@ -3955,3 +3955,20 @@ fn pairing_summary(sol: &DpSolution) -> String {
     }
     parts.join(" ")
 }
+
+#[test]
+fn dp_verbatim_identity_outbids_fuzzy_close_delimiter() {
+    // Regression (theme-scrollbar-palette `theme.rs`): a fuzzy Mod with a
+    // close-delimiter boundary bonus (`};` vs `}`) must not outbid verbatim
+    // identity (`}` vs `}`). Mov earns the same boundary-proximity bonuses
+    // as Mod, so the identical pair wins and the `};` strands as a del.
+    let c = code_cluster(
+        vec![del_row(85, "    }"), del_row(113, "};")],
+        vec![add_row(84, "    }")],
+    );
+    let rs = lang_profile("rs");
+    let sol = solve_cluster(&c, rs);
+    assert_eq!(signature(&sol), ["mov_src", "mov_tgt", "del"]);
+    assert!(matches!(sol.transitions[..], [DpOp::Mov, DpOp::Del]));
+    verify_projection(&sol, &c).expect("projection invariant holds");
+}

@@ -9,7 +9,7 @@ use diffuse_syntax::profile::LangProfile;
 use crate::{
     lcs::{word_spans_and_runs_with_profile, word_spans_with_profile},
     merge::RunKind,
-    parse::{AddLine, DelLine, Hunk, Row, RowGroup, Spans},
+    parse::{AddLine, CtxLine, DelLine, Hunk, Row, RowGroup, Spans},
 };
 
 use super::{
@@ -21,6 +21,107 @@ use super::{
         supplied_occurrence, trailing_delimiters,
     },
 };
+
+/// Swap an identical Mod row to Ctx in place, returning the original for
+/// potential rollback. Returns `None` for non-Mod rows (never a
+/// candidate, or already converted by the fast path below).
+fn swap_mod_to_ctx(slot: &mut Row) -> Option<Row> {
+    let (dold, anew, text) = match slot {
+        Row::Mod {
+            old_line, new_line, ..
+        } => (old_line.num, new_line.num, new_line.text.clone()),
+        _ => return None,
+    };
+    Some(std::mem::replace(
+        slot,
+        Row::Ctx(CtxLine::new(dold, anew, text)),
+    ))
+}
+
+/// Post-walk normalization: convert no-visible-change Mod rows
+/// (byte-identical old/new text, no group attachments) back to Ctx.
+///
+/// Split trivial Ctx rows re-pair in the DP as identical Mods; without
+/// this they render as Mod noise. Each conversion is kept only when the
+/// converted stream still satisfies every collapsed-row invariant
+/// (verified against the actual final order, so crossed pairs that
+/// cannot legally be context stay Mod).
+pub fn pass_normalize_identical_mods(
+    h: &Hunk,
+    res: Vec<Row>,
+    profile: Option<&LangProfile>,
+    block_anchor_news: &rustc_hash::FxHashSet<u32>,
+) -> Vec<Row> {
+    let candidates: Vec<usize> = res
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| match r {
+            Row::Mod {
+                old_line, new_line, ..
+            } => {
+                old_line.text == new_line.text
+                    && r.group().is_none()
+                    && !block_anchor_news.contains(&new_line.num)
+            }
+            _ => false,
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if candidates.is_empty() {
+        return res;
+    }
+    let mut out = res;
+    // (index, original Mod) for every kept conversion, in order.
+    let mut converted: Vec<(usize, Row)> = Vec::new();
+    // Fast path: convert everything, verify once. All four invariant
+    // checks are failure-monotone in the conversion set — converting
+    // more Mods to Ctx only adds Ctx ordering constraints, Ctx orphan
+    // barriers, and removes Mod topological anchors (reflow groups are
+    // untouched: candidates are ungrouped by construction) — so a
+    // passing full set implies every prefix passes and the greedy walk
+    // below would keep them all. Conflict sets fall through to it.
+    let mut originals: Vec<(usize, Row)> = Vec::with_capacity(candidates.len());
+    for &i in &candidates {
+        if let Some(original) = swap_mod_to_ctx(&mut out[i]) {
+            originals.push((i, original));
+        }
+    }
+    if normalized_invariants_hold(h, &out, profile) {
+        return out;
+    }
+    for (i, original) in originals {
+        out[i] = original;
+    }
+    for i in candidates {
+        let Some(original) = swap_mod_to_ctx(&mut out[i]) else {
+            continue;
+        };
+        if normalized_invariants_hold(h, &out, profile) {
+            converted.push((i, original));
+        } else {
+            out[i] = original;
+        }
+    }
+    // A later conversion can invalidate an earlier one (both verified
+    // only against the array as it was). Repair globally: revert most
+    // recent first until every invariant holds again. Zero conversions
+    // is the pre-pass baseline, which the DBC gates already accept, so
+    // this always terminates with a legal stream.
+    while !converted.is_empty() && !normalized_invariants_hold(h, &out, profile) {
+        let (i, original) = converted.pop().expect("non-empty checked above");
+        out[i] = original;
+    }
+    out
+}
+
+/// Every collapsed-row invariant a normalized stream must satisfy (the
+/// same gates `collapse_hunk_rows` enforces before returning).
+fn normalized_invariants_hold(h: &Hunk, out: &[Row], profile: Option<&LangProfile>) -> bool {
+    super::invariants::check_context_old_line_monotonicity(out).is_ok()
+        && super::invariants::check_no_orphaned_continuation_dels(h, out).is_ok()
+        && super::invariants::check_del_add_topological_order(h, out).is_ok()
+        && super::invariants::assert_collapsed_reflow_invariants(out, profile).is_ok()
+}
 
 /// Products of the assembly pass.
 pub struct AssembledMods {

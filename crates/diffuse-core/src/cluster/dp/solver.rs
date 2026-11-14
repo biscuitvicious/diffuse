@@ -1196,12 +1196,24 @@ pub(crate) fn solve_cluster_matrix(
                             }
                         } else if om.trimmed_id == nm.trimmed_id {
                             // Verbatim (trim-insensitive) — a Mov.
+                            // Structural parity with Mod scoring: a verbatim
+                            // match at a shared structural boundary is the
+                            // strongest possible evidence, so Mov earns the
+                            // same boundary-proximity bonuses. Without this,
+                            // a fuzzy Mod with a close-delimiter bonus (e.g.
+                            // `};` vs `}`) outbids verbatim identity and the
+                            // DP strands identical lines for worse partners.
+                            let mov_close =
+                                w.boundary_proximity_bonus * om.prox_close * nm.prox_close;
+                            let mov_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
                             let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
                             let s = base
                                 + continuity_bonus
                                 + w.matched_char_reward * ot.chars.max(nt.chars) as f64
                                 - w.row_cost
-                                - w.sprawl_penalty * length_diff;
+                                - w.sprawl_penalty * length_diff
+                                + mov_close
+                                + mov_open;
                             if let Some(target) = grid.get_mut(i + 1, j + 1)
                                 && s > target.score
                             {
