@@ -1091,3 +1091,189 @@ fn test_tail_absorption_hunk_boundary_confinement() {
     assert!(!f.hunks[2].rows[0].is_moved());
     assert!(!f.hunks[2].rows[1].is_moved());
 }
+
+fn collapsed_sig(r: &Row) -> (String, Option<u32>, Option<u32>) {
+    let kind = match r {
+        Row::Ctx(_) => "ctx",
+        Row::Mod { .. } => "mod",
+        Row::MovSrc { .. } => "movsrc",
+        Row::MovTgt { .. } => "movtgt",
+        _ => "other",
+    }
+    .to_string();
+    (kind, r.old_line(), r.new_line())
+}
+
+#[test]
+fn test_touching_bottom_halves_collapse_to_mod() {
+    // Target half immediately followed by its source half: the rigidly
+    // shifted pairs collapse into direct Mod rows in target order.
+    let mut f = file(vec![hunk(vec![
+        movtgt(10, "    a();"),
+        movtgt(11, "    b();"),
+        movsrc(20, "a();"),
+        movsrc(21, "b();"),
+    ])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10), (21, 11)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("mod".to_string(), Some(20), Some(10)),
+            ("mod".to_string(), Some(21), Some(11)),
+        ],
+        "touching corresponding halves must collapse to Mod runs"
+    );
+    for r in &f.hunks[0].rows {
+        let Row::Mod { spans, .. } = r else {
+            panic!("expected Mod, got {r:?}")
+        };
+        assert!(!spans.is_empty(), "indent delta must carry word spans");
+    }
+}
+
+#[test]
+fn test_touching_top_halves_collapse_identical_to_ctx() {
+    // Source half immediately followed by its target half, identical text:
+    // collapse yields Ctx, not Mod.
+    let mut f = file(vec![hunk(vec![movsrc(20, "a();"), movtgt(10, "a();")])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![("ctx".to_string(), Some(20), Some(10))],
+        "identical touching pairs must collapse to Ctx"
+    );
+}
+
+#[test]
+fn test_touching_mixed_attribution_collapses_corresponding_part_only() {
+    // Only new 10 pairs into the adjacent source run (old 20); new 11
+    // pairs outside it and old 21 pairs outside the target run. The
+    // collapse extends as far as the mutual pairing reaches; the rest
+    // stays moved.
+    let mut f = file(vec![hunk(vec![
+        movtgt(10, "    a();"),
+        movtgt(11, "    b();"),
+        movsrc(20, "a();"),
+        movsrc(21, "c();"),
+    ])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10), (99, 11), (21, 12)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("mod".to_string(), Some(20), Some(10)),
+            ("movtgt".to_string(), None, Some(11)),
+            ("movsrc".to_string(), Some(21), None),
+        ],
+        "only the mutually-paired part must collapse"
+    );
+}
+
+#[test]
+fn test_touching_non_corresponding_halves_stay_moved() {
+    // Adjacent halves paired elsewhere are different moves touching by
+    // accident: no mutual pairing, no collapse.
+    let mut f = file(vec![hunk(vec![movtgt(10, "    a();"), movsrc(20, "a();")])]);
+    super::collapse_touching_moves(&mut f, &[(50, 10), (20, 60)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("movtgt".to_string(), None, Some(10)),
+            ("movsrc".to_string(), Some(20), None),
+        ],
+        "non-corresponding touching halves must stay moved"
+    );
+}
+
+#[test]
+fn test_touching_collapse_grows_through_fragmented_runs() {
+    // One rigid shift fragmented across two touching windows: the seed
+    // window's pairs grow through line-adjacent mutual pairs even where
+    // the grown rows' own runs never touch, so the whole shift collapses.
+    let mut f = file(vec![hunk(vec![
+        movtgt(10, "    a();"),
+        movtgt(11, "    b();"),
+        movsrc(20, "a();"),
+        movsrc(21, "b();"),
+        movtgt(12, "    c();"),
+        movsrc(22, "c();"),
+    ])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10), (21, 11), (22, 12)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("mod".to_string(), Some(20), Some(10)),
+            ("mod".to_string(), Some(21), Some(11)),
+            ("mod".to_string(), Some(22), Some(12)),
+        ],
+        "growth must collapse the whole line-contiguous shift"
+    );
+}
+
+#[test]
+fn test_touching_growth_stops_at_unpaired_lines() {
+    // Growth halts where line-adjacency breaks the mutual pairing: new 12
+    // pairs outside the old run, so only the seeded pairs collapse.
+    let mut f = file(vec![hunk(vec![
+        movtgt(10, "    a();"),
+        movtgt(11, "    b();"),
+        movsrc(20, "a();"),
+        movsrc(21, "b();"),
+        movtgt(12, "    c();"),
+        movsrc(22, "c();"),
+    ])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10), (21, 11), (99, 12), (22, 13)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("mod".to_string(), Some(20), Some(10)),
+            ("mod".to_string(), Some(21), Some(11)),
+            ("movtgt".to_string(), None, Some(12)),
+            ("movsrc".to_string(), Some(22), None),
+        ],
+        "growth must stop where mutual pairing breaks"
+    );
+}
+
+#[test]
+fn test_separated_halves_stay_moved() {
+    // A context row between the halves: not touching, no collapse even
+    // with full correspondence.
+    let mut f = file(vec![hunk(vec![
+        movtgt(10, "    a();"),
+        ctx(5, 6, "c();"),
+        movsrc(20, "a();"),
+    ])]);
+    super::collapse_touching_moves(&mut f, &[(20, 10)], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("movtgt".to_string(), None, Some(10)),
+            ("ctx".to_string(), Some(5), Some(6)),
+            ("movsrc".to_string(), Some(20), None),
+        ],
+        "separated halves must stay moved"
+    );
+}
+
+#[test]
+fn test_touching_collapse_no_pairs_is_noop() {
+    // Without recorded pairs the pass is a no-op.
+    let mut f = file(vec![hunk(vec![movtgt(10, "    a();"), movsrc(20, "a();")])]);
+    super::collapse_touching_moves(&mut f, &[], None);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(collapsed_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("movtgt".to_string(), None, Some(10)),
+            ("movsrc".to_string(), Some(20), None),
+        ],
+        "empty pair list must leave rows untouched"
+    );
+}

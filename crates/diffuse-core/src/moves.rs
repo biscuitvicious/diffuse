@@ -25,7 +25,7 @@ use diffuse_algo::bipartite_matching::{BipartiteMatcher, HunkGridNeighborhood};
 
 use crate::{
     lcs::word_spans_and_runs_with_profile,
-    parse::{DiffFile, Row, Spans},
+    parse::{AddLine, CtxLine, DelLine, DiffFile, Row, Spans},
 };
 
 /// A locked move pairing: `(source, target)` row positions, each a
@@ -1180,6 +1180,195 @@ fn next_row_with_new_line(f: &DiffFile, ah: usize, after: u32) -> Option<usize> 
         }
     }
     best.map(|(_, ri)| ri)
+}
+
+/// Collapses touching corresponding move halves into direct `Mod`/`Ctx` rows.
+///
+/// Tail absorption can grow a move block until its target half ends up
+/// immediately adjacent to its source half in row order (touching at the
+/// top or the bottom edge). That relocation presentation is degenerate:
+/// the lines are paired directly instead. This pass finds adjacent
+/// `MovTgt`/`MovSrc` runs (in either order) within one hunk and collapses
+/// the mutually-paired lines into `Mod` rows (differing text) or `Ctx`
+/// rows (identical text), leaving non-corresponding rows as moves.
+///
+/// Correspondence comes from the recorded `(old line, new line)` move
+/// pairs: a target row and a source row collapse only when each names the
+/// other as its partner. From every touching mutually-paired seed the
+/// collapse grows through line-adjacent mutual pairs, so with mixed
+/// attribution it extends as far into the blocks as the mutual pairing
+/// reaches — including pairs whose own runs never touch (tail-absorption
+/// fragments one rigid shift across several runs). Growth never leaves
+/// the seed hunk: halves split across a hunk boundary never touch in the
+/// row stream, so cross-hunk pairs stay moves.
+pub fn collapse_touching_moves(
+    f: &mut DiffFile,
+    pairs: &[(u32, u32)],
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
+) {
+    use rustc_hash::{FxHashMap, FxHashSet};
+    let mut old_to_new: FxHashMap<u32, u32> = FxHashMap::default();
+    let mut new_to_old: FxHashMap<u32, u32> = FxHashMap::default();
+    for &(o, n) in pairs {
+        old_to_new.insert(o, n);
+        new_to_old.insert(n, o);
+    }
+    if old_to_new.is_empty() {
+        return;
+    }
+    // Row positions of every move row, for the same-hunk confinement.
+    let mut old_pos: FxHashMap<u32, (usize, usize)> = FxHashMap::default();
+    let mut new_pos: FxHashMap<u32, (usize, usize)> = FxHashMap::default();
+    for (hi, hunk) in f.hunks.iter().enumerate() {
+        for (ri, row) in hunk.rows.iter().enumerate() {
+            match row {
+                Row::MovSrc { line, .. } => {
+                    old_pos.insert(line.num, (hi, ri));
+                }
+                Row::MovTgt { line, .. } => {
+                    new_pos.insert(line.num, (hi, ri));
+                }
+                _ => {}
+            }
+        }
+    }
+    // Seed pairs: mutual pairs of row-adjacent (touching) tgt/src runs.
+    // Runs touch only when row-adjacent: any intervening row (context,
+    // dels, separators) breaks the touch. Each hunk's seeds grow into
+    // regions below; seeds already visited belong to a grown region.
+    let mut regions: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
+    let mut visited: FxHashSet<(u32, u32)> = FxHashSet::default();
+    for (hi, hunk) in f.hunks.iter().enumerate() {
+        // Maximal MovTgt / MovSrc runs in row order.
+        let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+        let mut ri = 0;
+        while ri < hunk.rows.len() {
+            let is_tgt = matches!(hunk.rows[ri], Row::MovTgt { .. });
+            let is_src = !is_tgt && matches!(hunk.rows[ri], Row::MovSrc { .. });
+            if !is_tgt && !is_src {
+                ri += 1;
+                continue;
+            }
+            let start = ri;
+            ri += 1;
+            while ri < hunk.rows.len()
+                && matches!(
+                    (&hunk.rows[ri], is_tgt),
+                    (Row::MovTgt { .. }, true) | (Row::MovSrc { .. }, false)
+                )
+            {
+                ri += 1;
+            }
+            runs.push((start, ri, is_tgt));
+        }
+        for w in runs.windows(2) {
+            let [a, b] = w else { continue };
+            let &(a_start, a_end, a_tgt) = a;
+            let &(b_start, b_end, b_tgt) = b;
+            if a_tgt == b_tgt || a_end != b_start {
+                continue;
+            }
+            let (t_start, t_end, s_start, s_end) = if a_tgt {
+                (a_start, a_end, b_start, b_end)
+            } else {
+                (b_start, b_end, a_start, a_end)
+            };
+            for ti in t_start..t_end {
+                let Some(n) = hunk.rows[ti].new_line() else {
+                    continue;
+                };
+                let Some(&o) = new_to_old.get(&n) else {
+                    continue;
+                };
+                if old_to_new.get(&o) != Some(&n) {
+                    continue;
+                }
+                if (s_start..s_end).any(|si| hunk.rows[si].old_line() == Some(o))
+                    && visited.insert((o, n))
+                {
+                    // Grow the maximal line-adjacent mutual-pair region
+                    // around the seed, confined to this hunk.
+                    let mut region = vec![(o, n)];
+                    let mut stack = vec![(o, n)];
+                    while let Some((co, cn)) = stack.pop() {
+                        for (do_, dn) in [(-1, -1), (1, 1)] {
+                            let (Some(no), Some(nn)) =
+                                (co.checked_add_signed(do_), cn.checked_add_signed(dn))
+                            else {
+                                continue;
+                            };
+                            if old_to_new.get(&no) != Some(&nn) || new_to_old.get(&nn) != Some(&no)
+                            {
+                                continue;
+                            }
+                            if old_pos.get(&no).map(|&(h, _)| h) != Some(hi) {
+                                continue;
+                            }
+                            if new_pos.get(&nn).map(|&(h, _)| h) != Some(hi) {
+                                continue;
+                            }
+                            if visited.insert((no, nn)) {
+                                region.push((no, nn));
+                                stack.push((no, nn));
+                            }
+                        }
+                    }
+                    regions.push((hi, region));
+                }
+            }
+        }
+    }
+    // Rebuild each touched hunk: consumed Mov rows become Mod/Ctx rows in
+    // old-line order, emitted at the first consumed row position.
+    let mut by_hunk: FxHashMap<usize, Vec<Vec<(u32, u32)>>> = FxHashMap::default();
+    for (hi, region) in regions {
+        by_hunk.entry(hi).or_default().push(region);
+    }
+    for (hi, regs) in by_hunk {
+        let hunk = &mut f.hunks[hi];
+        // first consumed row index -> Mod/Ctx rows for the region.
+        let mut emit_at: FxHashMap<usize, Vec<Row>> = FxHashMap::default();
+        let mut consumed: FxHashSet<usize> = FxHashSet::default();
+        for mut region in regs {
+            region.sort_unstable();
+            let mut out = Vec::with_capacity(region.len());
+            let mut first = usize::MAX;
+            for (o, n) in region {
+                let &(oh, si) = old_pos.get(&o).expect("seed pair rows exist");
+                let &(nh, ti) = new_pos.get(&n).expect("seed pair rows exist");
+                debug_assert_eq!(oh, hi);
+                debug_assert_eq!(nh, hi);
+                first = first.min(si.min(ti));
+                consumed.insert(si);
+                consumed.insert(ti);
+                let old_text = hunk.rows[si].text().to_owned();
+                let new_text = hunk.rows[ti].text().to_owned();
+                if old_text == new_text {
+                    out.push(Row::Ctx(CtxLine::new(o, n, old_text)));
+                } else {
+                    let (spans, cached_runs) =
+                        word_spans_and_runs_with_profile(&old_text, &new_text, profile);
+                    out.push(Row::Mod {
+                        old_line: DelLine::new(o, old_text),
+                        new_line: AddLine::new(n, new_text),
+                        spans,
+                        cached_runs,
+                        is_anchor: false,
+                    });
+                }
+            }
+            emit_at.insert(first, out);
+        }
+        let mut rebuilt = Vec::with_capacity(hunk.rows.len());
+        for (idx, row) in hunk.rows.drain(..).enumerate() {
+            if let Some(out) = emit_at.remove(&idx) {
+                rebuilt.extend(out);
+            } else if !consumed.contains(&idx) {
+                rebuilt.push(row);
+            }
+        }
+        hunk.rows = rebuilt;
+    }
 }
 
 #[cfg(test)]

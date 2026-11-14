@@ -2885,28 +2885,39 @@ fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
         "Old line 330 must not be paired into a spurious Mod with New line 352"
     );
 
-    // Old line 330 must be marked as Mov
+    // Old line 330 must pair with new line 326: the touching halves
+    // collapse to a direct Mod, never a move and never the spurious 352.
     let old_330 = rows
         .iter()
         .find(|r| r.old_line == Some(330))
         .expect("Old line 330 must exist");
     assert_eq!(
         old_330.kind,
-        crate::parse::RowKind::Mov,
-        "Old line 330 must be Mov, got {:?}",
+        crate::parse::RowKind::Mod,
+        "Old line 330 must be Mod, got {:?}",
         old_330.kind
     );
+    assert_eq!(
+        old_330.new_line,
+        Some(326),
+        "Old line 330 must pair with new line 326"
+    );
 
-    // New line 326 must be marked as Mov
+    // New line 326 must be marked as Mod paired with old 330
     let new_326 = rows
         .iter()
         .find(|r| r.new_line == Some(326))
         .expect("New line 326 must exist");
     assert_eq!(
         new_326.kind,
-        crate::parse::RowKind::Mov,
-        "New line 326 must be Mov, got {:?}",
+        crate::parse::RowKind::Mod,
+        "New line 326 must be Mod, got {:?}",
         new_326.kind
+    );
+    assert_eq!(
+        new_326.old_line,
+        Some(330),
+        "New line 326 must pair with old line 330"
     );
 
     // Verify that new lines 305 and 306 (break; and }) are NOT marked Mov (they
@@ -2987,54 +2998,37 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
             .kind
     };
 
-    // Locked core: old 315-335 and new 310-331 are all Mov.
-    for line in 315..=335 {
+    // Locked core plus absorbed uniform-Δ tail (verified: the whole
+    // continuation through old 354 / new 350 is a rigid +4 shift): the
+    // touching halves collapse into direct pairs — Mod where the indent
+    // differs, Ctx for the identical blank pairs (old 338 / new 334 and
+    // old 352 / new 348).
+    for line in [315..=337, 339..=351, 353..=354].into_iter().flatten() {
         assert_eq!(
             kind_of_old(line),
-            crate::parse::RowKind::Mov,
-            "Old line {line} must be Mov (move core)"
+            crate::parse::RowKind::Mod,
+            "Old line {line} must be Mod (touching halves collapse)"
         );
     }
-    for line in 310..=331 {
+    for line in [310..=333, 335..=347, 349..=350].into_iter().flatten() {
         assert_eq!(
             kind_of_new(line),
-            crate::parse::RowKind::Mov,
-            "New line {line} must be Mov (move core)"
+            crate::parse::RowKind::Mod,
+            "New line {line} must be Mod (touching halves collapse)"
         );
     }
-
-    // Absorbed uniform-Δ tail: old 336-337 and new 332-333 join the move.
-    for line in 336..=337 {
+    for line in [338, 352] {
         assert_eq!(
             kind_of_old(line),
-            crate::parse::RowKind::Mov,
-            "Old line {line} must be Mov (absorbed tail)"
+            crate::parse::RowKind::Ctx,
+            "Old line {line} must be Ctx (identical blank pair collapses)"
         );
     }
-    for line in 332..=333 {
+    for line in [334, 348] {
         assert_eq!(
             kind_of_new(line),
-            crate::parse::RowKind::Mov,
-            "New line {line} must be Mov (absorbed tail)"
-        );
-    }
-
-    // Absorbed uniform-Δ tail (verified: the whole continuation through
-    // old 354 / new 350 is a rigid +4 shift): old 336-354 and new 332-350
-    // are all Mov, including the blank pair (old 338 / new 334) and the
-    // broken Ctx rows (old 336-337, new 345).
-    for line in 336..=354 {
-        assert_eq!(
-            kind_of_old(line),
-            crate::parse::RowKind::Mov,
-            "Old line {line} must be Mov (absorbed tail)"
-        );
-    }
-    for line in 332..=350 {
-        assert_eq!(
-            kind_of_new(line),
-            crate::parse::RowKind::Mov,
-            "New line {line} must be Mov (absorbed tail)"
+            crate::parse::RowKind::Ctx,
+            "New line {line} must be Ctx (identical blank pair collapses)"
         );
     }
 
@@ -3048,9 +3042,8 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
     }
 
     // Relocated orphans restore cluster contiguity: the del orphans
-    // (309-312) merge up into one contiguous del run with old 308, and
-    // the absorbed MovTgt rows (345-347) sit contiguous with no interleaved
-    // dels — instead of alternating single-row micro-clusters.
+    // (309-312) merge up into one contiguous del run with old 308 —
+    // instead of alternating single-row micro-clusters.
     let hunk_rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
     let del_positions: Vec<usize> = hunk_rows
         .iter()
@@ -3073,17 +3066,16 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
             .all(|&i| hunk_rows[i].kind == crate::parse::RowKind::Del),
         "old lines 308-312 must all be plain Del leftovers"
     );
-    let tgt_positions: Vec<usize> = hunk_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.new_line.is_some_and(|n| (345..=347).contains(&n)))
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(tgt_positions.len(), 3);
-    assert!(
-        tgt_positions.windows(2).all(|w| w[1] == w[0] + 1),
-        "new lines 345-347 must form one contiguous Mov run, got positions {tgt_positions:?}"
-    );
+    // The absorbed tail rows collapse with their partners: new 345-347
+    // are Mod rows paired with old 349-351, not Mov leftovers.
+    for (new, old) in [(345, 349), (346, 350), (347, 351)] {
+        let row = hunk_rows
+            .iter()
+            .find(|r| r.new_line == Some(new))
+            .unwrap_or_else(|| panic!("New line {new} must exist"));
+        assert_eq!(row.kind, crate::parse::RowKind::Mod);
+        assert_eq!(row.old_line, Some(old));
+    }
 
     // The genuine `vis_line` split edit stops the tail: old 355 stays a
     // Del, new 351-352 stay Adds.
@@ -3099,4 +3091,111 @@ fn test_dispatch_move_block_absorbs_uniform_tail() {
             "New line {line} must not be Mov (genuine edit stops the tail)"
         );
     }
+}
+
+// The dispatch.rs relocation (scrollbar-grab-drag^!) is a rigid -4 shift of
+// old 314-354 onto new 310-350, but the mov expansion renders the target
+// half (ending new 348) immediately followed by the source half (starting
+// old 314): the halves touch. Touching corresponding halves are not a
+// relocation worth showing as a move; they collapse into direct Mod rows.
+#[test]
+fn test_touching_move_halves_collapse_to_mod() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest.join("../..");
+    let Ok(repo) = diffuse_git::Repository::open(&repo_root) else {
+        return;
+    };
+    let target = diffuse_git::ReviewTarget::from_repo_args(
+        diffuse_git::Repo::from_root(&repo_root),
+        vec!["scrollbar-grab-drag^!".to_string()],
+        false,
+    );
+    let Ok(repo_diff) =
+        diffuse_git::diff_repository(&repo, &target, 4, diffuse_git::WhitespaceMode::Exact)
+    else {
+        return;
+    };
+
+    let f = repo_diff
+        .files
+        .into_iter()
+        .find(|f| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must be in diff");
+    let new_c = repo_diff.new_content.get(&f.path).map(|s| s.as_str());
+    let old_c = repo_diff
+        .old_content
+        .get(f.old_path.as_deref().unwrap_or(&f.path))
+        .map(|s| s.as_str());
+    let out = crate::pipeline::file::process_single_diff_file(
+        f,
+        new_c,
+        old_c,
+        None,
+        &crate::pipeline::PipelineOptions::default(),
+    );
+
+    let rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
+    let kind_of_old = |line: u32| {
+        rows.iter()
+            .find(|r| r.old_line == Some(line))
+            .unwrap_or_else(|| panic!("Old line {line} must exist"))
+            .kind
+    };
+    let kind_of_new = |line: u32| {
+        rows.iter()
+            .find(|r| r.new_line == Some(line))
+            .unwrap_or_else(|| panic!("New line {line} must exist"))
+            .kind
+    };
+
+    // The rigid -4 shift pairs old 314-354 with new 310-350 directly:
+    // indent-differing pairs collapse to Mod, the two identical blank
+    // pairs (old 338/new 334, old 352/new 348) collapse to Ctx.
+    for line in [314..=337, 339..=351, 353..=354].into_iter().flatten() {
+        assert_eq!(
+            kind_of_old(line),
+            crate::parse::RowKind::Mod,
+            "Old line {line} must be Mod (touching move halves collapse)"
+        );
+    }
+    for line in [310..=333, 335..=347, 349..=350].into_iter().flatten() {
+        assert_eq!(
+            kind_of_new(line),
+            crate::parse::RowKind::Mod,
+            "New line {line} must be Mod (touching move halves collapse)"
+        );
+    }
+    for line in [338, 352] {
+        assert_eq!(
+            kind_of_old(line),
+            crate::parse::RowKind::Ctx,
+            "Old line {line} must be Ctx (identical blank pair collapses)"
+        );
+    }
+    for line in [334, 348] {
+        assert_eq!(
+            kind_of_new(line),
+            crate::parse::RowKind::Ctx,
+            "New line {line} must be Ctx (identical blank pair collapses)"
+        );
+    }
+
+    // The touching boundary itself is gone: new 348 (old tgt end) must no
+    // longer be immediately followed by old 314 (old src beg) in row order.
+    // (Correspondence-aware touching is covered by the moves unit tests.)
+    let pos_of_new = |line: u32| {
+        rows.iter()
+            .position(|r| r.new_line == Some(line))
+            .unwrap_or_else(|| panic!("New line {line} must exist"))
+    };
+    let pos_of_old = |line: u32| {
+        rows.iter()
+            .position(|r| r.old_line == Some(line))
+            .unwrap_or_else(|| panic!("Old line {line} must exist"))
+    };
+    assert_ne!(
+        pos_of_old(314),
+        pos_of_new(348) + 1,
+        "old 314 must not immediately follow new 348 in row order"
+    );
 }

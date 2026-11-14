@@ -21,8 +21,8 @@ use crate::{
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_replacement},
     moves::{
-        absorb_mov_tails, mark_cross_cluster_moves_with_profile, mark_moves_with_profile,
-        relocate_tail_orphans, resolve_mov_pairs_by_line,
+        absorb_mov_tails, collapse_touching_moves, mark_cross_cluster_moves_with_profile,
+        mark_moves_with_profile, relocate_tail_orphans, resolve_mov_pairs_by_line,
     },
     notes::{NoteStatus, query_notes_for_file},
     parse::{DiffFile, Row, RowKind},
@@ -273,6 +273,16 @@ pub fn process_single_diff_file(
 
     // Mark moves after collapse: creates Row::Mov pairs.
     let main_locked = mark_moves_with_profile(&mut f, profile);
+    // Snapshot main-locked pairs by line number: absorption rebuilds hunks
+    // below, so positions go stale; lines stay stable. Combined with the
+    // pre-pass pairs and the absorbed pairs, this is the full move pairing
+    // the touch-collapse pass uses to judge correspondence.
+    let mut touch_pairs: Vec<(u32, u32)> = pre_lines.clone();
+    touch_pairs.extend(main_locked.iter().filter_map(|&(s, t)| {
+        let old_line = f.hunks.get(s.0)?.rows.get(s.1)?.old_line()?;
+        let new_line = f.hunks.get(t.0)?.rows.get(t.1)?.new_line()?;
+        Some((old_line, new_line))
+    }));
     // Sweep uniform-Δ trailing rows (Del/Add leftovers and misassigned
     // Ctx) into the locked blocks; orphans stay as plain leftovers.
     // Pre-pass-locked blocks are re-seeded by line number (their recorded
@@ -285,6 +295,11 @@ pub fn process_single_diff_file(
     // del/add runs into single-row micro-clusters. Relocate them to the
     // neighboring run edges (dels up, adds down) to restore contiguity.
     relocate_tail_orphans(&mut f, &absorption.del_orphans, &absorption.add_orphans);
+    // Collapse touching corresponding move halves into direct Mod/Ctx rows:
+    // a target half adjacent to its own source half is not a relocation
+    // worth showing as a move.
+    touch_pairs.extend(absorption.absorbed.iter().copied());
+    collapse_touching_moves(&mut f, &touch_pairs, profile);
     // The post-collapse return value (newly absorbed pairs) is not used: a
     // subsequent index-shifting pass does not follow, so there is no caller
     // that needs to re-resolve positions. The side-effect on `f` is what matters.
