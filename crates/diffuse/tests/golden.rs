@@ -28,7 +28,7 @@ use std::{
     fs::{self},
     io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex, Once},
     thread,
     time::Instant,
@@ -62,10 +62,6 @@ struct Fixture {
     /// (PLAN.md §4 Phase 6) uses it to prove `apply(diff, old) == new`
     /// mechanically — the diff is a semantic program, not just a render).
     old_content: HashMap<String, Arc<String>>,
-    old_dir: Option<PathBuf>,
-    new_dir: Option<PathBuf>,
-    #[serde(skip)]
-    _temp_dir: Option<Arc<tempfile::TempDir>>,
     #[serde(skip)]
     notes_file: Option<PathBuf>,
     #[serde(skip)]
@@ -202,33 +198,6 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         }
     }
 
-    let (old_dir, new_dir, temp_dir) = if !new_content.is_empty() || !old_content.is_empty() {
-        let td = tempfile::tempdir().expect("create tempdir for golden fixture");
-        let od = td.path().join("old");
-        let nd = td.path().join("new");
-        fs::create_dir_all(&od).expect("create old dir");
-        fs::create_dir_all(&nd).expect("create new dir");
-        for (path, new_str, old_str) in loaded {
-            if let Some(o) = old_str {
-                let target = od.join(&path);
-                if let Some(p) = target.parent() {
-                    let _ = fs::create_dir_all(p);
-                }
-                let _ = fs::write(&target, o.as_bytes());
-            }
-            if let Some(n) = new_str {
-                let target = nd.join(&path);
-                if let Some(p) = target.parent() {
-                    let _ = fs::create_dir_all(p);
-                }
-                let _ = fs::write(&target, n.as_bytes());
-            }
-        }
-        (Some(od), Some(nd), Some(Arc::new(td)))
-    } else {
-        (None, None, None)
-    };
-
     let notes_json_path = corpus_dir.join("notes.json");
     let (notes_file, notes_db, repo_key, rev_key) = if notes_json_path.is_file() {
         let db = diffuse::core::notes::load_notes(&notes_json_path);
@@ -251,9 +220,6 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         diff: Arc::new(diff),
         new_content,
         old_content,
-        old_dir,
-        new_dir,
-        _temp_dir: temp_dir,
         notes_file,
         notes_db,
         repo_key,
@@ -263,6 +229,51 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     let mut cache = FIXTURE_CACHE.lock().unwrap();
     cache.insert(name.to_string(), Arc::clone(&arc));
     arc
+}
+
+/// Function-scoped hydration of a fixture's contents onto disk for legs that
+/// pass `--old-dir`/`--new-dir` to the binary. The `TempDir` must stay owned
+/// by the calling test: TempDirs cached in the static `FIXTURE_CACHE` were
+/// never removed (hundreds of lingering `/tmp/.tmp*` hydration dirs),
+/// while function-scoped `TempDir`s clean up reliably when the test ends.
+struct HydratedFixture {
+    _temp_dir: tempfile::TempDir,
+    old_dir: Option<PathBuf>,
+    new_dir: Option<PathBuf>,
+}
+
+fn hydrate_fixture(fixture: &Fixture) -> HydratedFixture {
+    if fixture.new_content.is_empty() && fixture.old_content.is_empty() {
+        return HydratedFixture {
+            _temp_dir: tempfile::tempdir().expect("create tempdir for golden fixture"),
+            old_dir: None,
+            new_dir: None,
+        };
+    }
+    let td = tempfile::tempdir().expect("create tempdir for golden fixture");
+    let od = td.path().join("old");
+    let nd = td.path().join("new");
+    fs::create_dir_all(&od).expect("create old dir");
+    fs::create_dir_all(&nd).expect("create new dir");
+    for (path, old_str) in &fixture.old_content {
+        let target = od.join(path);
+        if let Some(p) = target.parent() {
+            let _ = fs::create_dir_all(p);
+        }
+        let _ = fs::write(&target, old_str.as_bytes());
+    }
+    for (path, new_str) in &fixture.new_content {
+        let target = nd.join(path);
+        if let Some(p) = target.parent() {
+            let _ = fs::create_dir_all(p);
+        }
+        let _ = fs::write(&target, new_str.as_bytes());
+    }
+    HydratedFixture {
+        _temp_dir: td,
+        old_dir: Some(od),
+        new_dir: Some(nd),
+    }
 }
 
 fn expected_pager_render_path(name: &str, flavor: &str) -> PathBuf {
@@ -1596,6 +1607,7 @@ fn hermetic_bin_cmd() -> Command {
 
 fn run_bin_markdown_leg(name: &str) {
     let fixture = load_fixture(name);
+    let hydrated = hydrate_fixture(&fixture);
     let input = fixture.diff.as_bytes();
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("-m").arg("--color=never");
@@ -1608,10 +1620,10 @@ fn run_bin_markdown_leg(name: &str) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = fixture.old_dir {
+    if let Some(ref old_dir) = hydrated.old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = fixture.new_dir {
+    if let Some(ref new_dir) = hydrated.new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     // stderr is piped (not inherited) so the repo's own ioctl width
@@ -1686,6 +1698,7 @@ fn run_bin_raw_leg(name: &str) {
         return;
     }
     let fixture = load_fixture(name);
+    let hydrated = hydrate_fixture(&fixture);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     // The raw fixture encodes the dark palette; pin it so an ambient
@@ -1704,10 +1717,10 @@ fn run_bin_raw_leg(name: &str) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = fixture.old_dir {
+    if let Some(ref old_dir) = hydrated.old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = fixture.new_dir {
+    if let Some(ref new_dir) = hydrated.new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
@@ -1888,6 +1901,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
         // library leg.  Bailing out here (as before) left the golden written
         // by the library leg, which diverges whenever the two differ.
         let fixture = load_fixture(name);
+        let hydrated = hydrate_fixture(&fixture);
         let diff_text = Arc::clone(&fixture.diff);
         let mut cmd = hermetic_bin_cmd();
         cmd.arg("parse").arg("--jsonl");
@@ -1900,10 +1914,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
         if let Some(ref rev_key) = fixture.rev_key {
             cmd.arg("--rev-key").arg(rev_key);
         }
-        if let Some(ref old_dir) = fixture.old_dir {
+        if let Some(ref old_dir) = hydrated.old_dir {
             cmd.arg("--old-dir").arg(old_dir);
         }
-        if let Some(ref new_dir) = fixture.new_dir {
+        if let Some(ref new_dir) = hydrated.new_dir {
             cmd.arg("--new-dir").arg(new_dir);
         }
         let mut child = cmd
@@ -1943,6 +1957,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
         return;
     }
     let fixture = load_fixture(name);
+    let hydrated = hydrate_fixture(&fixture);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("--jsonl");
@@ -1955,10 +1970,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = fixture.old_dir {
+    if let Some(ref old_dir) = hydrated.old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = fixture.new_dir {
+    if let Some(ref new_dir) = hydrated.new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
@@ -2303,28 +2318,75 @@ corpus_tests!(container_compatibility, "container-compatibility", 8);
 corpus_tests!(diffcoord_anchoring, "diffcoord-anchoring", 38);
 
 #[test]
+fn hydration_tempdir_removed_on_drop() {
+    // Empty fixture: nothing hydrated, scratch TempDir still cleaned up.
+    let empty = Fixture {
+        diff: Arc::new(String::new()),
+        new_content: HashMap::new(),
+        old_content: HashMap::new(),
+        notes_file: None,
+        notes_db: None,
+        repo_key: None,
+        rev_key: None,
+    };
+    let tmp_path = {
+        let hydrated = hydrate_fixture(&empty);
+        assert!(hydrated.old_dir.is_none() && hydrated.new_dir.is_none());
+        hydrated._temp_dir.path().to_path_buf()
+    };
+    assert!(
+        !tmp_path.exists(),
+        "empty hydration TempDir must be removed on drop"
+    );
+
+    // Non-empty fixture: hydrated dirs exist during the guard's life and
+    // vanish with it (regression: static-cached TempDirs lingered in /tmp).
+    if !is_golden_initialized() {
+        eprintln!("tests/golden submodule is not initialized; skipping hydrated drop check");
+        return;
+    }
+    let fixture = load_fixture("ansi-optimizer");
+    assert!(!fixture.new_content.is_empty() || !fixture.old_content.is_empty());
+    let (td_path, old_dir) = {
+        let hydrated = hydrate_fixture(&fixture);
+        let od = hydrated
+            .old_dir
+            .clone()
+            .expect("ansi-optimizer hydrates old_dir");
+        assert!(od.is_dir());
+        (hydrated._temp_dir.path().to_path_buf(), od)
+    };
+    assert!(
+        !td_path.exists(),
+        "hydration TempDir must be removed on drop"
+    );
+    assert!(!old_dir.exists());
+}
+
+#[test]
 fn test_golden_initialized_detection() {
-    let tmp = env::temp_dir().join(format!("diffuse_test_uninited_{}", process::id()));
-    let _ = fs::remove_dir_all(&tmp);
+    // Function-scoped TempDir: removed automatically when the test ends,
+    // even on panic — unlike the previous manual `env::temp_dir()` path,
+    // which lingered whenever cleanup was skipped.
+    let tmp_dir = tempfile::tempdir().expect("tempdir for uninited detection test");
+    let tmp = tmp_dir.path();
 
     // Nonexistent directory
-    assert!(!is_golden_initialized_at(&tmp));
+    assert!(!is_golden_initialized_at(tmp));
 
     // Empty directory
-    fs::create_dir_all(&tmp).unwrap();
-    assert!(!is_golden_initialized_at(&tmp));
+    fs::create_dir_all(tmp).unwrap();
+    assert!(!is_golden_initialized_at(tmp));
 
     // Directory with dummy file
     fs::write(tmp.join("README.md"), "hello").unwrap();
-    assert!(!is_golden_initialized_at(&tmp));
+    assert!(!is_golden_initialized_at(tmp));
 
     // Directory with expected corpus fixture
     let corpus = tmp.join("diffuse-2026-08");
     fs::create_dir_all(&corpus).unwrap();
     fs::write(corpus.join("meta.json"), "{}").unwrap();
-    assert!(is_golden_initialized_at(&tmp));
-
-    let _ = fs::remove_dir_all(&tmp);
+    assert!(is_golden_initialized_at(tmp));
 
     // Verify uninitialized skip logic executes cleanly without panic
     assert!(!run_acceptance_test_impl(false, "test-corpus", 1));
@@ -2384,6 +2446,7 @@ fn bin_spawn_ignores_hostile_ambient_env() {
     }
     let name = "untracked-files";
     let fixture = load_fixture(name);
+    let hydrated = hydrate_fixture(&fixture);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse")
@@ -2400,10 +2463,10 @@ fn bin_spawn_ignores_hostile_ambient_env() {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = fixture.old_dir {
+    if let Some(ref old_dir) = hydrated.old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = fixture.new_dir {
+    if let Some(ref new_dir) = hydrated.new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
