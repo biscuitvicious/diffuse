@@ -31,6 +31,10 @@ fn movtgt(num: u32, text: &str) -> Row {
     }
 }
 
+fn sep(text: &str) -> Row {
+    Row::Sep(text.to_string())
+}
+
 fn mod_row(old_num: u32, new_num: u32, old_text: &str, new_text: &str) -> Row {
     Row::Mod {
         old_line: DelLine::new(old_num, old_text),
@@ -813,6 +817,60 @@ fn test_relocate_del_orphan_anchors_after_any_row_kind() {
             ("movtgt".to_string(), None, Some(311)),
         ],
         "del orphan must sit right after its preceding old line"
+    );
+}
+
+#[test]
+fn test_relocate_del_orphan_unit_aborts_at_sep_between_anchor_and_unit() {
+    // A `Sep` row strictly between the anchor row (old 199) and the unit
+    // (dels 200-201) must abort the relocation: the unit stays in place.
+    // The seed chains del 201 across the neutral `MovTgt` row (no Ctx/Mod/
+    // Sep boundary between them), so the unit spans the boundary region —
+    // exactly the case the Mod/Sep crossing guard exists for.
+    let mut f = file(vec![hunk(vec![
+        del(199, "a();"),
+        sep(""),
+        movtgt(300, "m();"),
+        del(200, "b();"),
+        del(201, "c();"),
+        ctx(202, 302, "d();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[200], &[]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("del".to_string(), Some(199), None),
+            ("other".to_string(), None, None),
+            ("movtgt".to_string(), None, Some(300)),
+            ("del".to_string(), Some(200), None),
+            ("del".to_string(), Some(201), None),
+            ("ctx".to_string(), Some(202), Some(302)),
+        ],
+        "del unit must stay in place behind a Sep row"
+    );
+
+    // Control: the same layout without the Sep row relocates, so the
+    // assertion above is sensitive to the guard rather than vacuous.
+    let mut f = file(vec![hunk(vec![
+        del(199, "a();"),
+        movtgt(300, "m();"),
+        del(200, "b();"),
+        del(201, "c();"),
+        ctx(202, 302, "d();"),
+    ])]);
+    super::relocate_tail_orphans(&mut f, &[200], &[]);
+    let sigs: Vec<_> = f.hunks[0].rows.iter().map(row_sig).collect();
+    assert_eq!(
+        sigs,
+        vec![
+            ("del".to_string(), Some(199), None),
+            ("del".to_string(), Some(200), None),
+            ("del".to_string(), Some(201), None),
+            ("movtgt".to_string(), None, Some(300)),
+            ("ctx".to_string(), Some(202), Some(302)),
+        ],
+        "identical layout without the Sep row must relocate"
     );
 }
 
