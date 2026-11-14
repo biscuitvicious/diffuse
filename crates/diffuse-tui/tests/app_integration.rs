@@ -876,8 +876,8 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
     assert_eq!(state.output.files.len(), 7);
     assert_eq!(state.new_line_num.width, 4);
 
-    // Collapse File 4 (File 5/7 · app/tests.rs)
-    state.toggle_file_collapse(4);
+    // Collapse File 5 (File 6/7 · app/tests.rs)
+    state.toggle_file_collapse(5);
     assert_eq!(
         state.new_line_num.width, 3,
         "with file 4 collapsed, max line is < 1000"
@@ -886,12 +886,12 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
     let width: u16 = 120;
     let height: u16 = 40;
 
-    // Position cursor on File 4's header
-    let file4_flat = state.first_row_of_file(4);
-    state.row_idx = file4_flat;
+    // Position cursor on File 5's header
+    let file5_flat = state.first_row_of_file(5);
+    state.row_idx = file5_flat;
     state.vis_line = 0;
 
-    // Render buffer with file 4 collapsed
+    // Render buffer with file 5 collapsed
     let buf_collapsed = state.render_to_buffer(width, height);
 
     let find_header_y = |buf: &ratatui::buffer::Buffer| -> Option<u16> {
@@ -900,40 +900,40 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
             for x in 0..buf.area().width {
                 line.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
             }
-            if line.contains("File 5/7") || line.contains("app/tests.rs") {
+            if line.contains("File 6/7") || line.contains("app/tests.rs") {
                 return Some(y);
             }
         }
         None
     };
 
-    let y_before = find_header_y(&buf_collapsed).expect("file 4 header should be visible");
+    let y_before = find_header_y(&buf_collapsed).expect("file 5 header should be visible");
 
-    // Now expand File 4
-    state.toggle_file_collapse(4);
+    // Now expand File 5
+    state.toggle_file_collapse(5);
     assert_eq!(
         state.new_line_num.width, 4,
-        "expanding file 4 restores width 4"
+        "expanding file 5 restores width 4"
     );
 
     let buf_expanded = state.render_to_buffer(width, height);
-    let y_after = find_header_y(&buf_expanded).expect("file 4 header should still be visible");
+    let y_after = find_header_y(&buf_expanded).expect("file 5 header should still be visible");
 
     assert_eq!(
         y_after, y_before,
         "File header visual Y must be preserved across expand (expected {y_before}, got {y_after})"
     );
 
-    // Collapsing File 4 again adapts width back to 3 and must also preserve visual
+    // Collapsing File 5 again adapts width back to 3 and must also preserve visual
     // Y
-    state.toggle_file_collapse(4);
+    state.toggle_file_collapse(5);
     assert_eq!(
         state.new_line_num.width, 3,
         "re-collapsing file 4 restores width 3"
     );
     let buf_recollapsed = state.render_to_buffer(width, height);
     let y_recollapsed =
-        find_header_y(&buf_recollapsed).expect("file 4 header should still be visible");
+        find_header_y(&buf_recollapsed).expect("file 5 header should still be visible");
     assert_eq!(
         y_recollapsed, y_before,
         "File header visual Y must be preserved across re-collapse (expected {y_before}, got {y_recollapsed})"
@@ -1168,16 +1168,16 @@ fn test_tui_collapsible_old_line_gutter_from_golden() {
         for x in 0..buf_check.area().width {
             line.push_str(buf_check.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
         }
-        if line.contains("including alongside") {
+        if line.contains("pub last_content_width") {
             assert!(
-                line.contains("221  221"),
+                line.contains("85   85"),
                 "ctx row must show both old and new line numbers: {line:?}"
             );
             found_ctx_221 = true;
             break;
         }
     }
-    assert!(found_ctx_221, "must find line 221 in rendered buffer");
+    assert!(found_ctx_221, "must find line 85 in rendered buffer");
 
     // Exact boundary check: expanded gutter width is 1 (expand) + 4 (old) + 1
     // (space) + 4 (new) + 2 (marker) = 12. Remaining diff content columns must

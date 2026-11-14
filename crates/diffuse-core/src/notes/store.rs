@@ -91,9 +91,13 @@ pub fn query_notes_for_file<'a>(
         {
             return notes.iter().collect();
         }
-        return rev_map
+        let mut matched: Vec<(&String, &HashMap<String, Vec<ReviewNote>>)> = rev_map
             .iter()
             .filter(|(k, _)| commit_spec_matches(target_rev, k))
+            .collect();
+        matched.sort_by(|a, b| a.0.cmp(b.0));
+        return matched
+            .into_iter()
             .filter_map(|(_, file_map)| file_map.get(file))
             .flatten()
             .collect();
@@ -106,8 +110,11 @@ pub fn query_notes_for_file<'a>(
         return notes.iter().collect();
     }
 
-    rev_map
-        .values()
+    let mut rev_keys: Vec<&String> = rev_map.keys().collect();
+    rev_keys.sort();
+    rev_keys
+        .into_iter()
+        .filter_map(|k| rev_map.get(k))
         .filter_map(|file_map| file_map.get(file))
         .flatten()
         .collect()

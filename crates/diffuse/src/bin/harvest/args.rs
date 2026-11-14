@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use diffuse::prelude::DEFAULT_CONTEXT_LINES;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -75,17 +74,6 @@ pub struct Args {
         help = "Create a git tag in the source repository at the harvested commit (defaults to corpus name if --output is specified)"
     )]
     pub tag: Option<String>,
-
-    /// Lines of context around changes
-    #[arg(
-        short,
-        long,
-        value_name = "LINES",
-        default_value_t = DEFAULT_CONTEXT_LINES,
-        help_heading = "Diff Options",
-        help = "Lines of context around changes"
-    )]
-    pub context: usize,
 
     /// Glob pathspecs to exclude from the harvested diff (git pathspec
     /// syntax, e.g. `tests/golden` — passed as `:(exclude)<pattern>` so a

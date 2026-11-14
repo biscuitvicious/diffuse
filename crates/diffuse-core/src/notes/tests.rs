@@ -1027,6 +1027,28 @@ fn test_query_notes_for_file_scoping_and_standalone() {
 }
 
 #[test]
+fn test_query_notes_for_file_multi_rev_order_is_deterministic() {
+    let mk = |id: &str| ReviewNote {
+        id: id.into(),
+        file: "src/lib.rs".into(),
+        location: NoteLocation::line(DiffCoord::new_side(1)),
+        text: id.into(),
+        created_at: 1000,
+        content_hash: None,
+        ..Default::default()
+    };
+    let mut db = NotesDB::new();
+    add_note(&mut db, "myrepo", "c-rev", mk("from-c"));
+    add_note(&mut db, "myrepo", "a-rev", mk("from-a"));
+    add_note(&mut db, "myrepo", "b-rev", mk("from-b"));
+
+    // rev_key=None spans all revisions: must come back in sorted rev order.
+    let all = query_notes_for_file(&db, Some("myrepo"), None, "src/lib.rs");
+    let ids: Vec<&str> = all.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, vec!["from-a", "from-b", "from-c"]);
+}
+
+#[test]
 fn test_note_files_for_repo() {
     let mut db = NotesDB::new();
     let note1 = ReviewNote {

@@ -22,7 +22,7 @@ use std::{
 };
 
 use clap::Parser;
-use diffuse::git::load_git_repo;
+use diffuse::git::{ENGINE_CONTEXT, load_git_repo};
 use diffuse_git::Repository;
 use serde::Serialize;
 
@@ -85,7 +85,7 @@ fn main() {
         &base_args,
         &exclude_pathspecs(&exclude),
         false,
-        args.context,
+        ENGINE_CONTEXT,
     ) {
         Ok(g) => g,
         Err(e) => {

@@ -2286,7 +2286,7 @@ corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5);
 corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2);
 corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3);
 corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4);
-corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 203);
+corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 204);
 corpus_tests!(untracked_files, "untracked-files", 2);
 corpus_tests!(theme_scrollbar_palette, "theme-scrollbar-palette", 34);
 corpus_tests!(theme_light_toggle, "theme-light-toggle", 42);
@@ -2299,7 +2299,7 @@ corpus_tests!(ansi_optimizer, "ansi-optimizer", 10);
 corpus_tests!(linenum_u32, "linenum-u32", 26);
 corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 7);
 corpus_tests!(viewport_scroll_boundaries, "viewport-scroll-boundaries", 6);
-corpus_tests!(container_compatibility, "container-compatibility", 9);
+corpus_tests!(container_compatibility, "container-compatibility", 8);
 corpus_tests!(diffcoord_anchoring, "diffcoord-anchoring", 38);
 
 #[test]
