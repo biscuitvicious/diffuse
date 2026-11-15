@@ -1,4 +1,4 @@
-use crate::{app::AppState, command::TuiCommand, view::wrapped_glyph_hit};
+use crate::{app::AppState, command::TuiCommand};
 
 impl AppState {
     /// Execute a high-level user command to mutate application state.
@@ -324,20 +324,6 @@ impl AppState {
                                             self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));
                                             break;
                                         }
-                                    }
-                                }
-
-                                if let Some(item) = self.flat.get(i)
-                                    && !self.raw_diff
-                                    && item.is_bottom_gap_divider()
-                                {
-                                    let seg_off = target_vis - s;
-                                    let gap = self.hunk_trailing_gap(item.file_idx);
-                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-                                    if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
-                                        let last_hi = item.hunk_idx().unwrap_or(0);
-                                        self.expand_hunk_below(item.file_idx, last_hi);
-                                        break;
                                     }
                                 }
 

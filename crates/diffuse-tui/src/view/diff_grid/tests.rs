@@ -486,10 +486,11 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     assert!(top_gap.to_string().contains("· 50 more lines ────"));
     assert!(!top_gap.to_string().contains("▲"));
 
-    // Bottom gap divider (only up arrow) — 4-dash prefix and post
+    // Bottom gap divider — 4-dash prefix and post
     let bottom = bottom_gap_divider_text(80);
-    assert!(bottom.contains("──── 80 more lines: ▲ ────"));
-    assert!(!bottom.contains("▼"));
+    assert_eq!(bottom, "──── 80 more lines ────");
+    assert!(!bottom.contains('▲'));
+    assert!(!bottom.contains('▼'));
 }
 
 #[test]
@@ -656,7 +657,7 @@ fn test_ratatui_diff_grid_lines() {
     assert!(h_line.to_string().contains("10 more lines"));
 
     let b_line = bottom_gap_divider_line(5, false, false, 80, &DiffuseTheme::dark());
-    assert!(b_line.to_string().contains("5 more lines:"));
+    assert!(b_line.to_string().contains("5 more lines"));
 }
 
 #[test]
@@ -865,57 +866,6 @@ fn test_file_header_text_identical_formatted_size() {
         !banner.contains('➞') && !banner.contains("->"),
         "banner must NOT contain an arrow when formatted sizes match, got: {banner}"
     );
-}
-
-#[test]
-fn test_wrapped_glyph_hit_covers_exactly_three_screen_cells() {
-    // Glyph at char index 4 with spaces on both sides.
-    let txt = "abc ▲ de";
-    let cw = 20;
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 3, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 4, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 5, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, 2, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, 6, cw));
-    assert!(!wrapped_glyph_hit(txt, "▼", 0, 4, cw));
-}
-
-#[test]
-fn test_wrapped_glyph_hit_wraps_across_segments() {
-    // Glyph at unwrapped index 10 with cw=10 renders at segment 1, col 0:
-    // the preceding space is the last cell of segment 0.
-    let txt = "012345678 ▲ x";
-    let cw = 10;
-    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 1, 1, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 9, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, 8, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 1, 2, cw));
-
-    // Glyph at unwrapped index 9 with cw=10 renders at segment 0, col 9:
-    // the following space is the first cell of segment 1.
-    let txt = "01234567 ▲ y";
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 8, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 9, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, 7, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 1, 1, cw));
-}
-
-#[test]
-fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
-    // Glyph at unwrapped index 5 with cw=6 renders at (0, 5); its +1
-    // neighbor wraps to (1, 0).
-    let txt = "abcd ▲e";
-    let cw = 6;
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 4, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 0, 5, cw));
-    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, 3, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 1, 1, cw));
-    // The scrollbar column itself never hits, on any segment.
-    assert!(!wrapped_glyph_hit(txt, "▲", 0, cw, cw));
-    assert!(!wrapped_glyph_hit(txt, "▲", 1, cw, cw));
 }
 
 #[test]

@@ -3724,7 +3724,7 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
     state.row_idx = 0;
     state.vis_line = 0;
 
-    // Click on col 0 of the end of hunks divider (outside the ▲ arrow)
+    // Click on col 0 of the end of hunks divider
     state.execute(TuiCommand::MouseClick {
         row: click_row,
         col: 0,
@@ -3745,42 +3745,6 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
             Some(crate::app::notes::VisualTarget::BottomGapDivider { file_idx: 0 })
         ),
         "visual target must be BottomGapDivider"
-    );
-}
-
-#[test]
-fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
-    let mut state = AppState::new(
-        trailing_gap_output(),
-        "test_repo".into(),
-        temp_notes_path(),
-        crate::render::DiffuseTheme::dark(),
-    )
-    .with_expand_lines(5);
-    state.render_frame(120, 40);
-
-    let fi = 0;
-    let gap_before = state.hunk_trailing_gap(fi);
-    assert!(gap_before > 0);
-
-    let last_row = state.last_row_of_file(fi);
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-    let bottom_vis = starts[last_row];
-    let click_row = state.last_viewport_start + bottom_vis.saturating_sub(state.scroll);
-
-    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
-    let arrow_col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
-
-    state.execute(TuiCommand::MouseClick {
-        row: click_row,
-        col: arrow_col,
-        shift: false,
-    });
-
-    let gap_after = state.hunk_trailing_gap(fi);
-    assert!(
-        gap_after < gap_before,
-        "clicking ▲ must expand trailing context (before: {gap_before}, after: {gap_after})"
     );
 }
 
@@ -4100,62 +4064,6 @@ fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
     assert_eq!(
         state.row_idx, current_div_flat,
         "cursor must remain on the hunk bar"
-    );
-}
-
-#[test]
-fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
-    let mut state = AppState::new(
-        trailing_gap_output(),
-        "test_repo".into(),
-        temp_notes_path(),
-        crate::render::DiffuseTheme::dark(),
-    )
-    .with_expand_lines(4);
-    state.render_frame(120, 12);
-    state.scroll = 2;
-
-    let fi = 0;
-    let gap_before = state.hunk_trailing_gap(fi);
-    assert!(gap_before > 0);
-
-    let last_row = state.last_row_of_file(fi);
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-    let bottom_vis = starts[last_row];
-    let bottom_screen_y = bottom_vis.saturating_sub(state.scroll);
-    let click_row = state.last_viewport_start + bottom_screen_y;
-
-    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
-    let arrow_col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
-
-    // 1. Cursor before bottom divider, visible in the viewport (visual line 5,
-    //    screen y 3)
-    state.row_idx = 3;
-    state.vis_line = 0;
-    let cursor_screen_before = state.cursor_visual_line().saturating_sub(state.scroll);
-
-    state.execute(TuiCommand::MouseClick {
-        row: click_row,
-        col: arrow_col,
-        shift: false,
-    });
-
-    let gap_after = state.hunk_trailing_gap(fi);
-    assert!(gap_after < gap_before, "clicking ▲ must expand context");
-
-    let last_row_after = state.last_row_of_file(fi);
-    let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
-    let bottom_vis_after = starts_after[last_row_after];
-    let bottom_screen_after = bottom_vis_after.saturating_sub(state.scroll);
-    assert_eq!(
-        bottom_screen_after, bottom_screen_y,
-        "bottom divider must retain its visual screen position"
-    );
-
-    let cursor_screen_after = state.cursor_visual_line().saturating_sub(state.scroll);
-    assert_eq!(
-        cursor_screen_after, cursor_screen_before,
-        "cursor must retain its visual screen position when expanding bottom divider"
     );
 }
 
@@ -4532,48 +4440,6 @@ fn test_expand_below_cursor_above_divider() {
             assert_eq!(
                 cursor_rel_after, cursor_rel_before,
                 "click ▲: cursor visual position must be retained for row {test_row}"
-            );
-        }
-
-        // Test D: click bottom divider retains visual cursor position
-        {
-            let mut state = AppState::new(
-                two_hunk_gap_output(),
-                "test_repo".into(),
-                temp_notes_path(),
-                crate::render::DiffuseTheme::dark(),
-            )
-            .with_expand_lines(4);
-            state.render_frame(120, 16);
-            state.scroll = 10;
-            state.row_idx = test_row;
-            state.vis_line = 0;
-            let cursor_vis_before = state.cursor_visual_line();
-            let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
-
-            let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-            let div_vis = state
-                .bottom_divider_vis_line_from_layout(fi, &starts)
-                .unwrap();
-            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
-            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
-
-            let gap = state.hunk_trailing_gap(fi);
-            let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-            let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
-
-            state.execute(TuiCommand::MouseClick {
-                row: click_row,
-                col,
-                shift: false,
-            });
-            state.render_frame(120, 16);
-
-            let cursor_vis_after = state.cursor_visual_line();
-            let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
-            assert_eq!(
-                cursor_rel_after, cursor_rel_before,
-                "click bottom ▲: cursor visual position must be retained for row {test_row}"
             );
         }
     }

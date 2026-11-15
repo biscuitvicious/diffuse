@@ -10,7 +10,7 @@ pub mod status_layout;
 pub use diff_grid::{
     bottom_gap_divider_line, bottom_gap_divider_segment_line, bottom_gap_divider_text,
     file_header_line, file_header_segment_line, file_header_text, hunk_divider_line,
-    hunk_divider_segment_line, hunk_divider_text, wrapped_glyph_hit,
+    hunk_divider_segment_line, hunk_divider_text,
 };
 pub use header::{
     HeaderFileCount, StatusBarContext, bottom_ribbon_lines, header_bar_line, status_bar_line,

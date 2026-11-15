@@ -173,7 +173,7 @@ pub enum FlatRowKind {
         side: ModSide,
         glyph: ModGlyph,
     },
-    /// Trailing gap divider (`──── N more lines: ▲ ────`) at the end of a file.
+    /// Trailing gap divider (`──── N more lines ────`) at the end of a file.
     BottomGapDivider { hunk_idx: usize },
 }
 

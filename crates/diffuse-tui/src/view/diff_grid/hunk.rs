@@ -29,25 +29,11 @@ pub fn divider_seg_count(txt: &str, content_width: usize) -> usize {
     count.max(1)
 }
 
-/// Screen-space hit area for a divider arrow glyph: exactly the three
-/// cells holding `[' ', glyph, ' ']` after wrapping — the glyph's unwrapped
-/// strip neighbors mapped through the segment wrap. Content columns only;
-/// the scrollbar column can never match, so the bar keeps its column.
-#[must_use]
-pub fn wrapped_glyph_hit(txt: &str, pat: &str, seg_off: usize, col: usize, cw: usize) -> bool {
-    let Some(idx) = txt.find(pat) else {
-        return false;
-    };
-    let c = txt[..idx].chars().count();
-    let cw = cw.max(1);
-    (c.saturating_sub(1)..=c + 1).any(|e| e / cw == seg_off && e % cw == col)
-}
-
 /// Build the raw text of a bottom gap divider with format
-/// `──── {hidden_gap} more {unit}: ▲ ────`.
+/// `──── {hidden_gap} more {unit} ────`.
 pub fn bottom_gap_divider_text(hidden_gap: usize) -> String {
     let unit = if hidden_gap == 1 { "line" } else { "lines" };
-    format!("──── {hidden_gap} more {unit}: ▲ ────")
+    format!("──── {hidden_gap} more {unit} ────")
 }
 
 /// Style one divider span: bold foreground, inheriting the canvas when

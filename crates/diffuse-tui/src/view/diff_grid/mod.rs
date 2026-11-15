@@ -10,7 +10,6 @@ pub use file::{
 pub use hunk::{
     bottom_gap_divider_line, bottom_gap_divider_segment_line, bottom_gap_divider_text,
     divider_seg_count, hunk_divider_line, hunk_divider_segment_line, hunk_divider_text,
-    wrapped_glyph_hit,
 };
 
 #[cfg(test)]
