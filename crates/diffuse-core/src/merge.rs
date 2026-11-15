@@ -93,6 +93,9 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
     if !matches!(r, Row::Mod { .. }) {
         return false;
     }
+    if r.group() == Some(crate::parse::RowGroup::Anchor) {
+        return false;
+    }
     let Some(del_text) = r.old_text() else {
         return false;
     };

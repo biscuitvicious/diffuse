@@ -321,6 +321,7 @@ pub fn process_single_diff_file(
             } = r
                 && old_line.text != new_line.text
                 && spans.is_empty()
+                && cached_runs.is_empty()
             {
                 let (s, runs) =
                     word_spans_and_runs_with_profile(&old_line.text, &new_line.text, profile);

@@ -338,6 +338,50 @@ pub(crate) fn is_admissible_mod_pair(
     true
 }
 
+/// Determines if a collapse anchor del line and candidate add line can form an
+/// admissible anchor pair. Prevents cross-statement collapse pairings where an
+/// anchor del shares no salient tokens with the target add.
+pub(crate) fn is_collapse_anchor_admissible(
+    anchor_del: &str,
+    target_add: &str,
+    old_meta: &DpRowMeta,
+    new_meta: &DpRowMeta,
+    profile: Option<&LangProfile>,
+) -> bool {
+    let (_spans, runs) =
+        crate::lcs::word_spans_and_runs_with_profile(anchor_del, target_add, profile);
+    let del_has_salient = crate::lcs::line_has_salient_token(anchor_del, profile);
+    let add_has_salient = crate::lcs::line_has_salient_token(target_add, profile);
+    if del_has_salient && add_has_salient {
+        let has_salient_ctx = runs.iter().any(|(kind, text)| {
+            *kind == crate::merge::RunKind::Ctx && crate::lcs::line_has_salient_token(text, profile)
+        });
+        if !has_salient_ctx {
+            let same_stmt_head = old_meta.indent == new_meta.indent
+                && old_meta.is_stmt_start
+                && new_meta.is_stmt_start
+                && old_meta.head_is_keyword
+                && new_meta.head_is_keyword;
+            if !same_stmt_head {
+                let ctx_chars: usize = runs
+                    .iter()
+                    .filter(|(k, t)| *k == crate::merge::RunKind::Ctx && !t.trim().is_empty())
+                    .map(|(_, t)| t.chars().count())
+                    .sum();
+                let total_chars = anchor_del
+                    .trim()
+                    .chars()
+                    .count()
+                    .max(target_add.trim().chars().count());
+                if ctx_chars * 2 < total_chars {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 /// Solves a cluster using a reusable scratch arena for zero-allocation
 /// buffers.
 pub(crate) fn solve_cluster_with_arena(
@@ -1824,7 +1868,18 @@ pub(crate) fn solve_cluster_matrix(
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
                             continue;
                         }
-                        if arena.forbidden_pairs.contains(&(i, j + anchor)) {
+                        if arena.forbidden_pairs.contains(&(i + anchor, j)) {
+                            continue;
+                        }
+                        let anchor_del = cluster.old_rows[i + anchor].text();
+                        let target_add = cluster.new_rows[j].text();
+                        if !is_collapse_anchor_admissible(
+                            anchor_del,
+                            target_add,
+                            &old_meta[i + anchor],
+                            &new_meta[j],
+                            profile,
+                        ) {
                             continue;
                         }
                         let syntax = if nm.first_word.is_some()

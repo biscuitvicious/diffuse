@@ -2,7 +2,7 @@
 //! reflow suppression (Pass 2).
 
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use diffuse_syntax::profile::LangProfile;
 
@@ -15,10 +15,10 @@ use crate::{
 use super::{
     PairingContext,
     aux::{
-        PendingAux, SlicedMultilineRuns, build_aux_runs, consume_supply, has_closing_affinity,
-        has_opening_affinity, is_contiguous_in_del, is_word_char, join_collapse_lines,
-        line_delim_delta, normalize_ranges, relabel_moved_runs, slice_multiline_runs,
-        supplied_occurrence, trailing_delimiters,
+        PendingAux, SlicedMultilineDelRuns, SlicedMultilineRuns, build_aux_runs, consume_supply,
+        has_closing_affinity, has_opening_affinity, is_contiguous_in_del, is_word_char,
+        line_delim_delta, normalize_ranges, relabel_moved_runs, slice_multiline_del_runs,
+        slice_multiline_runs, supplied_occurrence, trailing_delimiters,
     },
 };
 
@@ -124,6 +124,7 @@ fn normalized_invariants_hold(h: &Hunk, out: &[Row], profile: Option<&LangProfil
 }
 
 /// Products of the assembly pass.
+#[derive(Default)]
 pub struct AssembledMods {
     pub out: Vec<Row>,
     pub kept_dels: Vec<usize>,
@@ -131,11 +132,68 @@ pub struct AssembledMods {
     pub add_spans: FxHashMap<usize, Spans>,
     pub add_groups: FxHashMap<usize, RowGroup>,
     pub add_runs: FxHashMap<usize, Vec<(RunKind, String)>>,
+    pub del_spans: FxHashMap<usize, Spans>,
+    pub del_groups: FxHashMap<usize, RowGroup>,
+    pub del_runs: FxHashMap<usize, Vec<(RunKind, String)>>,
 }
 
 /// Per paired del row: donor text, first del number, word spans, and the
 /// profiled-tape merged runs handed from assemble to render.
 type PrecomputedPair = (String, u32, Spans, Vec<(RunKind, String)>);
+
+fn compute_anchor_mod_spans(anchor_runs: &[(RunKind, String)]) -> Spans {
+    let mut anchor_del_spans = Vec::new();
+    let mut anchor_add_spans = Vec::new();
+    let mut old_off = 0usize;
+    let mut new_off = 0usize;
+    for (kind, text) in anchor_runs {
+        let len = text.chars().count();
+        match kind {
+            RunKind::Ctx => {
+                old_off += len;
+                new_off += len;
+            }
+            RunKind::Add => {
+                if len > 0 {
+                    anchor_add_spans.push((new_off, new_off + len));
+                }
+                new_off += len;
+            }
+            RunKind::Del | RunKind::MovedSrc => {
+                if len > 0 {
+                    anchor_del_spans.push((old_off, old_off + len));
+                }
+                old_off += len;
+            }
+            RunKind::MovedTgt => {
+                new_off += len;
+            }
+        }
+    }
+    normalize_ranges(&mut anchor_del_spans);
+    normalize_ranges(&mut anchor_add_spans);
+    Spans {
+        del: anchor_del_spans,
+        add: anchor_add_spans,
+    }
+}
+
+fn compute_aux_del_spans(aux_runs: &[(RunKind, String)]) -> Spans {
+    let mut aux_del_spans = Vec::new();
+    let mut off = 0usize;
+    for (kind, text) in aux_runs {
+        let len = text.chars().count();
+        if *kind == RunKind::Del && len > 0 {
+            aux_del_spans.push((off, off + len));
+        }
+        off += len;
+    }
+    normalize_ranges(&mut aux_del_spans);
+    Spans {
+        del: aux_del_spans,
+        add: Vec::new(),
+    }
+}
 
 pub fn pass_assemble_mods(
     h: &Hunk,
@@ -148,13 +206,9 @@ pub fn pass_assemble_mods(
     let mut add_spans: FxHashMap<usize, Spans> = FxHashMap::default();
     let mut add_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
     let mut add_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
-
-    let mut collapse_absorbed_dels: FxHashSet<usize> = FxHashSet::default();
-    for dels in ctx.collapse_blocks.values() {
-        for &d in dels {
-            collapse_absorbed_dels.insert(d);
-        }
-    }
+    let mut del_spans: FxHashMap<usize, Spans> = FxHashMap::default();
+    let mut del_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
+    let mut del_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
 
     let mut precomputed_pairs: FxHashMap<usize, PrecomputedPair> = if ctx.paired_dels.len() > 32 {
         ctx.paired_dels
@@ -166,7 +220,7 @@ pub fn pass_assemble_mods(
                     ctx.collapse_blocks.get(&add_ri)
                 {
                     let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
-                    let joined = join_collapse_lines(&lines, add.text());
+                    let joined = lines.join("\n");
                     let first_num = block_dels
                         .first()
                         .and_then(|&di| h.rows[di].old_line_num())
@@ -187,6 +241,12 @@ pub fn pass_assemble_mods(
         FxHashMap::default()
     };
 
+    let in_collapse_blocks: rustc_hash::FxHashSet<usize> = ctx
+        .collapse_blocks
+        .values()
+        .flat_map(|dels| dels.iter().copied())
+        .collect();
+
     for (ri, r) in h.rows.iter().enumerate() {
         if matches!(r, Row::MovTgt { .. }) {
             out.push(r.clone());
@@ -203,7 +263,7 @@ pub fn pass_assemble_mods(
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
 
-            let (del_text, first_old_num, mut spans, mut runs) =
+            let (del_text, first_old_num, spans, runs) =
                 if let Some(pre) = precomputed_pairs.remove(&ri) {
                     pre
                 } else {
@@ -211,7 +271,7 @@ pub fn pass_assemble_mods(
                         if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
                             let lines: Vec<&str> =
                                 block_dels.iter().map(|&di| h.rows[di].text()).collect();
-                            let joined = join_collapse_lines(&lines, add.text());
+                            let joined = lines.join("\n");
                             let first_num = block_dels
                                 .first()
                                 .and_then(|&di| h.rows[di].old_line_num())
@@ -243,6 +303,42 @@ pub fn pass_assemble_mods(
                 }
                 continue;
             }
+
+            if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
+                let SlicedMultilineDelRuns {
+                    sliced,
+                    anchor_runs,
+                } = slice_multiline_del_runs(&runs, &lines);
+
+                let first_old_text = h.rows[block_dels[0]].text();
+                let anchor_spans = compute_anchor_mod_spans(&anchor_runs);
+
+                let old_line = DelLine::new(first_old_num, first_old_text);
+                let new_line = AddLine::new(add.new_line_num().unwrap(), add.text());
+                let mod_row = Row::Mod {
+                    old_line,
+                    new_line,
+                    spans: anchor_spans,
+                    cached_runs: anchor_runs,
+                    is_anchor: true,
+                };
+                out.push(mod_row);
+
+                let anchor_nl = add.new_line_num().unwrap();
+                for (k, &d_k) in block_dels.iter().enumerate().skip(1) {
+                    let aux_runs = sliced[k].clone();
+                    let aux_spans = compute_aux_del_spans(&aux_runs);
+                    del_spans.insert(d_k, aux_spans);
+                    del_groups.insert(d_k, RowGroup::Aux { anchor: anchor_nl });
+                    del_runs.insert(d_k, aux_runs);
+                    kept_dels.push(d_k);
+                }
+                continue;
+            }
+
+            let mut spans = spans;
+            let mut runs = runs;
 
             let mut next_adds = Vec::new();
             let mut max_scanned = add_ri;
@@ -1350,7 +1446,7 @@ pub fn pass_assemble_mods(
                 is_anchor: anchor_group == Some(RowGroup::Anchor),
             };
             out.push(mod_row);
-        } else if collapse_absorbed_dels.contains(&ri) {
+        } else if in_collapse_blocks.contains(&ri) || del_groups.contains_key(&ri) {
             continue;
         } else {
             kept_dels.push(ri);
@@ -1369,5 +1465,8 @@ pub fn pass_assemble_mods(
         add_spans,
         add_groups,
         add_runs,
+        del_spans,
+        del_groups,
+        del_runs,
     }
 }

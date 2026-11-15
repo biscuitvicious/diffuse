@@ -287,21 +287,20 @@ fn reflow_pairing_first_del() {
         ),
     ]);
     let c = collapse_hunk_rows(&h, None, None, None);
-    assert_eq!(c.len(), 1, "one mod");
+    assert_eq!(c.len(), 3, "1 anchor mod + 2 aux dels");
     let m = &c[0];
     assert_eq!(m.kind(), RowKind::Mod);
-    assert_eq!(
-        m.old_text(),
-        Some("        self.resolved_layers.iter().any(|l| l.path().join(sub_path).is_dir())"),
-        "the collapsed del lines pair into unified old text"
-    );
-    let spans = m.spans().expect("spans");
-    assert_eq!(spans.del, vec![(13, 22)], "the resolved_ strike only");
-    assert_eq!(
-        spans.add,
-        Vec::<(usize, usize)>::new(),
-        "pure deletion mod: resolved_ strike only, method chain is shared context"
-    );
+    assert_eq!(m.old_line(), Some(756));
+    assert_eq!(m.new_line(), Some(912));
+    assert_eq!(m.group(), Some(RowGroup::Anchor));
+
+    assert_eq!(c[1].kind(), RowKind::Del);
+    assert_eq!(c[1].old_line(), Some(757));
+    assert_eq!(c[1].group(), Some(RowGroup::Aux { anchor: 912 }));
+
+    assert_eq!(c[2].kind(), RowKind::Del);
+    assert_eq!(c[2].old_line(), Some(758));
+    assert_eq!(c[2].group(), Some(RowGroup::Aux { anchor: 912 }));
     let runs = crate::merge::merged_runs(m);
     assert_eq!(crate::merge::project_reverse(&runs), m.old_text().unwrap());
     assert_eq!(crate::merge::project_forward(&runs), m.text());
@@ -330,15 +329,21 @@ fn reflow_pairing_first_del() {
         ),
     ]);
     let c2 = collapse_hunk_rows(&h2, None, None, None);
-    assert_eq!(c2.len(), 1, "one mod");
+    assert_eq!(c2.len(), 3, "1 anchor mod + 2 aux dels");
     let m2 = &c2[0];
-    let spans2 = m2.spans().expect("spans");
-    assert_eq!(spans2.del, vec![(22, 31)], "the resolved_ strike");
-    assert_eq!(
-        spans2.add,
-        Vec::<(usize, usize)>::new(),
-        "pure deletion mod: resolved_ strike only, method chain is shared context"
-    );
+    assert_eq!(m2.kind(), RowKind::Mod);
+    assert_eq!(m2.old_line(), Some(745));
+    assert_eq!(m2.new_line(), Some(903));
+    assert_eq!(m2.group(), Some(RowGroup::Anchor));
+
+    assert_eq!(c2[1].kind(), RowKind::Del);
+    assert_eq!(c2[1].old_line(), Some(746));
+    assert_eq!(c2[1].group(), Some(RowGroup::Aux { anchor: 903 }));
+
+    assert_eq!(c2[2].kind(), RowKind::Del);
+    assert_eq!(c2[2].old_line(), Some(747));
+    assert_eq!(c2[2].group(), Some(RowGroup::Aux { anchor: 903 }));
+
     let runs2 = crate::merge::merged_runs(m2);
     assert_eq!(
         crate::merge::project_reverse(&runs2),
@@ -429,8 +434,17 @@ fn del_only_run_folds_into_one_mod() {
         ),
     ]);
     let c = collapse_hunk_rows(&h2, None, None, None);
-    assert_eq!(c.len(), 1, "one mod row");
+    assert_eq!(c.len(), 3, "1 anchor mod + 2 aux dels");
     assert_eq!(c[0].kind(), RowKind::Mod);
+    assert_eq!(c[0].old_line(), Some(745));
+    assert_eq!(c[0].new_line(), Some(903));
+    assert_eq!(c[0].group(), Some(RowGroup::Anchor));
+    assert_eq!(c[1].kind(), RowKind::Del);
+    assert_eq!(c[1].old_line(), Some(746));
+    assert_eq!(c[1].group(), Some(RowGroup::Aux { anchor: 903 }));
+    assert_eq!(c[2].kind(), RowKind::Del);
+    assert_eq!(c[2].old_line(), Some(747));
+    assert_eq!(c[2].group(), Some(RowGroup::Aux { anchor: 903 }));
 }
 
 // Fragment-pair rejection: a one-line `use` split into a 7-line block —
@@ -1722,15 +1736,32 @@ fn test_multiline_to_single_line_collapse_reflow() {
 
     let c = collapse_hunk_rows(&h, None, None, profile);
 
-    // Assert: exactly 1 Mod row, 0 leftover Del rows
-    assert_eq!(c.len(), 1, "Expected 1 collapsed Mod row, got: {:?}", c);
+    // Assert: 1 anchor Mod row + 3 AuxDel rows
+    assert_eq!(
+        c.len(),
+        4,
+        "Expected 1 anchor Mod row + 3 aux dels, got: {:?}",
+        c
+    );
     assert_eq!(c[0].kind(), RowKind::Mod);
     assert_eq!(c[0].old_line(), Some(512));
     assert_eq!(c[0].new_line(), Some(515));
+    assert_eq!(c[0].group(), Some(RowGroup::Anchor));
 
-    // Verify subword runs: crate::syntax::profile:: must be struck out,
-    // profile: and -> bool common
-    let runs = merged_runs(&c[0]);
+    assert_eq!(c[1].kind(), RowKind::Del);
+    assert_eq!(c[1].old_line(), Some(513));
+    assert_eq!(c[1].group(), Some(RowGroup::Aux { anchor: 515 }));
+
+    assert_eq!(c[2].kind(), RowKind::Del);
+    assert_eq!(c[2].old_line(), Some(514));
+    assert_eq!(c[2].group(), Some(RowGroup::Aux { anchor: 515 }));
+
+    assert_eq!(c[3].kind(), RowKind::Del);
+    assert_eq!(c[3].old_line(), Some(515));
+    assert_eq!(c[3].group(), Some(RowGroup::Aux { anchor: 515 }));
+
+    // Verify subword runs: crate::syntax::profile:: must be struck out on line 514
+    let runs = merged_runs(&c[2]);
     let struck: Vec<&str> = runs
         .iter()
         .filter(|r| r.kind == RunKind::Del)
@@ -1740,24 +1771,79 @@ fn test_multiline_to_single_line_collapse_reflow() {
         struck
             .iter()
             .any(|s| s.contains("crate::syntax::profile::")),
-        "Expected crate::syntax::profile:: to be struck out in the Mod row, got struck: {:?}",
+        "Expected crate::syntax::profile:: to be struck out in the aux del row, got struck: {:?}",
         struck
     );
     let common: Vec<&str> = runs
         .iter()
-        .filter(|r| r.kind == RunKind::Ctx)
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::MovedSrc)
         .map(|r| r.text)
         .collect();
     assert!(
         common.iter().any(|s| s.contains("profile: Option<&")),
-        "Expected profile: Option<& to be shared context, got common: {:?}",
+        "Expected profile: Option<& to be shared context/moved text, got common: {:?}",
         common
     );
+    let runs3 = merged_runs(&c[3]);
+    let common3: Vec<&str> = runs3
+        .iter()
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::MovedSrc)
+        .map(|r| r.text)
+        .collect();
     assert!(
-        common.iter().any(|s| s.contains("-> bool {")),
-        "Expected -> bool {{ to be shared context, got common: {:?}",
-        common
+        common3.iter().any(|s| s.contains("-> bool {")),
+        "Expected -> bool {{ to be shared context/moved text on line 515, got common: {:?}",
+        common3
     );
+}
+
+#[test]
+fn test_linenum_u32_lcs_collapse_walk_stepwise() {
+    let patch = include_str!("../../../../tests/golden/linenum-u32/diff.patch");
+    let patch_lines: Vec<&str> = patch.lines().collect();
+    let file_patch = patch_lines[3948..3977].join("\n");
+    let files = diffuse_parse::parse_diff(&file_patch);
+    let hunk = &files[0].hunks[0];
+    let rs = lang_profile("rs");
+    // Call assemble and walk
+    let mut p1 = crate::cluster::pairing::dp_pairing_with_splits(hunk, None, None, rs, &[]);
+    crate::collapse::pass_residual_pairing(hunk, &mut p1, None, None, rs);
+    let paired_dels: rustc_hash::FxHashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: rustc_hash::FxHashMap<usize, usize> =
+        p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
+    let pairing_ctx = super::PairingContext {
+        pair_of: &p1.pair_of,
+        add_of: &add_of,
+        run_of: &p1.run_of,
+        paired_dels: &paired_dels,
+        collapse_blocks: &p1.collapse_blocks,
+        expand_blocks: &p1.expand_blocks,
+    };
+    let p2 = crate::collapse::assemble::pass_assemble_mods(hunk, &pairing_ctx, rs);
+    let p3 = crate::collapse::reflow::pass_filter_reflows(
+        hunk,
+        &p2.out,
+        &p2.kept_dels,
+        &p2.pure_adds,
+        &p2.del_groups,
+        rs,
+    );
+    let res = crate::collapse::walk::pass_sort_ordered_walk(hunk, p2, p3);
+    let mut prev_old = None;
+    for (i, r) in res.iter().enumerate() {
+        if let Some(ol) = r.old_line() {
+            if let Some(prev) = prev_old {
+                assert_eq!(
+                    ol,
+                    prev + 1,
+                    "old_line non-stepwise at row {i}: expected {}, got {}",
+                    prev + 1,
+                    ol
+                );
+            }
+            prev_old = Some(ol);
+        }
+    }
 }
 
 #[test]
@@ -2756,7 +2842,14 @@ fn test_dbc_invariant_1_reflow_cluster_confinement() {
         expand_blocks: &p1.expand_blocks,
     };
     let p2 = pass_assemble_mods(&h, &pairing_ctx, profile);
-    let p3 = pass_filter_reflows(&h, &p2.out, &p2.kept_dels, &p2.pure_adds, profile);
+    let p3 = pass_filter_reflows(
+        &h,
+        &p2.out,
+        &p2.kept_dels,
+        &p2.pure_adds,
+        &p2.del_groups,
+        profile,
+    );
 
     check_reflow_cluster_confinement(&h, &p3).expect("Reflow cluster confinement violated");
 }
@@ -2805,7 +2898,14 @@ fn test_dbc_macro_invariant_1_reflow_cluster_confinement() {
         expand_blocks: &p1.expand_blocks,
     };
     let p2 = pass_assemble_mods(&h, &pairing_ctx, profile);
-    let p3 = pass_filter_reflows(&h, &p2.out, &p2.kept_dels, &p2.pure_adds, profile);
+    let p3 = pass_filter_reflows(
+        &h,
+        &p2.out,
+        &p2.kept_dels,
+        &p2.pure_adds,
+        &p2.del_groups,
+        profile,
+    );
     crate::ensure!(
         check_reflow_cluster_confinement(&h, &p3).is_ok(),
         "{}",
@@ -3198,4 +3298,128 @@ fn test_normalize_identical_mods_skips_block_anchors() {
     let anchors: FxHashSet<u32> = [371].into_iter().collect();
     let out = pass_normalize_identical_mods(&h, res, rs, &anchors);
     assert_eq!(out[0].kind(), RowKind::Mod, "block anchor must stay Mod");
+}
+
+#[test]
+fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
+    let rs = lang_profile("rs");
+    let h = hunk(vec![
+        Row::Del(DelLine::new(10, "fn render(&self) -> String {")),
+        Row::Del(DelLine::new(11, "    return self.name.clone(); }")),
+        Row::Add(AddLine::new(
+            21,
+            "fn render(&self) -> String { return self.name.clone(); }",
+        )),
+    ]);
+    let out = collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(
+        out.len(),
+        2,
+        "Expected exactly 2 rows (anchor Mod + AuxDel), got: {out:?}"
+    );
+    match &out[0] {
+        Row::Mod {
+            old_line,
+            new_line,
+            is_anchor,
+            ..
+        } => {
+            assert_eq!(old_line.num, 10);
+            assert_eq!(old_line.text, "fn render(&self) -> String {");
+            assert_eq!(new_line.num, 21);
+            assert_eq!(
+                new_line.text,
+                "fn render(&self) -> String { return self.name.clone(); }"
+            );
+            assert!(*is_anchor, "Expected is_anchor to be true");
+        }
+        _ => panic!("Expected Row::Mod at index 0, got {:?}", out[0]),
+    }
+    match &out[1] {
+        Row::AuxDel { anchor, line, .. } => {
+            assert_eq!(
+                *anchor, 21,
+                "Expected AuxDel anchor to point to new line 21"
+            );
+            assert_eq!(line.num, 11);
+            assert_eq!(line.text, "    return self.name.clone(); }");
+        }
+        _ => panic!("Expected Row::AuxDel at index 1, got {:?}", out[1]),
+    }
+}
+
+#[test]
+fn test_lcs_mod_hunk_15_stepwise() {
+    let diff = r#"diff --git a/src/lcs/mod.rs b/crates/diffuse-core/src/lcs/mod.rs
+--- a/src/lcs/mod.rs
++++ b/crates/diffuse-core/src/lcs/mod.rs
+@@ -541,18 +836,42 @@
+         matched_chars as f64 / char_len(new_text) as f64
+     } else {
+         0.0
+     };
+-    if !has_anchors && ratio < 0.25 {
+-        return WordSpans {
++    let res = if !has_anchors && ratio < 0.25 {
++        WordSpans {
+             del: vec![(0, char_len(old_text))],
+             add: vec![(0, char_len(new_text))],
+-        };
+-    }
+-    WordSpans {
+-        del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
+-        add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
+-    }
++        }
++    } else {
++        WordSpans {
++            del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
++            add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
++        }
++    };
++
++    crate::ensure!(
++        res.del
++            .iter()
++            .all(|&(start, end)| start <= end && end <= char_len(old_text)),
++        "WordSpans del spans must fall within old_text bounds"
++    );
++    crate::ensure!(
++        res.add
++            .iter()
++            .all(|&(start, end)| start <= end && end <= char_len(new_text)),
++        "WordSpans add spans must fall within new_text bounds"
++    );
++    crate::ensure!(
++        res.del.windows(2).all(|w| w[0].1 <= w[1].0),
++        "WordSpans del spans must be non-overlapping and sorted"
++    );
++    crate::ensure!(
++        res.add.windows(2).all(|w| w[0].1 <= w[1].0),
++        "WordSpans add spans must be non-overlapping and sorted"
++    );
++
++    res
+ }
+"#;
+    let files = crate::parse::parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    let hunk = &files[0].hunks[0];
+    let profile = lang_profile("rs");
+    let c = collapse_hunk_rows(hunk, None, None, profile);
+    let mut prev_old = None;
+    for (i, r) in c.iter().enumerate() {
+        if let Some(ol) = r.old_line() {
+            if let Some(prev) = prev_old {
+                assert_eq!(
+                    ol,
+                    prev + 1,
+                    "old_line non-stepwise at row {i}: expected {}, got {}",
+                    prev + 1,
+                    ol
+                );
+            }
+            prev_old = Some(ol);
+        }
+    }
 }

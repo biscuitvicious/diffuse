@@ -6,7 +6,9 @@ use diffuse_syntax::{prelude::first_word, profile::LangProfile};
 
 use crate::parse::{Hunk, Row};
 
-use super::{ChangeCluster, filter::is_fragment_pair_rejected, survival::FnScopeCache};
+use super::{
+    ChangeCluster, filter::is_fragment_pair_rejected, pair_crosses_any, survival::FnScopeCache,
+};
 
 /// Input bundle for [`verbatim_seeds`] (kept as a struct: nine fields
 /// would trip `clippy::too_many_arguments`, and the call sites —
@@ -166,6 +168,10 @@ pub fn verbatim_seeds(mut input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
             continue;
         }
         if hard.contains(&d.gi) || hard.contains(&a.gi) {
+            continue;
+        }
+        // Candidate pair must not cross existing seeded pairs.
+        if pair_crosses_any(a.gi, d.gi, &seeds) {
             continue;
         }
         // (Moved rows never reach here: the pools above admit only
@@ -431,6 +437,15 @@ fn ngram_block_seeds(input: &mut VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
             seeded_old.contains(&(cand.old_start + k)) || seeded_new.contains(&(cand.new_start + k))
         });
         if overlaps {
+            continue;
+        }
+
+        let cand_crosses = (0..cand.len).any(|k| {
+            let o_gi = old_cands[cand.old_start + k].unwrap().gi;
+            let n_gi = new_cands[cand.new_start + k].unwrap().gi;
+            pair_crosses_any(n_gi, o_gi, &seeds)
+        });
+        if cand_crosses {
             continue;
         }
 

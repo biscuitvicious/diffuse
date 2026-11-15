@@ -23,19 +23,16 @@ pub fn pass_filter_reflows(
     out: &[Row],
     kept_dels: &[usize],
     pure_adds: &[usize],
+    del_groups: &rustc_hash::FxHashMap<usize, crate::parse::RowGroup>,
     profile: Option<&LangProfile>,
 ) -> ReflowFilter {
-    // Del rows render unless a Collapse block member (skipped in
-    // assembly — member text joins the anchor's del_text) or a verbatim
-    // reflow pair below claims them. (Containment-absorbing run members
-    // into a 1-to-1 anchor would drop old lines silently: the anchor's
-    // del_text never displays them. There is deliberately no absorption
-    // step here.)
+    // Del rows render unless a Collapse block member or a verbatim
+    // reflow pair below claims them.
     // Candidate dels that could pair with verbatim standalone adds.
     let candidate_dels: Vec<usize> = kept_dels
         .iter()
         .copied()
-        .filter(|di| !h.rows[*di].is_moved())
+        .filter(|di| !h.rows[*di].is_moved() && !del_groups.contains_key(di))
         .collect();
 
     // Candidate pure adds that are not moved.
@@ -80,8 +77,8 @@ pub fn pass_filter_reflows(
             let (Some(dold), Some(anew)) = (h.rows[di].old_line(), a.new_line()) else {
                 continue;
             };
-            if h.rows[di].text() == a.text() {
-                // Synthesizing a Ctx row requires strict monotonicity against all
+            if h.rows[di].text() == a.text() || h.rows[di].text().trim() == at {
+                // Synthesizing a Ctx or Mod row requires strict monotonicity against all
                 // rows with old and new lines in `out` and prior `reflow_ctx`.
                 let crosses_any = out.iter().chain(reflow_ctx.iter()).any(|m| {
                     if let (Some(m_old), Some(m_new)) = (m.old_line(), m.new_line()) {
@@ -95,24 +92,10 @@ pub fn pass_filter_reflows(
                 }
                 used_dels.insert(di);
                 used_adds.insert(ai);
-                reflow_ctx.push(Row::Ctx(CtxLine::new(dold, anew, a.text().to_string())));
-                break;
-            } else if h.rows[di].text().trim() == at {
-                // Synthesizing a Mod row cannot invert order relative to existing Ctx rows.
-                let crosses_ctx = out.iter().chain(reflow_ctx.iter()).any(|m| {
-                    if matches!(m, Row::Ctx(_))
-                        && let (Some(c_old), Some(c_new)) = (m.old_line(), m.new_line())
-                    {
-                        (c_new < anew && c_old >= dold) || (c_new > anew && c_old <= dold)
-                    } else {
-                        false
-                    }
-                });
-                if crosses_ctx {
-                    continue;
+                if h.rows[di].text() == a.text() {
+                    reflow_ctx.push(Row::Ctx(CtxLine::new(dold, anew, a.text().to_string())));
+                    break;
                 }
-                used_dels.insert(di);
-                used_adds.insert(ai);
                 let (spans, runs) = crate::lcs::word_spans_and_runs_with_profile(
                     h.rows[di].text(),
                     a.text(),
@@ -137,11 +120,13 @@ pub fn pass_filter_reflows(
     }
 
     // 4. Meaningful dels: candidate dels that were NOT converted to Ctx,
-    // plus moved dels (relocations always render).
+    // plus moved dels and aux dels (relocations and aux rows always render).
     let meaningful: Vec<usize> = kept_dels
         .iter()
         .copied()
-        .filter(|di| h.rows[*di].is_moved() || !used_dels.contains(di))
+        .filter(|di| {
+            h.rows[*di].is_moved() || del_groups.contains_key(di) || !used_dels.contains(di)
+        })
         .collect();
 
     // 5. Kept adds: pure_adds that survived (moved adds + adds not converted to

@@ -9,17 +9,24 @@ use crate::{
     parse::{Hunk, Row, RowGroup, Spans},
 };
 
-use super::reflow::ReflowFilter;
+use super::{assemble::AssembledMods, reflow::ReflowFilter};
 
 /// Pass 4: Keyed anchor sorting into the final visual row stream.
 pub fn pass_sort_ordered_walk(
     h: &Hunk,
-    out: Vec<Row>,
+    assembled: AssembledMods,
     reflow: ReflowFilter,
-    add_spans: &FxHashMap<usize, Spans>,
-    add_groups: &FxHashMap<usize, RowGroup>,
-    add_runs: &FxHashMap<usize, Vec<(RunKind, String)>>,
 ) -> Vec<Row> {
+    let AssembledMods {
+        out,
+        add_spans,
+        add_groups,
+        add_runs,
+        del_spans,
+        del_groups,
+        del_runs,
+        ..
+    } = assembled;
     // Stage reflow-synthesized Ctx rows alongside `out` rows before
     // del-anchoring: leftover dels must anchor to synthesized context
     // exactly as they do to hunk context. (Coincidental-context splitting
@@ -37,6 +44,9 @@ pub fn pass_sort_ordered_walk(
 
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
     for &di in &reflow.meaningful_dels {
+        if del_groups.contains_key(&di) {
+            continue;
+        }
         let Some(dold) = h.rows[di].old_line() else {
             continue;
         };
@@ -80,6 +90,26 @@ pub fn pass_sort_ordered_walk(
     }
     for &di in &reflow.meaningful_dels {
         let d = &h.rows[di];
+        if let Some(&RowGroup::Aux { anchor }) = del_groups.get(&di) {
+            let spans = del_spans.get(&di).cloned().unwrap_or_default();
+            let cached_runs = del_runs
+                .get(&di)
+                .cloned()
+                .unwrap_or_else(|| vec![(RunKind::Del, d.text().to_string())]);
+            let row = match d {
+                Row::Del(del_line) => Row::AuxDel {
+                    anchor,
+                    line: del_line.clone(),
+                    spans,
+                    cached_runs,
+                },
+                other => other.clone(),
+            };
+            let key = (anchor, 1.1);
+            keyed.push((row, key));
+            continue;
+        }
+
         let (key, anchor_group) = match anchor_of.get(&di) {
             None => ((0, d.old_line().unwrap_or(0) as f64), None),
             Some(&mi) => {
@@ -160,8 +190,10 @@ pub fn pass_sort_ordered_walk(
         let (num_b, sub_b) = b.1;
         if num_a != num_b {
             num_a.cmp(&num_b)
-        } else {
+        } else if (sub_a - sub_b).abs() > 1e-6 {
             sub_a.partial_cmp(&sub_b).unwrap_or(Ordering::Equal)
+        } else {
+            a.0.old_line().cmp(&b.0.old_line())
         }
     });
 
@@ -202,14 +234,7 @@ mod tests {
             kept_adds: vec![],
             reflow_ctx: vec![Row::Ctx(CtxLine::new(917, 923, "    );"))],
         };
-        let out = pass_sort_ordered_walk(
-            &h,
-            vec![],
-            reflow,
-            &FxHashMap::default(),
-            &FxHashMap::default(),
-            &FxHashMap::default(),
-        );
+        let out = pass_sort_ordered_walk(&h, AssembledMods::default(), reflow);
         let pos = |old: u32| out.iter().position(|r| r.old_line() == Some(old)).unwrap();
         let ctx_pos = out
             .iter()

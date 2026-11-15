@@ -283,8 +283,18 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
 
         // Expand trailing context if needed
         if (h.below_ctx as usize) < budget {
-            let cur_old_end = h.old_start + h.old_count.saturating_sub(1);
-            let cur_new_end = h.new_start + h.new_count.saturating_sub(1);
+            let cur_old_end = h
+                .rows
+                .iter()
+                .rev()
+                .find_map(|r| r.old_line())
+                .unwrap_or_else(|| h.old_start + h.old_count.saturating_sub(1));
+            let cur_new_end = h
+                .rows
+                .iter()
+                .rev()
+                .find_map(|r| r.new_line())
+                .unwrap_or_else(|| h.new_start + h.new_count.saturating_sub(1));
             let old_total = file.old_line_count;
             let new_total = file.new_line_count;
             let avail_old = old_total.saturating_sub(cur_old_end as usize);

@@ -230,6 +230,104 @@ pub(crate) fn slice_multiline_runs(
     }
 }
 
+pub(crate) struct SlicedMultilineDelRuns {
+    pub sliced: Vec<Vec<(RunKind, String)>>,
+    pub anchor_runs: Vec<(RunKind, String)>,
+}
+
+pub(crate) fn slice_multiline_del_runs(
+    full_runs: &[(RunKind, String)],
+    line_texts: &[&str],
+) -> SlicedMultilineDelRuns {
+    let line_count = line_texts.len();
+    let push = |runs: &mut Vec<(RunKind, String)>, kind: RunKind, text: String| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((last_kind, last_text)) = runs.last_mut()
+            && *last_kind == kind
+        {
+            last_text.push_str(&text);
+            return;
+        }
+        runs.push((kind, text));
+    };
+
+    let mut out: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); line_count];
+    let mut anchor_runs: Vec<(RunKind, String)> = Vec::new();
+    let mut current_line = 0usize;
+
+    for (kind, text) in full_runs {
+        match kind {
+            RunKind::Add => {
+                push(&mut anchor_runs, RunKind::Add, text.clone());
+            }
+            RunKind::Del => {
+                let mut lines = text.split('\n');
+                if let Some(first) = lines.next() {
+                    if current_line < line_count {
+                        push(&mut out[current_line], RunKind::Del, first.to_string());
+                    }
+                    if current_line == 0 {
+                        push(&mut anchor_runs, RunKind::Del, first.to_string());
+                    }
+                }
+                for line in lines {
+                    current_line += 1;
+                    if current_line < line_count {
+                        push(&mut out[current_line], RunKind::Del, line.to_string());
+                    }
+                    if current_line == 0 {
+                        push(&mut anchor_runs, RunKind::Del, line.to_string());
+                    }
+                }
+            }
+            RunKind::Ctx => {
+                let mut lines = text.split('\n');
+                if let Some(first) = lines.next() {
+                    let aux_kind = if current_line == 0 {
+                        RunKind::Ctx
+                    } else {
+                        RunKind::MovedSrc
+                    };
+                    let anchor_kind = if current_line == 0 {
+                        RunKind::Ctx
+                    } else {
+                        RunKind::MovedTgt
+                    };
+                    if current_line < line_count {
+                        push(&mut out[current_line], aux_kind, first.to_string());
+                    }
+                    push(&mut anchor_runs, anchor_kind, first.to_string());
+                }
+                for line in lines {
+                    current_line += 1;
+                    let aux_kind = if current_line == 0 {
+                        RunKind::Ctx
+                    } else {
+                        RunKind::MovedSrc
+                    };
+                    let anchor_kind = if current_line == 0 {
+                        RunKind::Ctx
+                    } else {
+                        RunKind::MovedTgt
+                    };
+                    if current_line < line_count {
+                        push(&mut out[current_line], aux_kind, line.to_string());
+                    }
+                    push(&mut anchor_runs, anchor_kind, line.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    SlicedMultilineDelRuns {
+        sliced: out,
+        anchor_runs,
+    }
+}
+
 /// Assemble display runs for an auxiliary reflow addition row:
 /// Non-fill slices of `aux_chars` render as `MovedTgt` (claimed from the donor
 /// line); novel additions (e.g. indentation) render as `Add`; any inter-chunk
@@ -303,67 +401,6 @@ pub(crate) fn build_aux_runs(
         }
     }
     runs
-}
-
-pub(crate) fn default_join_needs_space(last: Option<char>, first: Option<char>) -> bool {
-    let Some(l) = last else {
-        return false;
-    };
-    let Some(f) = first else {
-        return false;
-    };
-
-    // Never space after open delimiters
-    if l == '(' || l == '[' {
-        return false;
-    }
-    // Never space before close delimiters, commas, semicolons, or access dots
-    if f == ')' || f == ']' || f == ',' || f == ';' || f == '.' || f == ':' {
-        return false;
-    }
-    // Never space after access dot
-    if l == '.' {
-        return false;
-    }
-
-    true
-}
-
-pub(crate) fn join_collapse_lines(lines: &[&str], new_text: &str) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    let mut out = lines[0].trim_end().to_string();
-    for line in &lines[1..] {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let last_char = out.chars().last();
-        let first_char = trimmed.chars().next();
-        let prev_tok = out.split_whitespace().last().unwrap_or("");
-        let next_tok = trimmed.split_whitespace().next().unwrap_or("");
-
-        let needs_space = if !prev_tok.is_empty() && !next_tok.is_empty() {
-            let joined_no_space = format!("{}{}", prev_tok, next_tok);
-            let joined_with_space = format!("{} {}", prev_tok, next_tok);
-            if new_text.contains(&joined_no_space) {
-                false
-            } else if new_text.contains(&joined_with_space) {
-                true
-            } else {
-                default_join_needs_space(last_char, first_char)
-            }
-        } else {
-            default_join_needs_space(last_char, first_char)
-        };
-
-        if needs_space {
-            out.push(' ');
-        }
-        out.push_str(trimmed);
-    }
-    out
 }
 
 /// Normalize char ranges: sorted, merged, empties dropped.

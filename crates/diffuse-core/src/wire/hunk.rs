@@ -165,18 +165,33 @@ impl OutputHunk {
         profile: Option<&LangProfile>,
     ) -> Result<(), String> {
         let mut last_new = None;
+        let mut last_old = None;
 
         for (row_idx, r) in self.rows.iter().enumerate() {
-            // New line number monotonicity
+            // New line number monotonicity (strict stepwise unbroken sequence)
             if let Some(nl) = r.new_line {
                 if let Some(prev) = last_new
-                    && nl <= prev
+                    && nl != prev + 1
                 {
                     return Err(format!(
-                        "Hunk row {row_idx}: new_line non-monotonic: {nl} <= {prev}"
+                        "Hunk row {row_idx}: new_line non-stepwise: expected {}, got {nl}",
+                        prev + 1
                     ));
                 }
                 last_new = Some(nl);
+            }
+
+            // Old line number monotonicity (strict stepwise unbroken sequence)
+            if let Some(ol) = r.old_line {
+                if let Some(prev) = last_old
+                    && ol != prev + 1
+                {
+                    return Err(format!(
+                        "Hunk row {row_idx}: old_line non-stepwise: expected {}, got {ol}",
+                        prev + 1
+                    ));
+                }
+                last_old = Some(ol);
             }
 
             // Line number invariants per row kind
@@ -196,7 +211,16 @@ impl OutputHunk {
                             r.new_line, r.old_line
                         ));
                     }
-                    if r.runs.iter().any(|run| run.kind != RunKind::Del) {
+                    if r.group.is_some() {
+                        if r.runs
+                            .iter()
+                            .any(|run| run.kind != RunKind::Del && run.kind != RunKind::MovedSrc)
+                        {
+                            return Err(format!(
+                                "Hunk row {row_idx}: AuxDel row has non-Del/non-MovedSrc runs"
+                            ));
+                        }
+                    } else if r.runs.iter().any(|run| run.kind != RunKind::Del) {
                         return Err(format!("Hunk row {row_idx}: Del row has non-Del runs"));
                     }
                 }
@@ -281,7 +305,7 @@ impl OutputHunk {
                 }
             }
             // Reverse: non-add-like runs concatenate to row.old_text()
-            if r.kind == RowKind::Mod {
+            if r.kind == RowKind::Mod || (r.kind == RowKind::Del && r.is_aux()) {
                 let rev: String = r
                     .runs
                     .iter()
@@ -306,39 +330,76 @@ impl OutputHunk {
     fn validate_reflow_groups(&self, profile: Option<&LangProfile>) -> Result<(), String> {
         let strip_ws = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
 
-        let mut anchors = rustc_hash::FxHashMap::default();
+        let anchor_indices: Vec<usize> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.group == Some(RowGroup::Anchor))
+            .map(|(i, _)| i)
+            .collect();
+
         for (i, r) in self.rows.iter().enumerate() {
-            if r.group == Some(RowGroup::Anchor) {
-                let anchor_num = r.new_line.or(r.old_line).unwrap_or(0);
-                anchors.insert(anchor_num, i);
+            if let Some(RowGroup::Aux { anchor }) = r.group {
+                let has_anchor = anchor_indices
+                    .iter()
+                    .any(|&ai| self.rows[ai].new_line == Some(anchor));
+                if !has_anchor {
+                    return Err(format!(
+                        "Row {i} is Aux pointing to nonexistent anchor line {anchor}"
+                    ));
+                }
             }
         }
 
-        for (i, r) in self.rows.iter().enumerate() {
-            if let Some(RowGroup::Aux { anchor }) = r.group
-                && !anchors.contains_key(&anchor)
-            {
-                return Err(format!(
-                    "Row {i} is Aux pointing to nonexistent anchor line {anchor}"
-                ));
+        // Reflow Group Atomicity: Anchor row and all companion aux rows
+        // must form an unbroken contiguous slice in visual row order.
+        for &anchor_idx in &anchor_indices {
+            let anchor_row = &self.rows[anchor_idx];
+            let anchor_nl = anchor_row.new_line;
+            let anchor_ol = anchor_row.old_line;
+
+            let mut group_indices: Vec<usize> = vec![anchor_idx];
+            for (i, r) in self.rows.iter().enumerate() {
+                if i == anchor_idx {
+                    continue;
+                }
+                if let Some(RowGroup::Aux { anchor }) = r.group
+                    && Some(anchor) == anchor_nl
+                {
+                    group_indices.push(i);
+                }
+            }
+
+            if group_indices.len() > 1 {
+                group_indices.sort_unstable();
+                for window in group_indices.windows(2) {
+                    if window[1] != window[0] + 1 {
+                        let anchor_ident = anchor_nl.or(anchor_ol).unwrap_or(0);
+                        return Err(format!(
+                            "Reflow atomicity violation: Reflow group for anchor line {anchor_ident} is interrupted at row indices {} and {}",
+                            window[0], window[1]
+                        ));
+                    }
+                }
             }
         }
 
-        for (&anchor_num, &anchor_idx) in &anchors {
+        for &anchor_idx in &anchor_indices {
             let anchor_row = &self.rows[anchor_idx];
             if anchor_row.old_line.is_none() {
                 continue;
             }
+            let anchor_nl = anchor_row.new_line;
+            let anchor_ol = anchor_row.old_line;
+            let anchor_num = anchor_nl.or(anchor_ol).unwrap_or(0);
 
-            let mut group_rows: Vec<&OutputRow> = Vec::new();
-            for r in &self.rows {
-                if r.group == Some(RowGroup::Anchor) {
-                    let num = r.new_line.or(r.old_line).unwrap_or(0);
-                    if num == anchor_num {
-                        group_rows.push(r);
-                    }
-                } else if let Some(RowGroup::Aux { anchor }) = r.group
-                    && anchor == anchor_num
+            let mut group_rows: Vec<&OutputRow> = vec![anchor_row];
+            for (i, r) in self.rows.iter().enumerate() {
+                if i == anchor_idx {
+                    continue;
+                }
+                if let Some(RowGroup::Aux { anchor }) = r.group
+                    && Some(anchor) == anchor_nl
                 {
                     group_rows.push(r);
                 }
@@ -348,9 +409,17 @@ impl OutputHunk {
                 .iter()
                 .filter(|r| r.kind == RowKind::Add)
                 .collect();
+            let aux_dels: Vec<&&OutputRow> = group_rows
+                .iter()
+                .filter(|r| r.kind == RowKind::Del)
+                .collect();
             let has_aux_dels = group_rows.iter().any(|r| {
                 r.kind == RowKind::Del
                     || (r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Src))
+            });
+            let has_aux_adds = group_rows.iter().any(|r| {
+                r.kind == RowKind::Add
+                    || (r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Tgt))
             });
 
             if !aux_adds.is_empty() && !has_aux_dels {
@@ -433,6 +502,48 @@ impl OutputHunk {
                             return Err(format!("Aux row line {nl} <= previous aux line {prev}"));
                         }
                         last_aux_line = Some(nl);
+                    }
+                }
+            } else if !aux_dels.is_empty() && !has_aux_adds {
+                let anchor_moved_tgt: String = anchor_row
+                    .runs
+                    .iter()
+                    .filter(|run| run.kind == RunKind::MovedTgt)
+                    .map(|run| run.text.as_ref())
+                    .collect();
+                let aux_moved_src: String = aux_dels
+                    .iter()
+                    .flat_map(|aux| &aux.runs)
+                    .filter(|run| run.kind == RunKind::MovedSrc)
+                    .map(|run| run.text.as_ref())
+                    .collect();
+
+                let mut s1: Vec<char> = anchor_moved_tgt
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let mut s2: Vec<char> = aux_moved_src
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                s1.sort_unstable();
+                s2.sort_unstable();
+                if s1 != s2 {
+                    return Err(format!(
+                        "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedTgt chars: {s1:?}\n  aux MovedSrc chars: {s2:?}"
+                    ));
+                }
+
+                // Suffix aux del line numbers strictly ascending
+                let mut last_aux_line = None;
+                for aux in &aux_dels {
+                    if let Some(ol) = aux.old_line {
+                        if let Some(prev) = last_aux_line
+                            && ol <= prev
+                        {
+                            return Err(format!("Aux row line {ol} <= previous aux line {prev}"));
+                        }
+                        last_aux_line = Some(ol);
                     }
                 }
             }

@@ -1,7 +1,7 @@
 //! Contract postcondition invariants and structural integrity assertions for
 //! collapsed hunks.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use diffuse_syntax::profile::LangProfile;
 
@@ -24,29 +24,29 @@ pub(crate) fn assert_collapsed_reflow_invariants(
 ) -> Result<(), String> {
     let strip_ws = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
 
-    let mut anchors: FxHashMap<u32, usize> = FxHashMap::default();
-    for (i, r) in rows.iter().enumerate() {
-        if r.group() == Some(RowGroup::Anchor) {
-            let anchor_num = r.new_line().or_else(|| r.old_line()).unwrap_or(0);
-            anchors.insert(anchor_num, i);
-        }
-    }
+    let anchor_indices: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.group() == Some(RowGroup::Anchor))
+        .map(|(i, _)| i)
+        .collect();
 
-    for (&anchor_num, &anchor_idx) in &anchors {
+    for &anchor_idx in &anchor_indices {
         let anchor_row = &rows[anchor_idx];
         if anchor_row.old_text().is_none() {
             continue;
         }
+        let anchor_nl = anchor_row.new_line();
+        let anchor_ol = anchor_row.old_line();
+        let anchor_num = anchor_nl.or(anchor_ol).unwrap_or(0);
 
-        let mut group_rows: Vec<&Row> = Vec::new();
-        for r in rows {
-            if r.group() == Some(RowGroup::Anchor) {
-                let num = r.new_line().or_else(|| r.old_line()).unwrap_or(0);
-                if num == anchor_num {
-                    group_rows.push(r);
-                }
-            } else if let Some(RowGroup::Aux { anchor }) = r.group()
-                && anchor == anchor_num
+        let mut group_rows: Vec<&Row> = vec![anchor_row];
+        for (i, r) in rows.iter().enumerate() {
+            if i == anchor_idx {
+                continue;
+            }
+            if let Some(RowGroup::Aux { anchor }) = r.group()
+                && Some(anchor) == anchor_nl
             {
                 group_rows.push(r);
             }
@@ -56,9 +56,16 @@ pub(crate) fn assert_collapsed_reflow_invariants(
             .iter()
             .filter(|r| matches!(r, Row::AuxAdd { .. }))
             .collect();
+        let aux_dels: Vec<&&Row> = group_rows
+            .iter()
+            .filter(|r| matches!(r, Row::AuxDel { .. }))
+            .collect();
         let has_aux_dels = group_rows
             .iter()
             .any(|r| matches!(r, Row::AuxDel { .. } | Row::MovSrc { .. }));
+        let has_aux_adds = group_rows
+            .iter()
+            .any(|r| matches!(r, Row::AuxAdd { .. } | Row::MovTgt { .. }));
 
         if !aux_adds.is_empty() && !has_aux_dels {
             let is_import = profile.is_some_and(|p| {
@@ -148,30 +155,76 @@ pub(crate) fn assert_collapsed_reflow_invariants(
                     last_aux_line = Some(nl);
                 }
             }
+        } else if !aux_dels.is_empty() && !has_aux_adds {
+            let anchor_moved_tgt: String = merged_runs(anchor_row)
+                .into_iter()
+                .filter(|run| run.kind == RunKind::MovedTgt)
+                .map(|run| run.text)
+                .collect();
+            let aux_moved_src: String = aux_dels
+                .iter()
+                .flat_map(|aux| merged_runs(aux))
+                .filter(|run| run.kind == RunKind::MovedSrc)
+                .map(|run| run.text)
+                .collect();
+            let mut s1: Vec<char> = anchor_moved_tgt
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let mut s2: Vec<char> = aux_moved_src
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            s1.sort_unstable();
+            s2.sort_unstable();
+            if s1 != s2 {
+                return Err(format!(
+                    "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedTgt chars: {s1:?}\n  aux MovedSrc chars: {s2:?}"
+                ));
+            }
+
+            // Suffix aux del line numbers strictly ascending
+            let mut last_aux_line = None;
+            for aux in &aux_dels {
+                if let Some(ol) = aux.old_line() {
+                    if let Some(prev) = last_aux_line
+                        && ol <= prev
+                    {
+                        return Err(format!("Aux del line {ol} <= previous aux del line {prev}"));
+                    }
+                    last_aux_line = Some(ol);
+                }
+            }
         }
     }
 
     // 4. Reflow Group Atomicity: Anchor row and all its companion aux additions
-    // (both prefix and suffix) must form an unbroken contiguous slice in visual row
-    // order.
-    for (&anchor_num, &anchor_idx) in &anchors {
-        let mut group_indices: Vec<usize> = rows
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| {
-                matches!(r.group(), Some(RowGroup::Aux { anchor }) if anchor == anchor_num)
-                    && matches!(r, Row::AuxAdd { .. } | Row::MovTgt { .. })
-            })
-            .map(|(i, _)| i)
-            .collect();
+    // (both prefix and suffix) and aux deletions must form an unbroken contiguous
+    // slice in visual row order.
+    for &anchor_idx in &anchor_indices {
+        let anchor_row = &rows[anchor_idx];
+        let anchor_nl = anchor_row.new_line();
+        let anchor_ol = anchor_row.old_line();
 
-        if !group_indices.is_empty() {
-            group_indices.push(anchor_idx);
+        let mut group_indices: Vec<usize> = vec![anchor_idx];
+        for (i, r) in rows.iter().enumerate() {
+            if i == anchor_idx {
+                continue;
+            }
+            if let Some(RowGroup::Aux { anchor }) = r.group()
+                && Some(anchor) == anchor_nl
+            {
+                group_indices.push(i);
+            }
+        }
+
+        if group_indices.len() > 1 {
             group_indices.sort_unstable();
             for window in group_indices.windows(2) {
                 if window[1] != window[0] + 1 {
+                    let anchor_ident = anchor_nl.or(anchor_ol).unwrap_or(0);
                     return Err(format!(
-                        "Reflow atomicity violation: Reflow group for anchor line {anchor_num} is interrupted at row indices {} and {}",
+                        "Reflow atomicity violation: Reflow group for anchor line {anchor_ident} is interrupted at row indices {} and {}",
                         window[0], window[1]
                     ));
                 }
@@ -181,13 +234,16 @@ pub(crate) fn assert_collapsed_reflow_invariants(
 
     // Verify no orphan aux rows
     for (i, r) in rows.iter().enumerate() {
-        if let Some(RowGroup::Aux { anchor }) = r.group()
-            && !anchors.contains_key(&anchor)
-        {
-            return Err(format!(
-                "Orphan aux row {i} (line {:?}) pointing to non-existent anchor {anchor}",
-                r.new_line().or_else(|| r.old_line())
-            ));
+        if let Some(RowGroup::Aux { anchor }) = r.group() {
+            let has_anchor = anchor_indices
+                .iter()
+                .any(|&ai| rows[ai].new_line() == Some(anchor));
+            if !has_anchor {
+                return Err(format!(
+                    "Orphan aux row {i} (line {:?}) pointing to non-existent anchor {anchor}",
+                    r.new_line().or_else(|| r.old_line())
+                ));
+            }
         }
     }
     Ok(())

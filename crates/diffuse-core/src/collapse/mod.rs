@@ -147,7 +147,14 @@ pub fn collapse_hunk_rows(
     );
 
     // Pass 3: Filter verbatim reflow dels and adds
-    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, profile);
+    let p3 = pass_filter_reflows(
+        h,
+        &p2.out,
+        &p2.kept_dels,
+        &p2.pure_adds,
+        &p2.del_groups,
+        profile,
+    );
     let t4 = Instant::now();
     T_COLLAPSE[3].fetch_add(
         t4.duration_since(t3).as_micros() as u64,
@@ -155,7 +162,7 @@ pub fn collapse_hunk_rows(
     );
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    let res = pass_sort_ordered_walk(h, p2.out, p3, &p2.add_spans, &p2.add_groups, &p2.add_runs);
+    let res = pass_sort_ordered_walk(h, p2, p3);
     // Pass 5: Normalize no-visible-change Mod rows back to Ctx, keeping
     // each conversion only when the converted stream still satisfies
     // every collapsed-row invariant (crossed pairs stay Mod).

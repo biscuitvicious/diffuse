@@ -43,6 +43,25 @@ use legacy::legacy_index_maps;
 pub use seed::{VerbatimSeedInput, verbatim_seeds};
 pub use survival::{DelGuards, FnScopeCache, classify_dels};
 
+/// Returns true if candidate pair `(add, del)` crosses an existing pair
+/// `(ex_add, ex_del)`. Out-of-order pairings invert line monotonicity and are
+/// rejected.
+#[inline]
+pub(crate) fn pair_crosses(add: usize, del: usize, ex_add: usize, ex_del: usize) -> bool {
+    (add < ex_add && del > ex_del) || (add > ex_add && del < ex_del)
+}
+
+/// Returns true if candidate pair `(add, del)` crosses any pair in `existing`.
+#[inline]
+pub(crate) fn pair_crosses_any<'a, I>(add: usize, del: usize, existing: I) -> bool
+where
+    I: IntoIterator<Item = (&'a usize, &'a usize)>,
+{
+    existing
+        .into_iter()
+        .any(|(&ex_a, &ex_d)| pair_crosses(add, del, ex_a, ex_d))
+}
+
 /// DP pairing: partition the hunk's change runs into clusters, solve each
 /// with the DP, and convert the transitions into the legacy `pair_of` map
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
@@ -145,9 +164,11 @@ pub fn dp_pairing_with_splits(
             fn_cache: &mut fn_cache,
             hard: &guards.hard,
         }) {
-            pair_of.insert(ga, gd);
-            seeded_dels.insert(gd);
-            seeded_adds.insert(ga);
+            if !pair_crosses_any(ga, gd, &pair_of) {
+                pair_of.insert(ga, gd);
+                seeded_dels.insert(gd);
+                seeded_adds.insert(ga);
+            }
         }
     }
 
@@ -215,6 +236,7 @@ pub fn dp_pairing_with_splits(
                             // mapping preserved.)
                             && !seeded_dels.contains(&gd)
                             && !pair_of.contains_key(&ga)
+                            && !pair_crosses_any(ga, gd, &pair_of)
                             && !is_fragment_pair_rejected(
                                 gd,
                                 ga,
@@ -237,6 +259,7 @@ pub fn dp_pairing_with_splits(
                             && !h.rows[ga].is_moved()
                             && !pair_of.contains_key(&ga)
                             && !seeded_dels.contains(&gd)
+                            && !pair_crosses_any(ga, gd, &pair_of)
                             && !is_fragment_pair_rejected(
                                 gd,
                                 ga,
@@ -280,6 +303,7 @@ pub fn dp_pairing_with_splits(
                             && !h.rows[ga].is_moved()
                             && !pair_of.contains_key(&ga)
                             && !seeded_dels.contains(&gd)
+                            && !pair_crosses_any(ga, gd, &pair_of)
                             && !is_fragment_pair_rejected(
                                 gd,
                                 ga,
@@ -309,6 +333,7 @@ pub fn dp_pairing_with_splits(
                             // Expand arm): fall back instead of forming.
                             let dels_clean = block_dels.iter().all(|d| !seeded_dels.contains(d));
                             if all_valid && block_dels.len() == *k && dels_clean {
+                                pair_of.insert(ga, block_dels[0]);
                                 collapse_blocks.insert(ga, block_dels);
                             }
                         }

@@ -44,7 +44,7 @@ use diffuse::{
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
         parse::{Row, RowGroup, RowKind},
         pipeline::{PipelineOptions, process_single_diff_file},
-        wire::{MovSide, OutputFile, PipelineOutput},
+        wire::{MovSide, OutputFile, OutputRow, PipelineOutput},
     },
     render::{
         DiffuseTheme, default_theme, encode_sgr, render_pipeline_output, render_raw_pipeline_output,
@@ -455,7 +455,6 @@ fn assert_diff_invariants(
             .get(path.as_str())
             .or_else(|| new_snap.get(old_path.as_str()))
             .map(|c| c.lines().collect());
-        let strip_ws = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
         // Record an old-side line, firing on contradictory duplicates
         // (same number, different text — overlapping hunks may repeat a
         // row, but never with different content).
@@ -495,79 +494,8 @@ fn assert_diff_invariants(
                         }
                     }
                     RowKind::Mod => {
-                        // A Collapse anchor's old_text spans its whole
-                        // block (possibly reflow-joined): match it against
-                        // the snapshot window starting at its first line,
-                        // whitespace-insensitively (joins insert spaces).
                         if let Some(n) = r.old_line {
-                            let ot = r.old_text();
-                            // Window source: snapshot lines when present,
-                            // else the patch's own del lines (renamed files
-                            // ship only new content). Either way the match
-                            // is whitespace-insensitive: Collapse joins
-                            // insert spaces.
-                            let src: Vec<String> = match &old_lines {
-                                Some(snap) => {
-                                    let mut v = Vec::new();
-                                    let mut m = n;
-                                    while v.len() <= 64 {
-                                        match snap.get(m as usize - 1) {
-                                            Some(l) => v.push(l.to_string()),
-                                            None => break,
-                                        }
-                                        m += 1;
-                                    }
-                                    v
-                                }
-                                None => req_old
-                                    .iter()
-                                    .skip_while(|(k, _)| *k != n)
-                                    .map(|(_, t)| t.clone())
-                                    .collect(),
-                            };
-                            let want = strip_ws(&ot);
-                            // How many leading source lines the
-                            // old_text covers: smallest k with equal
-                            // stripped content.
-                            let mut acc = String::new();
-                            let mut take = 0usize;
-                            for l in &src {
-                                acc.extend(l.chars().filter(|c| !c.is_whitespace()));
-                                take += 1;
-                                if acc == want {
-                                    break;
-                                }
-                                if acc.len() > want.len() || take > 64 {
-                                    take = usize::MAX;
-                                    break;
-                                }
-                            }
-                            if take == usize::MAX || acc != want {
-                                panic!(
-                                    "[{corpus}] {path} (file {fi}): mod old line {n} old_text {ot:?} matches no source window"
-                                );
-                            }
-                            // Mark covered numbers: snapshot positions when
-                            // available, else the patch's own del numbers.
-                            if old_lines.is_some() {
-                                for k in n..n + take as u32 {
-                                    if let Some(snap) = &old_lines {
-                                        record_old(k, snap[(k as usize) - 1].to_string());
-                                    }
-                                }
-                            } else {
-                                let mut marked = 0;
-                                for (k, t) in req_old.iter() {
-                                    if *k < n {
-                                        continue;
-                                    }
-                                    if marked >= take {
-                                        break;
-                                    }
-                                    record_old(*k, t.clone());
-                                    marked += 1;
-                                }
-                            }
+                            record_old(n, r.old_text());
                         }
                         if let Some(n) = r.new_line {
                             record_new(n, r.new_text());
@@ -603,12 +531,11 @@ fn assert_diff_invariants(
                 "[{corpus}] {path} (file {fi}): new line {n} never renders"
             );
         }
-        // Snapshot equality for single-line rows (joined Mod blocks are
-        // covered by the window match above).
+        // Snapshot equality for single-line rows.
         for h in &of.hunks {
             for r in &h.rows {
                 if let Some(n) = r.old_line
-                    && matches!(r.kind, RowKind::Ctx | RowKind::Del)
+                    && matches!(r.kind, RowKind::Ctx | RowKind::Del | RowKind::Mod)
                     && let Some(snap) = &old_lines
                     && let Some(exp) = snap.get(n as usize - 1)
                     && r.old_text() != *exp
@@ -619,7 +546,7 @@ fn assert_diff_invariants(
                     );
                 }
                 if let Some(n) = r.new_line
-                    && matches!(r.kind, RowKind::Ctx | RowKind::Add)
+                    && matches!(r.kind, RowKind::Ctx | RowKind::Add | RowKind::Mod)
                     && let Some(snap) = &new_lines
                     && let Some(exp) = snap.get(n as usize - 1)
                     && r.new_text() != *exp
@@ -628,6 +555,86 @@ fn assert_diff_invariants(
                         "[{corpus}] {path} (file {fi}): new line {n} renders as {:?}, snapshot has {exp:?}",
                         r.new_text()
                     );
+                }
+            }
+        }
+
+        // Apply oracle: verify reconstructed hunks apply cleanly to the old snapshot.
+        if let Some(snap) = &old_lines {
+            let snap_vec: Vec<String> = snap.iter().map(|s| s.to_string()).collect();
+            let reconstructed_hunks: Vec<_> = of.hunks.iter().map(|h| h.reconstruct()).collect();
+            let applied = diffuse::core::apply::apply_hunk_rows(&reconstructed_hunks, &snap_vec);
+            if let Some(new_s) = &new_lines {
+                let expected_new: Vec<String> = new_s.iter().map(|s| s.to_string()).collect();
+                assert_eq!(
+                    applied, expected_new,
+                    "[{corpus}] {path} (file {fi}): apply_hunk_rows result does not match new snapshot"
+                );
+            }
+        }
+
+        // Mod group involution and dual reversal verification
+        for (hi, oh) in of.hunks.iter().enumerate() {
+            let mut i = 0;
+            while i < oh.rows.len() {
+                let r = &oh.rows[i];
+                if r.group == Some(RowGroup::Anchor) {
+                    let anchor_nl = r.new_line;
+                    let anchor_ol = r.old_line;
+                    let mut group = vec![r.clone()];
+                    let mut j = i + 1;
+                    while j < oh.rows.len() {
+                        if let Some(RowGroup::Aux { anchor }) = oh.rows[j].group
+                            && (Some(anchor) == anchor_nl || Some(anchor) == anchor_ol)
+                        {
+                            group.push(oh.rows[j].clone());
+                            j += 1;
+                            continue;
+                        }
+                        break;
+                    }
+
+                    for row in &group {
+                        assert_eq!(
+                            row.clone().reverse().reverse(),
+                            *row,
+                            "[{corpus}] {path} hunk {hi}: row involution failed: {row:?}"
+                        );
+                    }
+
+                    let reversed_group: Vec<OutputRow> =
+                        group.iter().cloned().map(|row| row.reverse()).collect();
+                    let double_reversed: Vec<OutputRow> = reversed_group
+                        .iter()
+                        .cloned()
+                        .map(|row| row.reverse())
+                        .collect();
+                    assert_eq!(
+                        double_reversed, group,
+                        "[{corpus}] {path} hunk {hi}: group involution failed"
+                    );
+
+                    let is_expansion = group.iter().any(|r| r.kind == RowKind::Add && r.is_aux());
+                    let is_collapse = group.iter().any(|r| r.kind == RowKind::Del && r.is_aux());
+                    if is_expansion {
+                        assert!(
+                            reversed_group
+                                .iter()
+                                .any(|r| r.kind == RowKind::Del && r.is_aux()),
+                            "[{corpus}] {path} hunk {hi}: reversed expansion must be a collapse"
+                        );
+                    } else if is_collapse {
+                        assert!(
+                            reversed_group
+                                .iter()
+                                .any(|r| r.kind == RowKind::Add && r.is_aux()),
+                            "[{corpus}] {path} hunk {hi}: reversed collapse must be an expansion"
+                        );
+                    }
+
+                    i = j;
+                } else {
+                    i += 1;
                 }
             }
         }
@@ -745,6 +752,13 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                 .iter()
                 .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
                 .map(|r| r.old_text())
+                .filter(|t| !t.is_empty())
+                .collect();
+            let anchor_texts: Vec<String> = h
+                .rows
+                .iter()
+                .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
+                .map(|r| r.text())
                 .filter(|t| !t.is_empty())
                 .collect();
             for r in &h.rows {
@@ -915,7 +929,10 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                             .text
                             .split(|c: char| !c.is_alphanumeric())
                             .filter(|t| !t.is_empty())
-                            .filter(|t| !aux_texts.iter().any(|a| a.contains(t)))
+                            .filter(|t| {
+                                !aux_texts.iter().any(|a| a.contains(t))
+                                    && !anchor_texts.iter().any(|a| a.contains(t))
+                            })
                             .collect();
                         check!(
                             missing.is_empty(),
@@ -927,13 +944,16 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                         );
                     }
                     // Mirror: moved-in target tokens must come from a
-                    // same-hunk anchor's old text.
+                    // same-hunk anchor's old text (expansion) or aux old text (collapse).
                     if run.kind == RunKind::MovedTgt && !run.text.is_empty() {
                         let missing: Vec<&str> = run
                             .text
                             .split(|c: char| !c.is_alphanumeric())
                             .filter(|t| !t.is_empty())
-                            .filter(|t| !anchor_dels.iter().any(|a| a.contains(t)))
+                            .filter(|t| {
+                                !anchor_dels.iter().any(|a| a.contains(t))
+                                    && !aux_texts.iter().any(|a| a.contains(t))
+                            })
                             .collect();
                         check!(
                             missing.is_empty(),
@@ -2316,6 +2336,88 @@ corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 7);
 corpus_tests!(viewport_scroll_boundaries, "viewport-scroll-boundaries", 6);
 corpus_tests!(container_compatibility, "container-compatibility", 8);
 corpus_tests!(diffcoord_anchoring, "diffcoord-anchoring", 38);
+
+#[test]
+fn test_scrollbar_grab_drag_dispatch_hunk_2_not_collapsed() {
+    if !is_golden_initialized() {
+        return;
+    }
+    let fixture = load_fixture("scrollbar-grab-drag");
+    let path = "crates/diffuse-tui/src/app/dispatch.rs";
+    let old_str = fixture.old_content.get(path).expect("old content present");
+    let old_vec: Vec<String> = old_str.split('\n').map(String::from).collect();
+
+    let output = diffuse::core::pipeline::run_pipeline_arc(
+        Arc::clone(&fixture.diff),
+        Some(fixture.new_content.clone()),
+        Some(fixture.old_content.clone()),
+        diffuse::core::pipeline::PipelineOptions::default(),
+    );
+
+    let file = output
+        .files
+        .iter()
+        .find(|f| f.path == path)
+        .expect("dispatch.rs in output");
+
+    let hunk2 = &file.hunks[1];
+
+    // 1. None of lines 393-395 must be merged into a compound Mod row with line
+    //    380.
+    let mod_rows_in_block: Vec<_> = hunk2
+        .rows
+        .iter()
+        .filter(|r| {
+            r.kind == RowKind::Mod
+                && (r.old_line == Some(393)
+                    || r.old_line == Some(394)
+                    || r.old_line == Some(395)
+                    || r.new_line == Some(380))
+        })
+        .collect();
+    assert!(
+        mod_rows_in_block.is_empty(),
+        "Expected no spurious Mod pairing between deleted tracing::debug! block and self.on_scrollbar_drag, but found: {mod_rows_in_block:?}"
+    );
+
+    // 2. Old lines 393, 394, 395 must all be present as distinct Del rows.
+    let r393 = hunk2
+        .rows
+        .iter()
+        .find(|r| r.old_line == Some(393))
+        .expect("old line 393 must exist");
+    assert_eq!(r393.kind, RowKind::Del);
+    assert_eq!(r393.old_text().trim(), "prev_scroll = self.scroll,");
+
+    let r394 = hunk2
+        .rows
+        .iter()
+        .find(|r| r.old_line == Some(394))
+        .expect("old line 394 must not be swallowed into 393");
+    assert_eq!(r394.kind, RowKind::Del);
+    assert_eq!(r394.old_text().trim(), "\"scrollbar drag\"");
+
+    let r395 = hunk2
+        .rows
+        .iter()
+        .find(|r| r.old_line == Some(395))
+        .expect("old line 395 must not be swallowed into 393");
+    assert_eq!(r395.kind, RowKind::Del);
+    assert_eq!(r395.old_text().trim(), ");");
+
+    // 3. New line 380 must be present as a pure Add row.
+    let r380 = hunk2
+        .rows
+        .iter()
+        .find(|r| r.new_line == Some(380))
+        .expect("new line 380 must exist");
+    assert_eq!(r380.kind, RowKind::Add);
+    assert_eq!(r380.new_text().trim(), "self.on_scrollbar_drag(row);");
+
+    // 4. Hunk 2 must apply cleanly to the old content.
+    let reconstructed_hunk = hunk2.reconstruct();
+    let _applied = diffuse::core::apply::apply_hunk_rows(&[reconstructed_hunk], &old_vec);
+}
 
 #[test]
 fn hydration_tempdir_removed_on_drop() {
