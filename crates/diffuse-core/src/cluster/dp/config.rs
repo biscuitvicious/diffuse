@@ -41,6 +41,22 @@ pub const MIN_RATIO_CHAR_SCALE: f64 = 0.20;
 
 pub const DEFAULT_MIN_CONTAINMENT_LEN: usize = 8;
 
+/// Minimum character count required for reflow evidence when absorbing
+/// auxiliary lines into an expansion or collapse group (6 characters).
+pub const MIN_REFLOW_EVIDENCE_CHARS: usize = 6;
+
+/// Minimum bidirectional character LCS ratio required for reflow evidence
+/// when absorbing auxiliary lines (0.60).
+pub const MIN_REFLOW_EVIDENCE_RATIO: f64 = 0.60;
+
+/// Maximum lookahead / lookbehind distance when scanning for reflow
+/// continuation additions or deletions (4 rows).
+pub const MAX_REFLOW_SCAN_DISTANCE: usize = 4;
+
+/// Maximum offset from the start of the struck prefix allowed for the first
+/// matching character of an upward reflow candidate (2 characters).
+pub const MAX_REFLOW_PREFIX_OFFSET: usize = 2;
+
 /// Default maximum cluster cell budget allowed for DP pairing before falling
 /// back to wholesale deletion/addition.
 pub const DEFAULT_CLUSTER_BUDGET: usize = 10_000_000;

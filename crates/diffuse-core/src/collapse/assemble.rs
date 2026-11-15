@@ -2,11 +2,16 @@
 //! reflow suppression (Pass 2).
 
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
+use diffuse_algo::hunt_szymanski::HuntSzymanskiLcs;
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
+    cluster::dp::{
+        MAX_REFLOW_PREFIX_OFFSET, MAX_REFLOW_SCAN_DISTANCE, MIN_REFLOW_EVIDENCE_CHARS,
+        MIN_REFLOW_EVIDENCE_RATIO,
+    },
     lcs::{word_spans_and_runs_with_profile, word_spans_with_profile},
     merge::RunKind,
     parse::{AddLine, CtxLine, DelLine, Hunk, Row, RowGroup, Spans},
@@ -195,6 +200,127 @@ fn compute_aux_del_spans(aux_runs: &[(RunKind, String)]) -> Spans {
     }
 }
 
+/// Constructs a boolean mask of character indices in a text line that are
+/// marked as unmatched.
+fn build_unmatched_char_mask(len: usize, unmatched_spans: &[(usize, usize)]) -> Vec<bool> {
+    let mut mask = vec![false; len];
+    for &(s, e) in unmatched_spans {
+        let s = s.min(len);
+        let e = e.min(len);
+        mask[s..e].fill(true);
+    }
+    mask
+}
+
+/// Evaluates whether candidate characters satisfy the information-theoretic
+/// evidence threshold against an unmatched donor sub-sequence (prefix or
+/// suffix).
+fn verify_reflow_evidence(donor_sub: &[char], cand: &[char], is_prefix: bool) -> bool {
+    if donor_sub.len() < MIN_REFLOW_EVIDENCE_CHARS || cand.len() < MIN_REFLOW_EVIDENCE_CHARS {
+        return false;
+    }
+
+    let pairs = HuntSzymanskiLcs::lcs(donor_sub, cand);
+    let matched = pairs.len();
+    if matched < MIN_REFLOW_EVIDENCE_CHARS {
+        return false;
+    }
+
+    let cand_ratio = matched as f64 / cand.len() as f64;
+    let donor_ratio = matched as f64 / donor_sub.len() as f64;
+    if cand_ratio < MIN_REFLOW_EVIDENCE_RATIO || donor_ratio < MIN_REFLOW_EVIDENCE_RATIO {
+        return false;
+    }
+
+    let Some(&(si, ci)) = pairs.first() else {
+        return false;
+    };
+    if is_prefix {
+        si <= MAX_REFLOW_PREFIX_OFFSET
+    } else {
+        ci <= MAX_REFLOW_PREFIX_OFFSET
+    }
+}
+
+/// Computes whether candidate content provides information-theoretic evidence
+/// explaining an unmatched prefix of the donor line preceding the anchor's
+/// match.
+fn matches_unmatched_prefix(
+    donor_text: &str,
+    unmatched_spans: &[(usize, usize)],
+    cand_text: &str,
+) -> bool {
+    let donor_chars: Vec<char> = donor_text.chars().collect();
+    let unmatched_mask = build_unmatched_char_mask(donor_chars.len(), unmatched_spans);
+
+    // Earliest anchor match in donor_text (first non-whitespace char that is
+    // matched).
+    let first_anchor_match = donor_chars
+        .iter()
+        .enumerate()
+        .position(|(i, &c)| !c.is_whitespace() && !unmatched_mask[i])
+        .unwrap_or(donor_chars.len());
+
+    // If the anchor matches from the start (no unmatched content before it),
+    // then by directional consistency no upward addition/deletion can explain this
+    // donor.
+    if first_anchor_match == 0 {
+        return false;
+    }
+
+    // Collect non-whitespace characters from the unmatched prefix strictly before
+    // first_anchor_match.
+    let unmatched_prefix_chars: Vec<char> = donor_chars[..first_anchor_match]
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| (unmatched_mask[i] && !c.is_whitespace()).then_some(c))
+        .collect();
+
+    let cand_chars: Vec<char> = cand_text.chars().filter(|c| !c.is_whitespace()).collect();
+    verify_reflow_evidence(&unmatched_prefix_chars, &cand_chars, true)
+}
+
+/// Computes whether candidate content provides information-theoretic evidence
+/// explaining an unmatched suffix of the donor line following the anchor's
+/// match.
+fn matches_unmatched_suffix(
+    donor_text: &str,
+    unmatched_spans: &[(usize, usize)],
+    cand_text: &str,
+) -> bool {
+    let donor_chars: Vec<char> = donor_text.chars().collect();
+    let unmatched_mask = build_unmatched_char_mask(donor_chars.len(), unmatched_spans);
+
+    // Latest anchor match in donor_text (last non-whitespace char that is matched).
+    let Some(last_anchor_match) = donor_chars
+        .iter()
+        .enumerate()
+        .rposition(|(i, &c)| !c.is_whitespace() && !unmatched_mask[i])
+    else {
+        return false;
+    };
+
+    // If the anchor matched all the way to the end (no unmatched content after it),
+    // then by directional consistency no succeeding line can explain this donor.
+    if last_anchor_match >= donor_chars.len().saturating_sub(1) {
+        return false;
+    }
+
+    // Collect non-whitespace characters from the unmatched suffix strictly after
+    // last_anchor_match.
+    let unmatched_suffix_chars: Vec<char> = donor_chars[last_anchor_match + 1..]
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| {
+            let idx = last_anchor_match + 1 + i;
+            (unmatched_mask[idx] && !c.is_whitespace()).then_some(c)
+        })
+        .collect();
+
+    let cand_chars: Vec<char> = cand_text.chars().filter(|c| !c.is_whitespace()).collect();
+    verify_reflow_evidence(&unmatched_suffix_chars, &cand_chars, false)
+}
+
 pub fn pass_assemble_mods(
     h: &Hunk,
     ctx: &PairingContext,
@@ -210,6 +336,73 @@ pub fn pass_assemble_mods(
     let mut del_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
     let mut del_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
 
+    let mut collapse_blocks = ctx.collapse_blocks.clone();
+    let mut claimed_dels: FxHashSet<usize> = ctx
+        .paired_dels
+        .iter()
+        .copied()
+        .chain(collapse_blocks.values().flat_map(|b| b.iter().copied()))
+        .collect();
+
+    for &del_ri in ctx.paired_dels {
+        let add_ri = ctx.add_of[&del_ri];
+        if !collapse_blocks.contains_key(&add_ri) && !ctx.expand_blocks.contains_key(&add_ri) {
+            let add_row = &h.rows[add_ri];
+            let del_row = &h.rows[del_ri];
+            let spans = word_spans_with_profile(del_row.text(), add_row.text(), profile);
+            if spans.add.is_empty() {
+                continue;
+            }
+
+            // Upward deletions explaining an unmatched prefix in add_row
+            let mut upward_dels = Vec::new();
+            let mut cand_k = del_ri;
+            let mut count = 0;
+            while cand_k > 0 && count < MAX_REFLOW_SCAN_DISTANCE {
+                cand_k -= 1;
+                count += 1;
+                let cand_row = &h.rows[cand_k];
+                if !matches!(cand_row, Row::Del(_)) || claimed_dels.contains(&cand_k) {
+                    break;
+                }
+                if matches_unmatched_prefix(add_row.text(), &spans.add, cand_row.text()) {
+                    upward_dels.push(cand_k);
+                } else {
+                    break;
+                }
+            }
+
+            // Downward deletions explaining an unmatched suffix in add_row
+            let mut downward_dels = Vec::new();
+            let mut cand_k = del_ri + 1;
+            let mut count = 0;
+            while cand_k < h.rows.len() && count < MAX_REFLOW_SCAN_DISTANCE {
+                let cand_row = &h.rows[cand_k];
+                let current_k = cand_k;
+                cand_k += 1;
+                count += 1;
+                if !matches!(cand_row, Row::Del(_)) || claimed_dels.contains(&current_k) {
+                    break;
+                }
+                if matches_unmatched_suffix(add_row.text(), &spans.add, cand_row.text()) {
+                    downward_dels.push(current_k);
+                } else {
+                    break;
+                }
+            }
+
+            if !upward_dels.is_empty() || !downward_dels.is_empty() {
+                let mut block_dels = upward_dels;
+                block_dels.push(del_ri);
+                block_dels.extend(downward_dels);
+                block_dels.sort_unstable();
+                block_dels.dedup();
+                claimed_dels.extend(&block_dels);
+                collapse_blocks.insert(add_ri, block_dels);
+            }
+        }
+    }
+
     let mut precomputed_pairs: FxHashMap<usize, PrecomputedPair> = if ctx.paired_dels.len() > 32 {
         ctx.paired_dels
             .par_iter()
@@ -217,7 +410,7 @@ pub fn pass_assemble_mods(
                 let add_ri = ctx.add_of[&ri];
                 let add = &h.rows[add_ri];
                 let (del_text, first_old_num) = if let Some(block_dels) =
-                    ctx.collapse_blocks.get(&add_ri)
+                    collapse_blocks.get(&add_ri)
                 {
                     let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
                     let joined = lines.join("\n");
@@ -241,8 +434,7 @@ pub fn pass_assemble_mods(
         FxHashMap::default()
     };
 
-    let in_collapse_blocks: rustc_hash::FxHashSet<usize> = ctx
-        .collapse_blocks
+    let in_collapse_blocks: rustc_hash::FxHashSet<usize> = collapse_blocks
         .values()
         .flat_map(|dels| dels.iter().copied())
         .collect();
@@ -268,7 +460,7 @@ pub fn pass_assemble_mods(
                     pre
                 } else {
                     let (del_text, first_old_num) =
-                        if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                        if let Some(block_dels) = collapse_blocks.get(&add_ri) {
                             let lines: Vec<&str> =
                                 block_dels.iter().map(|&di| h.rows[di].text()).collect();
                             let joined = lines.join("\n");
@@ -287,7 +479,7 @@ pub fn pass_assemble_mods(
                 };
 
             if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
-                if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                if let Some(block_dels) = collapse_blocks.get(&add_ri) {
                     for &di in block_dels {
                         kept_dels.push(di);
                     }
@@ -304,7 +496,7 @@ pub fn pass_assemble_mods(
                 continue;
             }
 
-            if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+            if let Some(block_dels) = collapse_blocks.get(&add_ri) {
                 let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
                 let SlicedMultilineDelRuns {
                     sliced,
@@ -351,7 +543,7 @@ pub fn pass_assemble_mods(
                 }
             }
 
-            if !ctx.collapse_blocks.contains_key(&add_ri) {
+            if !collapse_blocks.contains_key(&add_ri) {
                 let mut k = max_scanned + 1;
                 let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
                     if del_text.is_ascii() {
@@ -432,9 +624,61 @@ pub fn pass_assemble_mods(
                     }
                 }
             }
+
+            // Upward scanning: absorb preceding unpaired additions that provide
+            // direct information-content evidence explaining an unmatched donor prefix.
+            if !collapse_blocks.contains_key(&add_ri) && add_ri > 0 {
+                let mut cand_k = add_ri;
+                let mut count = 0;
+
+                while cand_k > 0 && count < MAX_REFLOW_SCAN_DISTANCE {
+                    cand_k -= 1;
+                    count += 1;
+                    let cand_row = &h.rows[cand_k];
+                    if !matches!(cand_row, Row::Add(_))
+                        || ctx.pair_of.contains_key(&cand_k)
+                        || add_groups.contains_key(&cand_k)
+                    {
+                        break;
+                    }
+
+                    if matches_unmatched_prefix(&del_text, &spans.del, cand_row.text()) {
+                        next_adds.push(cand_k);
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Forward scanning: absorb succeeding unpaired additions that provide
+            // direct information-content evidence explaining an unmatched donor suffix.
+            if !collapse_blocks.contains_key(&add_ri) {
+                let mut cand_k = max_scanned + 1;
+                let mut count = 0;
+
+                while cand_k < h.rows.len() && count < MAX_REFLOW_SCAN_DISTANCE {
+                    let cand_row = &h.rows[cand_k];
+                    let current_k = cand_k;
+                    cand_k += 1;
+                    count += 1;
+                    if !matches!(cand_row, Row::Add(_))
+                        || ctx.pair_of.contains_key(&current_k)
+                        || add_groups.contains_key(&current_k)
+                    {
+                        break;
+                    }
+
+                    if matches_unmatched_suffix(&del_text, &spans.del, cand_row.text()) {
+                        next_adds.push(current_k);
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             let mut relocated_delimiter_adds = Vec::new();
             if next_adds.is_empty()
-                && !ctx.collapse_blocks.contains_key(&add_ri)
+                && !collapse_blocks.contains_key(&add_ri)
                 && let Some((_, _, del_delims)) = trailing_delimiters(&del_text, profile)
             {
                 let add_delims = trailing_delimiters(add.text(), profile)
@@ -535,12 +779,13 @@ pub fn pass_assemble_mods(
                 }
             }
 
-            let (moved, full_adds, full_runs) = if next_adds.is_empty() {
+            let (mut moved, full_adds, full_runs) = if next_adds.is_empty() {
                 (Vec::new(), None, Vec::new())
             } else {
                 let anchor_opens_delim = {
                     let t = add.text().trim();
-                    line_delim_delta(add.text()) > 0
+                    next_adds.iter().all(|&ai| ai > add_ri)
+                        && line_delim_delta(add.text()) > 0
                         && (del_text.contains(t) || del_text.trim_start().starts_with(t) || {
                             if let Some(last_delim) = t.rfind(['(', '{', '[']) {
                                 let head = t[..=last_delim].trim_start();
@@ -791,6 +1036,26 @@ pub fn pass_assemble_mods(
                                     .filter(|(s, e)| s < e)
                                     .collect();
                             }
+                            if nxt_i < add_ri {
+                                let del_indent =
+                                    del_text.chars().take_while(|c| c.is_whitespace()).count();
+                                let aux_indent = add_nxt
+                                    .text()
+                                    .chars()
+                                    .take_while(|c| c.is_whitespace())
+                                    .count();
+                                let common_indent = del_indent.min(aux_indent);
+                                if common_indent > 0 {
+                                    let indent_fill = aux_indent.saturating_sub(common_indent);
+                                    donor_spans
+                                        .add
+                                        .retain(|&(s, e)| !(s == 0 && e == aux_indent));
+                                    if indent_fill > 0 {
+                                        donor_spans.add.push((0, indent_fill));
+                                    }
+                                    normalize_ranges(&mut donor_spans.add);
+                                }
+                            }
 
                             // Companion addition rows never carry deletions from
                             // the donor line. The anchor
@@ -825,6 +1090,23 @@ pub fn pass_assemble_mods(
                                 off += len;
                             }
                             debug_assert_eq!(off, aux_chars.len());
+                            if nxt_i < add_ri {
+                                let del_indent =
+                                    del_text.chars().take_while(|c| c.is_whitespace()).count();
+                                let aux_indent =
+                                    aux_chars.iter().take_while(|c| c.is_whitespace()).count();
+                                let common_indent = del_indent.min(aux_indent);
+                                if common_indent > 0
+                                    && !toks.is_empty()
+                                    && toks[0] == (0, aux_indent)
+                                {
+                                    let indent_fill = aux_indent.saturating_sub(common_indent);
+                                    if indent_fill > 0 {
+                                        toks[0] = (indent_fill, aux_indent);
+                                        toks.insert(0, (0, indent_fill));
+                                    }
+                                }
+                            }
                             let is_word_subword = |t1: &[char], t2: &[char]| {
                                 t1.last().is_some_and(|c| c.is_alphanumeric() || *c == '_')
                                     && t2.first().is_some_and(|c| c.is_alphanumeric() || *c == '_')
@@ -1075,6 +1357,57 @@ pub fn pass_assemble_mods(
                     // that also survive in aux, consumed once each below.
                     // Demoted ranges join supply here, so their aux twins render
                     // moved-in instead of fill — relocation display stays atomic.
+                    // When an upward aux addition absorbs the statement head preceding the anchor,
+                    // migrate the donor line's leading context indentation to the head row so the
+                    // flow of the statement's base indentation is preserved.
+                    let upward_head = next_adds.iter().copied().find(|&ai| ai < add_ri);
+                    if let Some(up_i) = upward_head {
+                        let del_indent = del_text.chars().take_while(|c| c.is_whitespace()).count();
+                        let anchor_indent =
+                            add.text().chars().take_while(|c| c.is_whitespace()).count();
+                        let aux_indent = h.rows[up_i]
+                            .text()
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .count();
+                        let common_indent = del_indent.min(aux_indent);
+                        if common_indent > 0 {
+                            let mut ws_run_count = 0usize;
+                            let mut has_ctx_ws = false;
+                            for (kind, text) in &runs {
+                                if !text.chars().all(|c| c.is_whitespace()) {
+                                    break;
+                                }
+                                if *kind == RunKind::Ctx {
+                                    has_ctx_ws = true;
+                                }
+                                ws_run_count += 1;
+                            }
+                            if has_ctx_ws {
+                                runs.drain(0..ws_run_count);
+                                let mut new_ws_runs = Vec::new();
+                                if anchor_indent > 0 {
+                                    new_ws_runs.push((
+                                        RunKind::Add,
+                                        add.text()[..anchor_indent].to_string(),
+                                    ));
+                                }
+                                if del_indent > 0 {
+                                    new_ws_runs
+                                        .push((RunKind::Del, del_text[..del_indent].to_string()));
+                                }
+                                for (k, r) in new_ws_runs.into_iter().enumerate() {
+                                    runs.insert(k, r);
+                                }
+                                if !moved.iter().any(|&(s, e)| s == 0 && e >= common_indent) {
+                                    moved.push((0, common_indent));
+                                    moved.sort_unstable();
+                                    normalize_ranges(&mut moved);
+                                }
+                            }
+                        }
+                    }
+
                     let mut supply: Vec<(usize, usize)> = Vec::new();
                     let mut off = 0usize;
                     for (kind, text) in &runs {
@@ -1218,10 +1551,18 @@ pub fn pass_assemble_mods(
                         }
                     }
 
+                    let anchor_min = anchor_claims.first().map(|&(s, _)| s);
+                    let anchor_max = anchor_claims.last().map(|&(_, e)| e);
+
                     let mut attached_dels: FxHashMap<usize, Vec<(usize, String)>> =
                         FxHashMap::default();
                     for &(rs, re) in &unclaimed_residues {
                         let residue_text: String = del_chars[rs..re].iter().collect();
+                        // Zero-entropy whitespace residues dissolve across line breaks and must
+                        // never attach to companion rows as deletions.
+                        if residue_text.trim().is_empty() {
+                            continue;
+                        }
                         let residue_chars = &del_chars[rs..re];
 
                         let has_open = has_opening_affinity(&residue_text, profile);
@@ -1243,21 +1584,17 @@ pub fn pass_assemble_mods(
                             let p = &pending[i];
                             let is_prefix = p.nxt_i < add_ri;
 
-                            // Prefix / Suffix insulation:
-                            // Prefix companion rows represent content strictly before the anchor,
-                            // so they may never claim residues that occur at or after the anchor's
-                            // retained context. Suffix companion rows
-                            // represent content strictly after the anchor,
-                            // so they may never claim residues that occur before or inside the
-                            // anchor's retained context. Prefix row
-                            // insulation: prefix companion rows represent content
-                            // strictly before the anchor, so they may never claim residues that
-                            // occur at or after the anchor's retained context.
-                            if is_prefix
-                                && anchor_claims
-                                    .first()
-                                    .is_some_and(|&(anchor_s, _)| rs >= anchor_s || re > anchor_s)
-                            {
+                            // Symmetric topological insulation:
+                            // Prefix companion rows (nxt_i < add_ri) represent content strictly
+                            // preceding the anchor's retained context, so they may never claim
+                            // residues that extend beyond anchor_min (re <= anchor_min).
+                            // Suffix companion rows (nxt_i > add_ri) represent content strictly
+                            // succeeding the anchor's retained context, so they may never claim
+                            // residues that begin before anchor_max (rs >= anchor_max).
+                            if is_prefix && anchor_min.is_some_and(|amin| re > amin) {
+                                continue;
+                            }
+                            if !is_prefix && anchor_max.is_some_and(|amax| rs < amax) {
                                 continue;
                             }
 

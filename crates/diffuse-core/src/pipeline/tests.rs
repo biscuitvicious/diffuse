@@ -2332,6 +2332,172 @@ fn test_reflow_anchor_prefers_head_line() {
     }
 }
 
+/// Upward reflow absorption: when an old single-line statement reflows into
+/// multiple new lines where the anchor pairs with the continuation line due to
+/// indentation shift or content mass, the preceding statement head addition is
+/// absorbed upwards into the group based on information-content evidence
+/// explaining the struck prefix.
+#[test]
+fn test_reflow_upward_expansion_anchors_and_groups() {
+    let diff = r#"diff --git a/crates/diffuse-tui/src/app/dispatch.rs b/crates/diffuse-tui/src/app/dispatch.rs
+--- a/crates/diffuse-tui/src/app/dispatch.rs
++++ b/crates/diffuse-tui/src/app/dispatch.rs
+@@ -350,5 +350,6 @@
+         if in_viewport {
++            self.vis_line =
++                (target_vis - s).min(nav_counts[i].saturating_sub(1));
+-            self.vis_line = (target_vis - s).min(nav_counts[i].saturating_sub(1));
+         }
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.old_line == Some(351)
+        })
+        .expect("anchor mod for old line 351");
+    assert_eq!(anchor.new_line, Some(352));
+
+    let aux = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Add
+                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 352 })
+                && r.new_line == Some(351)
+        })
+        .expect("upward aux add for new line 351");
+
+    assert!(
+        aux.runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("vis_line")),
+        "aux add must mark moved target text, got runs: {:?}",
+        aux.runs
+    );
+
+    // Context indentation migrated to upward aux add row: leading 12 spaces of
+    // indentation are marked as moved context rather than fill.
+    assert_eq!(
+        aux.runs.first().map(|r| (r.kind, r.text.as_ref())),
+        Some((crate::merge::RunKind::MovedTgt, "            ")),
+        "aux add leading indentation must migrate from anchor context: {:?}",
+        aux.runs
+    );
+
+    assert!(
+        anchor
+            .runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("vis_line")),
+        "anchor mod must mark moved source text instead of striking it, got runs: {:?}",
+        anchor.runs
+    );
+}
+
+/// Upward reflow collapse: when multiple old lines collapse into a single new
+/// line where the anchor pairs with the continuation line due to indentation
+/// shift or content mass, the preceding statement head deletion is absorbed
+/// into the collapse group based on information-content evidence explaining the
+/// addition deficit.
+#[test]
+fn test_reflow_collapse_anchors_and_groups() {
+    let diff = r#"diff --git a/crates/diffuse-tui/src/app/dispatch.rs b/crates/diffuse-tui/src/app/dispatch.rs
+--- a/crates/diffuse-tui/src/app/dispatch.rs
++++ b/crates/diffuse-tui/src/app/dispatch.rs
+@@ -350,6 +350,5 @@
+         if in_viewport {
+-            self.vis_line =
+-                (target_vis - s).min(nav_counts[i].saturating_sub(1));
++            self.vis_line = (target_vis - s).min(nav_counts[i].saturating_sub(1));
+         }
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.new_line == Some(351)
+        })
+        .expect("anchor mod for new line 351");
+    assert_eq!(anchor.old_line, Some(351));
+
+    let aux = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Del
+                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 351 })
+                && r.old_line == Some(352)
+        })
+        .expect("collapse aux del for old line 352");
+
+    assert!(
+        aux.runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("min")),
+        "aux del must mark moved source text, got runs: {:?}",
+        aux.runs
+    );
+
+    assert!(
+        anchor
+            .runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("min")),
+        "anchor mod must mark moved target text, got runs: {:?}",
+        anchor.runs
+    );
+}
+
+/// Upward reflow collapse: when multiple old lines collapse into a single new
+/// line where the anchor pairs with a lower continuation line (due to identical
+/// indentation and content mass), the preceding unattached statement-head
+/// deletion is absorbed upward into the collapse group based on prefix
+/// evidence.
+#[test]
+fn test_reflow_upward_collapse_anchors_and_groups() {
+    let diff = r#"diff --git a/src/example.rs b/src/example.rs
+--- a/src/example.rs
++++ b/src/example.rs
+@@ -10,2 +10,1 @@
+-        prefix_token_setup();
+-    continuation_line_with_heavy_payload(arg1, arg2);
++    prefix_token_setup(); continuation_line_with_heavy_payload(arg1, arg2);
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod && r.group == Some(crate::parse::RowGroup::Anchor)
+        })
+        .expect("anchor mod row");
+    assert_eq!(anchor.new_line, Some(10));
+    assert_eq!(anchor.old_line, Some(10));
+
+    let aux = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Del
+                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 10 })
+        })
+        .expect("collapse aux del for old line 11");
+    assert_eq!(aux.old_line, Some(11));
+}
+
 /// Verbatim seeding forces the true move over a content-similar rival:
 /// old `let prefix` reflows with its tail moving several lines down while
 /// a novel `{repo_name}` line shares the head nearby. The seeded verbatim
