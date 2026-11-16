@@ -200,28 +200,18 @@ fn header_bar_spans(
     spans
 }
 
-/// Render the bottom navigation key-bindings ribbon as styled Ratatui
-/// [`Line`]s.
-pub fn bottom_ribbon_lines(width: usize, ui: &UiPalette) -> (Line<'static>, Line<'static>) {
+/// Render the bottom navigation key-bindings ribbon as a styled Ratatui
+/// [`Line`].
+pub fn bottom_ribbon_line(width: usize, ui: &UiPalette) -> Line<'static> {
     let bg = crate::view::to_color(ui.bg_base);
-    let div_str = truncate_pad(
-        &format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
-        width,
-    );
-    let divider = Line::from(Span::styled(
-        div_str,
-        Style::default().fg(crate::view::to_color(ui.ribbon_divider)),
-    ))
-    .style(Style::default().bg(bg));
     let ribbon_text = truncate_pad(
         " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [T]theme [x]discard",
         width,
     );
 
-    let ribbon = Line::from(Span::styled(
+    Line::from(Span::styled(
         ribbon_text,
         Style::default().fg(crate::view::to_color(ui.ribbon_text)),
     ))
-    .style(Style::default().bg(bg));
-    (divider, ribbon)
+    .style(Style::default().bg(bg))
 }

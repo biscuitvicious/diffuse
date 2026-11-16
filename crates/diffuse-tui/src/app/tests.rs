@@ -2355,8 +2355,9 @@ index 1111111..2222222 100644
             .flat;
         let (starts, counts, seg_counts, _) = state.visual_geometry(cw);
         let div_vis = starts[div_flat];
-        // Park scroll so the divider sits mid-viewport
-        state.scroll = div_vis.saturating_sub(6);
+        // Park scroll so the divider sits mid-viewport with enough room below
+        // to expand without clamping at max_scroll.
+        state.scroll = div_vis.saturating_sub(8);
         let (starts, _counts2, _seg_counts2, _) = state.visual_geometry(cw);
         let dsy = starts[div_flat].saturating_sub(state.scroll);
         let div_segs = counts[div_flat].saturating_sub(seg_counts[div_flat]);
@@ -3301,7 +3302,6 @@ fn test_no_diffs_renders_header_footer_and_secondary_message_frame() {
     );
 
     // Bottom ribbon footer
-    assert!(frame.contains("───"), "footer must include divider");
     assert!(frame.contains("[j/k]move"), "footer must include [j/k]move");
     assert!(frame.contains("[q]uit"), "footer must include [q]uit");
     assert!(frame.contains("[?]help"), "footer must include [?]help");
@@ -3379,13 +3379,6 @@ fn test_no_diffs_renders_header_footer_and_secondary_message_ratatui() {
         !row_strings[2].contains("No diff to display."),
         "Row 2 main area must stay blank: {}",
         row_strings[2]
-    );
-
-    // Row 18: Divider
-    assert!(
-        row_strings[18].contains("───"),
-        "Row 18 must be divider: {}",
-        row_strings[18]
     );
 
     // Row 19 (bottom): Ribbon with shortcuts

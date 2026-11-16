@@ -13,7 +13,7 @@ pub use diff_grid::{
     hunk_divider_segment_line, hunk_divider_text,
 };
 pub use header::{
-    HeaderFileCount, StatusBarContext, bottom_ribbon_lines, header_bar_line, status_bar_line,
+    HeaderFileCount, StatusBarContext, bottom_ribbon_line, header_bar_line, status_bar_line,
     truncate_pad, visible_width, wrap_text_by_visual_width,
 };
 pub use modals::{

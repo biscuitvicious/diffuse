@@ -11,7 +11,7 @@ use crate::{
     app::AppState,
     render::UiPalette,
     view::{
-        bottom_ribbon_lines,
+        bottom_ribbon_line,
         header::status_bar_line,
         modals::{render_finder_modal_widget, render_help_modal_widget, render_note_modal_widget},
         to_color,
@@ -67,7 +67,7 @@ impl AppState {
             Constraint::Length(1), // Header bar
             Constraint::Length(1), // Secondary status bar (reserved)
             Constraint::Min(1),    // Main diff area
-            Constraint::Length(2), // Bottom ribbon
+            Constraint::Length(1), // Bottom ribbon
         ];
 
         let chunks = Layout::default()
@@ -182,9 +182,9 @@ impl AppState {
                 f.render_widget(blank_status_widget(&self.theme.palette.ui), status_area);
             }
 
-            let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette.ui);
+            let rib_line = bottom_ribbon_line(main_width, &self.theme.palette.ui);
             f.render_widget(
-                Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(bg)),
+                Paragraph::new(rib_line).style(Style::default().bg(bg)),
                 ribbon_area,
             );
 
@@ -310,10 +310,10 @@ impl AppState {
         }
 
         // 6. Bottom Ribbon
-        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette.ui);
+        let rib_line = bottom_ribbon_line(main_width, &self.theme.palette.ui);
         let rib_bg = to_color(self.theme.palette.ui.bg_base);
         f.render_widget(
-            Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(rib_bg)),
+            Paragraph::new(rib_line).style(Style::default().bg(rib_bg)),
             ribbon_area,
         );
 

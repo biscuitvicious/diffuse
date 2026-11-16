@@ -640,9 +640,7 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[9].contains("+"));
     assert!(screen_lines[9].contains("let y = 2;"));
 
-    // Bottom Rows: Divider + Keybindings Ribbon
-    let divider_row = &screen_lines[height - 2];
-    assert!(divider_row.contains("───"));
+    // Bottom Row: Keybindings Ribbon
     let ribbon_row = &screen_lines[height - 1];
     assert!(ribbon_row.contains("[j/k]move"));
     assert!(ribbon_row.contains("[Enter]toggle"));

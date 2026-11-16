@@ -260,8 +260,7 @@ fn test_ratatui_header_and_status_lines() {
         "streaming span must be bold"
     );
 
-    let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::dark().palette.ui);
-    assert!(div.to_string().contains("──"));
+    let rib = bottom_ribbon_line(80, &DiffuseTheme::dark().palette.ui);
     assert!(rib.to_string().starts_with(" [?]help [q]uit"));
     assert!(rib.to_string().contains("[j/k]move"));
 }

@@ -170,21 +170,21 @@ index 1111111..2222222 100644
     assert_eq!(state.scroll, 0);
     assert!(state.row_idx > 0);
 
-    // 2nd pg down (already at bottom) scrolls 1/3 of vh (5 lines)
+    // 2nd pg down (already at bottom) scrolls 1/3 of vh (6 lines)
     state.page_down();
-    assert_eq!(state.scroll, 5);
+    assert_eq!(state.scroll, 6);
 
-    // 3rd pg down scrolls another 5 lines
+    // 3rd pg down scrolls another 6 lines
     state.page_down();
-    assert_eq!(state.scroll, 10);
+    assert_eq!(state.scroll, 12);
 
     // 1st pg up moves cursor to top of current visible page without scrolling
     state.page_up();
-    assert_eq!(state.scroll, 10);
+    assert_eq!(state.scroll, 12);
 
-    // 2nd pg up (already at top) scrolls 1/3 of vh (5 lines)
+    // 2nd pg up (already at top) scrolls 1/3 of vh (6 lines)
     state.page_up();
-    assert_eq!(state.scroll, 5);
+    assert_eq!(state.scroll, 6);
 
     // In raw diff mode: first move cursor to bottom, then scroll
     state.toggle_raw_diff();
@@ -193,7 +193,7 @@ index 1111111..2222222 100644
     state.page_down(); // to bottom
     let raw_scroll = state.scroll;
     state.page_down(); // scroll 1/3
-    assert_eq!(state.scroll, raw_scroll + 5);
+    assert_eq!(state.scroll, raw_scroll + 6);
     state.page_up(); // to top
     state.page_up(); // scroll 1/3
     assert_eq!(state.scroll, raw_scroll);
