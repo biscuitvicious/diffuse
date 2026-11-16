@@ -22,9 +22,9 @@ mod tests;
 
 pub use classifier::{DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier};
 pub use containers::{
-    track_enclosing_containers, track_enclosing_containers_into, track_nesting_depths_into,
-    track_nesting_depths_with_prev, track_surrounding_containers,
-    track_surrounding_containers_into,
+    has_trailing_delimiter_expansion, terminal_dyck_stack, track_enclosing_containers,
+    track_enclosing_containers_into, track_nesting_depths_into, track_nesting_depths_with_prev,
+    track_surrounding_containers, track_surrounding_containers_into,
 };
 pub use iter::{DiffuseDyckExt, DyckBalanced};
 pub use partners::{

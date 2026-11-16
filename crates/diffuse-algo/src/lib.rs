@@ -49,9 +49,9 @@ pub use bounded_dp::BoundedDpLcs;
 pub use dyck::{
     DelimiterCategory, DelimiterClassifier, DiffuseDyckExt, DyckBalanced, SmallStack,
     UniversalDelimiterClassifier, compute_delimiter_partners, compute_delimiter_partners_into,
-    track_enclosing_containers, track_enclosing_containers_into, track_nesting_depths_into,
-    track_nesting_depths_with_prev, track_surrounding_containers,
-    track_surrounding_containers_into, trim_balanced_boundaries,
+    has_trailing_delimiter_expansion, terminal_dyck_stack, track_enclosing_containers,
+    track_enclosing_containers_into, track_nesting_depths_into, track_nesting_depths_with_prev,
+    track_surrounding_containers, track_surrounding_containers_into, trim_balanced_boundaries,
 };
 pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;

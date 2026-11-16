@@ -296,3 +296,86 @@ where
     track_nesting_depths_into(prev_items, items, classifier, &mut out);
     out.into_iter().map(|d| d as usize).collect()
 }
+
+/// Computes the terminal Dyck container stack after processing a stream of
+/// items.
+///
+/// Returns a [`SmallStack`] of `(category_id, is_symmetric)` representing the
+/// active unclosed containers at the end of the sequence. Delimiters within
+/// string literals or escaped via [`DelimiterCategory::Escape`] are ignored.
+pub fn terminal_dyck_stack<T, C, I>(items: I, classifier: &C) -> SmallStack<(u8, bool), 32>
+where
+    C: DelimiterClassifier<T>,
+    I: IntoIterator<Item = T>,
+{
+    let mut stack: SmallStack<(u8, bool), 32> = SmallStack::new();
+    let mut escaped = false;
+
+    for item in items {
+        let cat = classifier.classify(&item);
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if cat == Some(DelimiterCategory::Escape) {
+            escaped = true;
+            continue;
+        }
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+            }
+            continue;
+        }
+
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                stack.push((id, false));
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&(id, false)) {
+                    stack.pop();
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                stack.push((id, true));
+            }
+            _ => {}
+        }
+    }
+
+    stack
+}
+
+/// Returns true if `add` ends with an opening delimiter that represents an
+/// expanded unclosed container relative to `del`.
+///
+/// Delimiter tracking uses a formal Dyck pushdown automaton:
+/// - Opening delimiters within string literals or escaped characters are
+///   ignored.
+/// - Returns true only if the trailing delimiter category has strictly more
+///   unclosed occurrences at the end of `add` than in `del`.
+pub fn has_trailing_delimiter_expansion<C>(add: &str, del: &str, classifier: &C) -> bool
+where
+    C: DelimiterClassifier<char>,
+{
+    let Some(id) = add
+        .trim()
+        .chars()
+        .last()
+        .and_then(|ch| match classifier.classify(&ch) {
+            Some(DelimiterCategory::Open(id)) => Some(id),
+            _ => None,
+        })
+    else {
+        return false;
+    };
+
+    let stack_add = terminal_dyck_stack(add.chars(), classifier);
+    let stack_del = terminal_dyck_stack(del.chars(), classifier);
+    let add_count = stack_add.count_matches(|&(cat_id, is_sym)| cat_id == id && !is_sym);
+    let del_count = stack_del.count_matches(|&(cat_id, is_sym)| cat_id == id && !is_sym);
+    add_count > del_count
+}

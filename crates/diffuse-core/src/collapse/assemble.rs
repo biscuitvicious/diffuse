@@ -4,7 +4,10 @@
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use diffuse_algo::hunt_szymanski::HuntSzymanskiLcs;
+use diffuse_algo::{
+    dyck::{UniversalDelimiterClassifier, has_trailing_delimiter_expansion},
+    hunt_szymanski::HuntSzymanskiLcs,
+};
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
@@ -563,10 +566,11 @@ pub fn pass_assemble_mods(
                 if (has_deleted_content || ctx.expand_blocks.contains_key(&add_ri))
                     && let Some(p) = profile
                 {
-                    let opens_delim = add.text().trim().ends_with('(')
-                        || add.text().trim().ends_with('{')
-                        || add.text().trim().ends_with('[')
-                        || p.is_import_statement(&del_text)
+                    let opens_delim = has_trailing_delimiter_expansion(
+                        add.text(),
+                        &del_text,
+                        &UniversalDelimiterClassifier,
+                    ) || p.is_import_statement(&del_text)
                         || (ctx.expand_blocks.contains_key(&add_ri)
                             && (del_text.contains('{') || del_text.contains('(')));
 

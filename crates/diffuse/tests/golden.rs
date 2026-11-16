@@ -2420,6 +2420,49 @@ fn test_scrollbar_grab_drag_dispatch_hunk_2_not_collapsed() {
 }
 
 #[test]
+fn test_scrollbar_grab_drag_dispatch_hunk_1_aux_rows() {
+    if !is_golden_initialized() {
+        return;
+    }
+    let fixture = load_fixture("scrollbar-grab-drag");
+    let path = "crates/diffuse-tui/src/app/dispatch.rs";
+    let output = diffuse::core::pipeline::run_pipeline_arc(
+        Arc::clone(&fixture.diff),
+        Some(fixture.new_content.clone()),
+        Some(fixture.old_content.clone()),
+        diffuse::core::pipeline::PipelineOptions::default(),
+    );
+    let file = output
+        .files
+        .iter()
+        .find(|f| f.path == path)
+        .expect("dispatch.rs in output");
+    let hunk0 = &file.hunks[0];
+    let r45 = hunk0
+        .rows
+        .iter()
+        .find(|r| r.new_line == Some(45))
+        .expect("line 45");
+    assert_eq!(
+        r45.group, None,
+        "Row 45 (MouseScrollUp) must not be an anchor group"
+    );
+    let r53 = hunk0
+        .rows
+        .iter()
+        .find(|r| r.new_line == Some(53))
+        .expect("line 53");
+    assert_eq!(
+        r53.group, None,
+        "Row 53 (MouseScrollDown) must not be an anchor group"
+    );
+    assert!(
+        !hunk0.rows.iter().any(|r| r.group.is_some()),
+        "Hunk 0 must not contain any spurious auxiliary groups"
+    );
+}
+
+#[test]
 fn hydration_tempdir_removed_on_drop() {
     // Empty fixture: nothing hydrated, scratch TempDir still cleaned up.
     let empty = Fixture {

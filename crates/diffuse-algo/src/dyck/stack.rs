@@ -86,6 +86,12 @@ impl<T: Copy + Default, const N: usize> SmallStack<T, N> {
         }
     }
 
+    /// Returns an iterator over the elements in the stack from bottom to top.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.inline[..self.len].iter().chain(self.spill.iter())
+    }
+
     /// Returns true if the stack contains the given element.
     #[inline]
     pub fn contains(&self, val: &T) -> bool
@@ -95,6 +101,15 @@ impl<T: Copy + Default, const N: usize> SmallStack<T, N> {
         self.inline[..self.len].contains(val) || self.spill.contains(val)
     }
 
+    /// Returns the number of elements in the stack matching `predicate`.
+    #[inline]
+    pub fn count_matches<F>(&self, mut predicate: F) -> usize
+    where
+        F: FnMut(&T) -> bool,
+    {
+        self.iter().filter(|&item| predicate(item)).count()
+    }
+
     /// Clears all elements from the stack.
     #[inline]
     pub fn clear(&mut self) {
@@ -102,3 +117,11 @@ impl<T: Copy + Default, const N: usize> SmallStack<T, N> {
         self.spill.clear();
     }
 }
+
+impl<T: Copy + Default + PartialEq, const N: usize> PartialEq for SmallStack<T, N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl<T: Copy + Default + Eq, const N: usize> Eq for SmallStack<T, N> {}

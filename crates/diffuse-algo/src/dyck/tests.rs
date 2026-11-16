@@ -261,3 +261,89 @@ fn test_universal_delimiter_classifier_unicode() {
     let depths = track_nesting_depths_with_prev(&[], &tokens, &u);
     assert_eq!(depths, vec![0, 1, 1, 2, 1, 0, 0]);
 }
+
+#[test]
+fn test_terminal_dyck_stack_and_small_stack_equality() {
+    let u = UniversalDelimiterClassifier;
+
+    // SmallStack equality and count_matches
+    let mut s1: SmallStack<u8, 4> = SmallStack::new();
+    let mut s2: SmallStack<u8, 4> = SmallStack::new();
+    assert_eq!(s1, s2);
+    s1.push(1);
+    s1.push(2);
+    s2.push(1);
+    assert_ne!(s1, s2);
+    s2.push(2);
+    assert_eq!(s1, s2);
+    assert_eq!(s1.count_matches(|&x| x == 1), 1);
+    assert_eq!(s1.count_matches(|&x| x == 3), 0);
+
+    // Terminal Dyck stack over characters
+    // Case 1: balanced inner delimiters, leaves '{' open
+    let code_add = "TuiCommand::MouseScrollUp { n, row, col } => {";
+    let stack_add = terminal_dyck_stack(code_add.chars(), &u);
+    assert_eq!(stack_add.len(), 1);
+    assert_eq!(stack_add.last(), Some(&(3, false)));
+
+    // Case 2: del with parens and trailing brace
+    let code_del = "TuiCommand::MouseScrollUp(n) => {";
+    let stack_del = terminal_dyck_stack(code_del.chars(), &u);
+    assert_eq!(stack_del.len(), 1);
+    assert_eq!(stack_del.last(), Some(&(3, false)));
+    assert_eq!(stack_add, stack_del);
+
+    // Case 3: Strings with escapes do not unbalance delimiters
+    let str_code = r#"let s = "brace: { escaped: \"{\""; ("#;
+    let stack_str = terminal_dyck_stack(str_code.chars(), &u);
+    assert_eq!(stack_str.len(), 1);
+    assert_eq!(stack_str.last(), Some(&(1, false))); // only '(' is active
+
+    // SmallStack::iter over inline and spillover
+    let mut s3: SmallStack<u8, 2> = SmallStack::new();
+    s3.push(10);
+    s3.push(20);
+    s3.push(30); // spillover to Vec
+    let items: Vec<u8> = s3.iter().copied().collect();
+    assert_eq!(items, vec![10, 20, 30]);
+}
+
+#[test]
+fn test_has_trailing_delimiter_expansion() {
+    let u = UniversalDelimiterClassifier;
+
+    // Both lines end with '{', same net count -> false (scrollbar-grab-drag case)
+    let del1 = "TuiCommand::MouseScrollUp(n) => {";
+    let add1 = "TuiCommand::MouseScrollUp { n, row, col } => {";
+    assert!(!super::containers::has_trailing_delimiter_expansion(
+        add1, del1, &u
+    ));
+
+    // add opens a new '{' where del had none -> true
+    let del2 = "fn do_something();";
+    let add2 = "fn do_something() {";
+    assert!(super::containers::has_trailing_delimiter_expansion(
+        add2, del2, &u
+    ));
+
+    // add has '{' inside closed block on same line -> false
+    let del3 = "let x = 1;";
+    let add3 = "let x = { 1 };";
+    assert!(!super::containers::has_trailing_delimiter_expansion(
+        add3, del3, &u
+    ));
+
+    // add has '{' inside string literal -> false
+    let del4 = "let s = \"foo\";";
+    let add4 = "let s = \"{\";";
+    assert!(!super::containers::has_trailing_delimiter_expansion(
+        add4, del4, &u
+    ));
+
+    // add opens '(' across multiple lines -> true
+    let del5 = "let (a, b) = pair;";
+    let add5 = "let (a, b) = call(";
+    assert!(super::containers::has_trailing_delimiter_expansion(
+        add5, del5, &u
+    ));
+}
