@@ -37,6 +37,10 @@ pub(crate) struct CachedGeometry {
 /// Visual width of the context expansion arrow gutter column in the TUI.
 pub const EXPAND_GUTTER_WIDTH: usize = 1;
 
+/// Minimum code text columns required for each pane individually to enable
+/// side-by-side mode automatically in the interactive TUI.
+pub const MIN_SIDE_BY_SIDE_CONTENT_COLS: usize = 60;
+
 /// Minimum remaining content columns required for the old-line number gutter
 /// to automatically activate.
 pub const MIN_CONTENT_COLS_FOR_OLD_GUTTER: usize = 100;
@@ -122,6 +126,21 @@ impl AppState {
     #[inline]
     pub fn gutter_width(&self) -> usize {
         self.gutter_width_for(self.effective_content_width())
+    }
+
+    /// Returns true if `width` (the full terminal width in columns) provides at
+    /// least [`MIN_SIDE_BY_SIDE_CONTENT_COLS`] text columns for both the left
+    /// and right panes after accounting for the scrollbar, center divider, and
+    /// both line number gutters.
+    pub fn is_wide_enough_for_side_by_side(&self, width: usize) -> bool {
+        let content_width = width.saturating_sub(1);
+        let (left_w, right_w) = diffuse_render::split_pane_widths(content_width);
+        let left_gutter_w =
+            EXPAND_GUTTER_WIDTH + diffuse_render::gutter_width(self.old_line_num.width);
+        let right_gutter_w = diffuse_render::gutter_width(self.new_line_num.width);
+        let left_cols = left_w.saturating_sub(left_gutter_w);
+        let right_cols = right_w.saturating_sub(right_gutter_w);
+        left_cols >= MIN_SIDE_BY_SIDE_CONTENT_COLS && right_cols >= MIN_SIDE_BY_SIDE_CONTENT_COLS
     }
 
     /// Assert that `content_width` can accommodate the line number prefix

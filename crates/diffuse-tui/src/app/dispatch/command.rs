@@ -398,7 +398,22 @@ impl AppState {
     pub fn toggle_side_by_side(&mut self) {
         let snapshot = self.capture_cursor_snapshot();
         self.side_by_side = !self.side_by_side;
+        self.explicit_side_by_side = Some(self.side_by_side);
         self.rebuild_flat_preserving_snapshot(&snapshot);
         self.bump_content();
+    }
+
+    /// Adapt side-by-side mode to the given terminal `width` if mode is not
+    /// explicitly specified.
+    pub fn adapt_side_by_side_to_width(&mut self, width: usize) {
+        if self.explicit_side_by_side.is_none() {
+            let should_split = self.is_wide_enough_for_side_by_side(width);
+            if self.side_by_side != should_split {
+                let snapshot = self.capture_cursor_snapshot();
+                self.side_by_side = should_split;
+                self.rebuild_flat_preserving_snapshot(&snapshot);
+                self.bump_content();
+            }
+        }
     }
 }

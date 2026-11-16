@@ -12,6 +12,11 @@ pub fn handle_event(state: &mut AppState, event: Event) {
         Event::Key(key) => handle_key_event(state, key),
         Event::Mouse(mouse) => handle_mouse_event(state, mouse),
         Event::Paste(text) => handle_paste_event(state, &text),
+        Event::Resize(width, height) => {
+            state.screen_height = height as usize;
+            state.terminal_width = width as usize;
+            state.adapt_side_by_side_to_width(width as usize);
+        }
         _ => {}
     }
 }
@@ -256,7 +261,11 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (_, KeyCode::Char('#')) => {
             state.execute(TuiCommand::ToggleOldLineGutter);
         }
-        (_, KeyCode::Char('\\')) | (_, KeyCode::Char('|')) => {
+        (_, KeyCode::Char('\\'))
+        | (_, KeyCode::Char('|'))
+        | (KeyModifiers::NONE, KeyCode::Char('b'))
+        | (KeyModifiers::SHIFT, KeyCode::Char('B'))
+        | (_, KeyCode::F(3)) => {
             state.execute(TuiCommand::ToggleSideBySide);
         }
         (KeyModifiers::NONE, KeyCode::Char('r')) | (KeyModifiers::CONTROL, KeyCode::Char('r')) => {

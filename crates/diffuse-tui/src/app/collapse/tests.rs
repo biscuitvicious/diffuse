@@ -1101,3 +1101,71 @@ fn test_side_by_side_and_expand_mods_initialization_order() {
     assert_eq!(state2.expanded_mods.len(), 1);
     assert!(!state2.flat.iter().any(|r| r.is_expanded_mod()));
 }
+
+#[test]
+fn test_adapt_side_by_side_to_width() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_explicit_side_by_side(None);
+
+    assert!(!state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, None);
+
+    // Auto adapts to wide (180 cols) -> side_by_side true
+    state.adapt_side_by_side_to_width(180);
+    assert!(state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, None);
+
+    // Redundant adapt with same wide width is a no-op
+    state.adapt_side_by_side_to_width(180);
+    assert!(state.side_by_side);
+
+    // Auto adapts to narrow (129 cols: left text cols is 59 < 60) -> side_by_side
+    // false
+    state.adapt_side_by_side_to_width(129);
+    assert!(!state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, None);
+
+    // Auto adapts to boundary wide (130 cols: left text cols is 60 >= 60) ->
+    // side_by_side true
+    state.adapt_side_by_side_to_width(130);
+    assert!(state.side_by_side);
+
+    // Auto adapts back to narrow (100 cols) -> side_by_side false
+    state.adapt_side_by_side_to_width(100);
+    assert!(!state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, None);
+
+    // Redundant adapt with same narrow width is a no-op
+    state.adapt_side_by_side_to_width(100);
+    assert!(!state.side_by_side);
+
+    // Toggle via in-TUI shortcut: locks explicit preference!
+    state.toggle_side_by_side();
+    assert!(state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, Some(true));
+
+    // When explicit, adapt_side_by_side_to_width does NOT override
+    state.adapt_side_by_side_to_width(100);
+    assert!(state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, Some(true));
+
+    state.toggle_side_by_side();
+    assert!(!state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, Some(false));
+
+    state.adapt_side_by_side_to_width(200);
+    assert!(!state.side_by_side);
+    assert_eq!(state.explicit_side_by_side, Some(false));
+
+    // with_explicit_side_by_side(Some(true))
+    let explicit_split = state.with_explicit_side_by_side(Some(true));
+    assert!(explicit_split.side_by_side);
+    assert_eq!(explicit_split.explicit_side_by_side, Some(true));
+}

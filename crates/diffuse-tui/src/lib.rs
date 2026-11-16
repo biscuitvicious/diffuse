@@ -243,8 +243,6 @@ pub fn run_session<S: Session + ?Sized>(
     side_by_side: Option<bool>,
 ) -> io::Result<()> {
     let (term_w, _) = session.size();
-    let initial_sbs =
-        side_by_side.unwrap_or_else(|| render::is_wide_enough_for_side_by_side(term_w as usize));
     let mut state = AppState::new(
         initial_output,
         target.display_name().to_string(),
@@ -257,8 +255,12 @@ pub fn run_session<S: Session + ?Sized>(
         .with_show_resolved_notes(show_resolved)
         .with_show_note_source(show_source)
         .with_expand_mods(expand_mods)
-        .with_line_num_width(line_num_width)
-        .with_side_by_side(initial_sbs);
+        .with_line_num_width(line_num_width);
+    let initial_sbs =
+        side_by_side.unwrap_or_else(|| state.is_wide_enough_for_side_by_side(term_w as usize));
+    state = state
+        .with_side_by_side(initial_sbs)
+        .with_explicit_side_by_side(side_by_side);
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();
@@ -280,6 +282,8 @@ pub fn run_session<S: Session + ?Sized>(
     // repository: ingesting a streamed file and registering the filesystem
     // watcher each walk content of unbounded size, and either can hold the
     // first paint back by hundreds of milliseconds in a large tree.
+    let cur_size = session.size();
+    state.adapt_side_by_side_to_width(cur_size.0 as usize);
     session.draw_frame(&mut state)?;
 
     // Registering the watch walks every directory under the repository, which
@@ -548,6 +552,9 @@ pub fn run_session<S: Session + ?Sized>(
         if size != last_size {
             dirty = true;
             last_size = size;
+            state.screen_height = size.1 as usize;
+            state.terminal_width = size.0 as usize;
+            state.adapt_side_by_side_to_width(size.0 as usize);
         }
 
         if state.poll_status_expiry(std::time::Instant::now()) {
@@ -555,6 +562,8 @@ pub fn run_session<S: Session + ?Sized>(
         }
 
         if dirty {
+            let cur_size = session.size();
+            state.adapt_side_by_side_to_width(cur_size.0 as usize);
             session.draw_frame(&mut state)?;
             dirty = false;
         }

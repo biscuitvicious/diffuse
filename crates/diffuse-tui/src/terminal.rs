@@ -132,7 +132,10 @@ impl TerminalGuard {
         // not answer the query.
         let _ = execute!(
             stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+            )
         );
         execute!(
             stdout,
@@ -176,7 +179,10 @@ impl TerminalGuard {
             enable_raw_mode()?;
             let _ = execute!(
                 self.terminal.backend_mut(),
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                )
             );
             execute!(
                 self.terminal.backend_mut(),

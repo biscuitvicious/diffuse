@@ -5,13 +5,15 @@
 //! and timed without a terminal.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    collections::VecDeque,
     io,
     path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
 };
 
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use diffuse_tui::{
     AppState, PollOutcome, Session,
     core::{
@@ -21,7 +23,7 @@ use diffuse_tui::{
     render::DiffuseTheme,
     run_session,
 };
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
@@ -38,13 +40,14 @@ fn sample_output() -> PipelineOutput {
 /// A session that renders into an in-memory buffer, records every frame, and
 /// ends the loop after `polls_left` idle polls.
 struct BufferedSession {
-    terminal: Terminal<TestBackend>,
+    terminal: RefCell<Terminal<TestBackend>>,
     polls_left: Cell<usize>,
+    events: RefCell<VecDeque<Option<Event>>>,
     drawn: usize,
     first_frame: Option<(Instant, String)>,
     frames: Vec<String>,
-    width: u16,
-    height: u16,
+    width: Cell<u16>,
+    height: Cell<u16>,
 }
 
 impl BufferedSession {
@@ -55,22 +58,35 @@ impl BufferedSession {
     fn with_dimensions(width: u16, height: u16, polls_left: usize) -> Self {
         let backend = TestBackend::new(width, height);
         Self {
-            terminal: Terminal::new(backend).expect("in-memory terminal must construct"),
+            terminal: RefCell::new(
+                Terminal::new(backend).expect("in-memory terminal must construct"),
+            ),
             polls_left: Cell::new(polls_left),
+            events: RefCell::new(VecDeque::new()),
             drawn: 0,
             first_frame: None,
             frames: Vec::new(),
-            width,
-            height,
+            width: Cell::new(width),
+            height: Cell::new(height),
         }
+    }
+
+    fn push_event(&self, event: Event) {
+        self.events.borrow_mut().push_back(Some(event));
+    }
+
+    fn push_idle(&self) {
+        self.events.borrow_mut().push_back(None);
     }
 
     /// Flatten the rendered buffer into text with one line per terminal row.
     fn screen_text(&self) -> String {
-        let buffer = self.terminal.backend().buffer();
+        let term = self.terminal.borrow();
+        let buffer = term.backend().buffer();
         let mut text = String::new();
-        for y in 0..self.height {
-            for x in 0..self.width {
+        let (w, h) = (self.width.get(), self.height.get());
+        for y in 0..h {
+            for x in 0..w {
                 text.push_str(buffer[(x, y)].symbol());
             }
             text.push('\n');
@@ -81,6 +97,19 @@ impl BufferedSession {
 
 impl Session for BufferedSession {
     fn poll_outcome(&self, _timeout: Duration) -> PollOutcome {
+        if let Some(maybe_event) = self.events.borrow_mut().pop_front() {
+            if let Some(event) = maybe_event {
+                if let Event::Resize(w, h) = event {
+                    self.width.set(w);
+                    self.height.set(h);
+                    let mut term = self.terminal.borrow_mut();
+                    term.backend_mut().resize(w, h);
+                    let _ = term.resize(Rect::new(0, 0, w, h));
+                }
+                return PollOutcome::Event(event);
+            }
+            return PollOutcome::Idle;
+        }
         let remaining = self.polls_left.get();
         if remaining == 0 {
             return PollOutcome::Disconnected;
@@ -90,11 +119,12 @@ impl Session for BufferedSession {
     }
 
     fn size(&self) -> (u16, u16) {
-        (self.width, self.height)
+        (self.width.get(), self.height.get())
     }
 
     fn draw_frame(&mut self, state: &mut AppState) -> io::Result<()> {
         self.terminal
+            .borrow_mut()
             .draw(|frame| state.render_ratatui_frame(frame))
             .map_err(io::Error::other)?;
         self.drawn += 1;
@@ -373,5 +403,233 @@ fn test_run_session_defaults_to_unified_on_narrow_terminal() {
     assert!(
         !screen.contains('│'),
         "120-col terminal must default to unified diff (no divider):\n{screen}"
+    );
+}
+
+#[test]
+fn test_run_session_auto_adapts_to_resize() {
+    let session = BufferedSession::with_dimensions(180, 24, 2);
+    session.push_event(Event::Resize(120, 24));
+    session.push_idle();
+    session.push_event(Event::Resize(190, 24));
+    session.push_idle();
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 3);
+    assert!(
+        session.frames[0].contains('│'),
+        "Frame 1 at 180 cols must be split mode:\n{}",
+        session.frames[0]
+    );
+    assert!(
+        !session.frames[1].contains('│'),
+        "Frame 2 at 120 cols must adapt to unified mode:\n{}",
+        session.frames[1]
+    );
+    assert!(
+        session.frames[2].contains('│'),
+        "Frame 3 at 190 cols must adapt to split mode:\n{}",
+        session.frames[2]
+    );
+}
+
+#[test]
+fn test_run_session_explicit_cli_side_by_side_does_not_adapt() {
+    let session = BufferedSession::with_dimensions(180, 24, 1);
+    session.push_event(Event::Resize(120, 24));
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        Some(true),
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 2);
+    assert!(session.frames[0].contains('│'));
+    assert!(
+        session.frames[1].contains('│'),
+        "Frame 2 at 120 cols must remain split when explicit:\n{}",
+        session.frames[1]
+    );
+}
+
+#[test]
+fn test_run_session_explicit_cli_unified_does_not_adapt() {
+    let session = BufferedSession::with_dimensions(120, 24, 1);
+    session.push_event(Event::Resize(190, 24));
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        Some(false),
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 2);
+    assert!(!session.frames[0].contains('│'));
+    assert!(
+        !session.frames[1].contains('│'),
+        "Frame 2 at 190 cols must remain unified when explicit:\n{}",
+        session.frames[1]
+    );
+}
+
+#[test]
+fn test_run_session_explicit_shortcut_locks_mode_across_resize() {
+    let session = BufferedSession::with_dimensions(180, 24, 2);
+    session.push_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('\\'),
+        KeyModifiers::NONE,
+    )));
+    session.push_idle();
+    session.push_event(Event::Resize(200, 24));
+    session.push_idle();
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 3);
+    assert!(session.frames[0].contains('│'));
+    assert!(!session.frames[1].contains('│'));
+    assert!(
+        !session.frames[2].contains('│'),
+        "Frame 3 at 200 cols must remain unified after user toggled:\n{}",
+        session.frames[2]
+    );
+}
+
+#[test]
+fn test_run_session_f3_shortcut_toggles_side_by_side() {
+    let session = BufferedSession::with_dimensions(120, 24, 1);
+    // 120 cols defaults to unified mode. Pressing F3 toggles to split mode.
+    session.push_event(Event::Key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)));
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 2);
+    assert!(!session.frames[0].contains('│'));
+    assert!(
+        session.frames[1].contains('│'),
+        "Frame 2 after F3 must be split mode:\n{}",
+        session.frames[1]
+    );
+}
+
+#[test]
+fn test_run_session_b_shortcut_toggles_side_by_side() {
+    let session = BufferedSession::with_dimensions(120, 24, 1);
+    // 120 cols defaults to unified mode. Pressing 'b' toggles to split mode.
+    session.push_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('b'),
+        KeyModifiers::NONE,
+    )));
+
+    let mut session = session;
+    let target = ReviewTarget::from_repo(Repo::from_key("diffuse"));
+    run_session(
+        &mut session,
+        sample_output(),
+        None,
+        None,
+        target,
+        PathBuf::from("/nonexistent/notes.json"),
+        DEFAULT_EXPAND_LINES,
+        DiffuseTheme::dark(),
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("the loop returns");
+
+    assert!(session.frames.len() >= 2);
+    assert!(!session.frames[0].contains('│'));
+    assert!(
+        session.frames[1].contains('│'),
+        "Frame 2 after 'b' must be split mode:\n{}",
+        session.frames[1]
     );
 }

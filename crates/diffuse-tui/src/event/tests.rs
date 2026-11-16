@@ -1072,11 +1072,55 @@ fn test_toggle_side_by_side_keybinding() {
         Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE)),
     );
     assert!(s.side_by_side);
+    assert_eq!(s.explicit_side_by_side, Some(true));
 
     // Press '|'
     handle_event(
         &mut s,
         Event::Key(KeyEvent::new(KeyCode::Char('|'), KeyModifiers::SHIFT)),
     );
+    assert!(!s.side_by_side);
+    assert_eq!(s.explicit_side_by_side, Some(false));
+
+    // Press 'b'
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
+    );
+    assert!(s.side_by_side);
+    assert_eq!(s.explicit_side_by_side, Some(true));
+
+    // Press 'B'
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT)),
+    );
+    assert!(!s.side_by_side);
+    assert_eq!(s.explicit_side_by_side, Some(false));
+
+    // Press F3
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)),
+    );
+    assert!(s.side_by_side);
+    assert_eq!(s.explicit_side_by_side, Some(true));
+}
+
+#[test]
+fn test_event_resize_updates_geometry_and_adapts_side_by_side() {
+    let mut s = state_with_rows().with_explicit_side_by_side(None);
+    assert!(!s.side_by_side);
+
+    // Resize event to wide (180x30)
+    handle_event(&mut s, Event::Resize(180, 30));
+    assert_eq!(s.terminal_width, 180);
+    assert_eq!(s.screen_height, 30);
+    assert!(s.side_by_side);
+
+    // Resize event to narrow (100x20)
+    handle_event(&mut s, Event::Resize(100, 20));
+    assert_eq!(s.terminal_width, 100);
+    assert_eq!(s.screen_height, 20);
     assert!(!s.side_by_side);
 }

@@ -98,6 +98,7 @@ impl AppState {
             show_old_line_gutter: None,
             explicit_line_num_width: None,
             side_by_side: false,
+            explicit_side_by_side: Some(false),
             loading_files: HashSet::new(),
             on_demand_tx: None,
             on_demand_rx: None,
@@ -166,9 +167,21 @@ impl AppState {
 
     pub fn with_side_by_side(mut self, side_by_side: bool) -> Self {
         self.side_by_side = side_by_side;
+        self.explicit_side_by_side = Some(side_by_side);
         let (flat, hunk_starts) = self.build_current_flat();
         self.flat = flat;
         self.hunk_starts = hunk_starts;
+        self
+    }
+
+    pub fn with_explicit_side_by_side(mut self, explicit: Option<bool>) -> Self {
+        self.explicit_side_by_side = explicit;
+        if let Some(sbs) = explicit {
+            self.side_by_side = sbs;
+            let (flat, hunk_starts) = self.build_current_flat();
+            self.flat = flat;
+            self.hunk_starts = hunk_starts;
+        }
         self
     }
 

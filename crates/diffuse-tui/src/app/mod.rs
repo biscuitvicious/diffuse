@@ -91,6 +91,14 @@ pub struct AppState {
     pub explicit_line_num_width: Option<usize>,
     /// Whether the diff is displayed in side-by-side (split dual-pane) layout.
     pub side_by_side: bool,
+    /// Explicit side-by-side preference if set via CLI flag (`--side-by-side`
+    /// -> `Some(true)`, `--unified` -> `Some(false)`) or interactive toggle
+    /// in-TUI (`\` / `|` / `F3`).
+    ///
+    /// When `None`, side-by-side mode automatically adapts based on terminal
+    /// width (active iff both panes individually receive >= 60 text columns
+    /// after subtracting scrollbar, divider, and gutters).
+    pub explicit_side_by_side: Option<bool>,
     pub loading_files: HashSet<usize>,
     pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
     pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,
