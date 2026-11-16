@@ -132,14 +132,18 @@ fn test_repository_native_methods() {
     assert_eq!(repo.rev_to_short_hash(""), None);
     assert_eq!(repo.rev_to_full_hash(""), None);
 
-    // Commit range resolution
+    // Commit range resolution: single-commit range c1..c2 resolves to c2^!
     let range_str = repo.resolve_commit_range(&[format!("{c1}..{c2}")]).unwrap();
-    assert_eq!(range_str, format!("{}..{}", &c1[..7], &c2[..7]));
+    assert_eq!(range_str, format!("{}^!", &c2[..7]));
 
     let two_arg_range = repo
         .resolve_commit_range(&[c1.clone(), c2.clone()])
         .unwrap();
-    assert_eq!(two_arg_range, format!("{}..{}", &c1[..7], &c2[..7]));
+    assert_eq!(two_arg_range, format!("{}^!", &c2[..7]));
+
+    // Multi-commit range c1..c4 remains c1..c4
+    let multi_range = repo.resolve_commit_range(&[format!("{c1}..{c4}")]).unwrap();
+    assert_eq!(multi_range, format!("{}..{}", &c1[..7], &c4[..7]));
 
     // Notes commit resolution
     let notes_commit = repo.notes_commit(&[format!("{c1}..{c4}")]);
@@ -189,17 +193,22 @@ fn test_parse_git_rev_and_pathspecs_native() {
 fn test_review_target_native() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let (c1, c2, _, _) = init_test_git_repo(dir);
+    let (c1, c2, _, c4) = init_test_git_repo(dir);
 
     let repo = Repo::from_root(dir);
-    let target = ReviewTarget::from_repo_args(repo, vec![format!("{c1}..{c2}")], false);
+    // Single-commit range c1..c2 displays c2^!
+    let target = ReviewTarget::from_repo_args(repo.clone(), vec![format!("{c1}..{c2}")], false);
     assert!(target.is_range());
     assert_eq!(target.branch(), "main");
     assert!(target.is_work_tree());
     assert!(!target.is_staged());
+    assert_eq!(target.commit_range(), Some(format!("{}^!", &c2[..7])));
+
+    // Multi-commit range c1..c4 remains c1..c4
+    let multi_target = ReviewTarget::from_repo_args(repo, vec![format!("{c1}..{c4}")], false);
     assert_eq!(
-        target.commit_range(),
-        Some(format!("{}..{}", &c1[..7], &c2[..7]))
+        multi_target.commit_range(),
+        Some(format!("{}..{}", &c1[..7], &c4[..7]))
     );
 
     // Path matching
@@ -1110,6 +1119,45 @@ fn test_is_single_commit_range() {
     let blob = repo.load_blob("HEAD", "a.txt").expect("blob");
     assert!(!repo.is_single_commit_range(&blob.id, "HEAD"));
     assert!(!repo.is_single_commit_range("HEAD", &blob.id));
+
+    // Test resolve_commit_range for single commit vs merge commit
+    let s1 = &c1.to_string()[..7];
+    let s2 = &c2.to_string()[..7];
+    let s3 = &c3.to_string()[..7];
+    let s_merge = &merge_commit.to_string()[..7];
+
+    // Single commit range: c1..c2 displays c2^!
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c1}..{c2}")]),
+        Some(format!("{s2}^!"))
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&[c1.to_string(), c2.to_string()]),
+        Some(format!("{s2}^!"))
+    );
+
+    // Multi-commit range: c1..c3 remains c1..c3
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c1}..{c3}")]),
+        Some(format!("{s1}..{s3}"))
+    );
+
+    // Merge commit ranges: c1..merge and c2..merge have > 1 parent so they stay
+    // start..end
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c1}..{merge_commit}")]),
+        Some(format!("{s1}..{s_merge}"))
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c2}..{merge_commit}")]),
+        Some(format!("{s2}..{s_merge}"))
+    );
+
+    // Explicit caret-exclamation on merge commit
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{merge_commit}^!")]),
+        Some(format!("{s_merge}^!"))
+    );
 }
 
 #[test]

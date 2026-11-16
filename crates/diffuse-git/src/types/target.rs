@@ -155,14 +155,22 @@ impl ReviewTarget {
         self.repo.root()
     }
 
-    /// Formatted commit range string (e.g. `c1..c2`), or `None` if reviewing
-    /// working tree.
+    /// Formatted commit range string (e.g. `c1..c2` or `c2^!`), or `None` if
+    /// reviewing working tree.
     pub fn commit_range(&self) -> Option<String> {
         if let Some(root) = self.repo.root()
             && let Ok(repo) = crate::repository::Repository::open(root)
             && let Some(r) = repo.resolve_commit_range(&self.git_revs)
         {
             return Some(r);
+        }
+        if let Some(ref r) = self.range
+            && let Some(root) = self.repo.root()
+            && let Ok(repo) = crate::repository::Repository::open(root)
+            && repo.is_single_commit_range(&r.0, &r.1)
+        {
+            let short = repo.rev_to_short_hash(&r.1).unwrap_or_else(|| r.1.clone());
+            return Some(format!("{short}^!"));
         }
         self.range.as_ref().map(ToString::to_string)
     }

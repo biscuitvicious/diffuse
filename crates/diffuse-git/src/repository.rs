@@ -167,7 +167,12 @@ impl Repository {
         }
     }
 
-    /// Resolve commit range string (e.g. `c1..c2`) from `git_revs`.
+    /// Resolve commit range string (e.g. `c1..c2` or `c2^!`) from `git_revs`.
+    ///
+    /// If a range `start..end` represents exactly one commit and `end^!` is the
+    /// same range based on git semantics (i.e. `end` is a single-parent commit
+    /// whose parent is `start`), formatted as `end^!`. Otherwise formatted as
+    /// `start..end` (or `start...end` for three-dot).
     pub fn resolve_commit_range(&self, git_revs: &[String]) -> Option<String> {
         let refs: Vec<&str> = git_revs
             .iter()
@@ -178,9 +183,8 @@ impl Repository {
         if refs.len() == 1 {
             let r = refs[0];
             if let Some(c) = r.strip_suffix("^!") {
-                let h_old = self.rev_to_short_hash(&format!("{c}^"))?;
                 let h_new = self.rev_to_short_hash(c)?;
-                return Some(format!("{h_old}..{h_new}"));
+                return Some(format!("{h_new}^!"));
             }
             if let Some((old_r, new_r)) = r.split_once("...") {
                 let left = if old_r.is_empty() { "HEAD" } else { old_r };
@@ -195,15 +199,21 @@ impl Repository {
             {
                 let left = if old_r.is_empty() { "HEAD" } else { old_r };
                 let right = if new_r.is_empty() { "HEAD" } else { new_r };
-                let h_left = self.rev_to_short_hash(left)?;
                 let h_right = self.rev_to_short_hash(right)?;
+                if self.is_single_commit_range(left, right) {
+                    return Some(format!("{h_right}^!"));
+                }
+                let h_left = self.rev_to_short_hash(left)?;
                 return Some(format!("{h_left}..{h_right}"));
             }
         }
 
         if refs.len() == 2 {
-            let h1 = self.rev_to_short_hash(refs[0])?;
             let h2 = self.rev_to_short_hash(refs[1])?;
+            if self.is_single_commit_range(refs[0], refs[1]) {
+                return Some(format!("{h2}^!"));
+            }
+            let h1 = self.rev_to_short_hash(refs[0])?;
             return Some(format!("{h1}..{h2}"));
         }
 

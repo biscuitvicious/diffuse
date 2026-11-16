@@ -264,21 +264,32 @@ fn test_resolve_commit_range_in_repo() {
     commit_files(&repo, "c2", &[("a.rs", "fn a() { 1 }\n")]).unwrap();
     let c2_hash = repo.rev_to_short_hash("HEAD").unwrap();
 
-    // Two-dot range
+    commit_files(&repo, "c3", &[("a.rs", "fn a() { 2 }\n")]).unwrap();
+    let c3_hash = repo.rev_to_short_hash("HEAD").unwrap();
+
+    // Two-dot range representing 1 commit (HEAD~1..HEAD) resolves to end^!
     let r1 = resolve_commit_range(dir, &["HEAD~1..HEAD".into()]);
-    assert_eq!(r1, Some(format!("{c1_hash}..{c2_hash}")));
+    assert_eq!(r1, Some(format!("{c3_hash}^!")));
+
+    // Two-dot range representing multiple commits (c1..c3) remains start..end
+    let r1_multi = resolve_commit_range(dir, &[format!("{c1_hash}..{c3_hash}")]);
+    assert_eq!(r1_multi, Some(format!("{c1_hash}..{c3_hash}")));
 
     // Three-dot range
     let r2 = resolve_commit_range(dir, &["HEAD~1...HEAD".into()]);
-    assert_eq!(r2, Some(format!("{c1_hash}...{c2_hash}")));
+    assert_eq!(r2, Some(format!("{c2_hash}...{c3_hash}")));
 
     // Caret-exclamation
     let r3 = resolve_commit_range(dir, &["HEAD^!".into()]);
-    assert_eq!(r3, Some(format!("{c1_hash}..{c2_hash}")));
+    assert_eq!(r3, Some(format!("{c3_hash}^!")));
 
-    // Two positional commit args
+    // Two positional commit args (single commit)
     let r4 = resolve_commit_range(dir, &["HEAD~1".into(), "HEAD".into()]);
-    assert_eq!(r4, Some(format!("{c1_hash}..{c2_hash}")));
+    assert_eq!(r4, Some(format!("{c3_hash}^!")));
+
+    // Two positional commit args (multiple commits)
+    let r4_multi = resolve_commit_range(dir, &[c1_hash.clone(), c3_hash.clone()]);
+    assert_eq!(r4_multi, Some(format!("{c1_hash}..{c3_hash}")));
 
     // Non-commit ranges:
     assert_eq!(resolve_commit_range(dir, &[]), None);
@@ -287,9 +298,9 @@ fn test_resolve_commit_range_in_repo() {
     assert_eq!(resolve_commit_range(dir, &["HEAD".into()]), None);
     assert_eq!(resolve_commit_range(dir, &["a.rs".into()]), None);
 
-    // Also test that load_git_repo populates commit_range
+    // Also test that load_git_repo populates commit_range with end^!
     let res = load_git_repo(dir, &["HEAD~1..HEAD".into()], &[], false, 4).unwrap();
-    assert_eq!(res.commit_range, Some(format!("{c1_hash}..{c2_hash}")));
+    assert_eq!(res.commit_range, Some(format!("{c3_hash}^!")));
 }
 
 #[test]

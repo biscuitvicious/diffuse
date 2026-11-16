@@ -3443,6 +3443,56 @@ fn test_app_commit_range_in_render_ratatui() {
 }
 
 #[test]
+fn test_app_single_commit_range_caret_bang_in_render_ratatui() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    let output = PipelineOutput {
+        files: vec![],
+        branch: "work".into(),
+        untracked_skipped: vec![],
+    };
+
+    let mut state = AppState::new(
+        output,
+        "demo_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_commit_range(Some("7e0caab^!".into()));
+
+    let frame = terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = frame.buffer;
+
+    let mut row_0 = String::new();
+    for x in 0..80 {
+        row_0.push_str(buffer[(x, 0)].symbol());
+    }
+    assert!(
+        row_0.contains("7e0caab^!"),
+        "Header bar must show single-commit range with caret-bang: {}",
+        row_0
+    );
+    assert!(
+        row_0.contains("\u{2387}"),
+        "Header bar must show branch glyph with commit range: {}",
+        row_0
+    );
+    assert!(
+        !row_0.contains("work"),
+        "Header bar must NOT show branch name when commit range is set: {}",
+        row_0
+    );
+}
+
+#[test]
 fn test_app_header_bar_shows_staged_badge() {
     let output = PipelineOutput {
         files: vec![],

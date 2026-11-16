@@ -1559,3 +1559,119 @@ fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
         "switching back to side-by-side mode must suppress expanded mod rows again"
     );
 }
+
+#[test]
+fn test_branch_badge_single_commit_range_vs_merge_commit() {
+    use diffuse_git::{
+        Repo, ReviewTarget,
+        testing::{commit_files, commit_index_with_parents, init_repo},
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let repo = init_repo(dir).expect("init_repo");
+
+    let c1 = commit_files(&repo, "c1", &[("file.rs", "fn a() {}\n")]).expect("c1");
+    let c2 = commit_files(&repo, "c2", &[("file.rs", "fn a() { 1 }\n")]).expect("c2");
+    let c3 = commit_files(&repo, "c3", &[("file.rs", "fn a() { 2 }\n")]).expect("c3");
+    let merge_commit =
+        commit_index_with_parents(&repo, "merge", &[c1, c2]).expect("create merge commit");
+
+    let s1 = &c1.to_string()[..7];
+    let s2 = &c2.to_string()[..7];
+    let s3 = &c3.to_string()[..7];
+    let s_merge = &merge_commit.to_string()[..7];
+
+    let w = 80;
+    let h = 20;
+
+    // 1. Single commit range (c1..c2): represents 1 commit, displays c2^!
+    {
+        let target =
+            ReviewTarget::from_repo_args(Repo::from_root(dir), vec![format!("{c1}..{c2}")], false);
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains(&format!("{s2}^!")),
+            "Header must display single-commit range with caret-bang: {row_0}"
+        );
+        assert!(!row_0.contains(&format!("{s1}..{s2}")));
+    }
+
+    // 2. Multi-commit range (c1..c3): represents 2 commits, displays c1..c3
+    {
+        let target =
+            ReviewTarget::from_repo_args(Repo::from_root(dir), vec![format!("{c1}..{c3}")], false);
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains(&format!("{s1}..{s3}")),
+            "Header must display multi-commit range: {row_0}"
+        );
+        assert!(!row_0.contains(&format!("{s3}^!")));
+    }
+
+    // 3. Merge commit range (c1..merge): merge commit has > 1 parent so end^! is
+    //    not the same range based on git semantics; stays start..end
+    {
+        let target = ReviewTarget::from_repo_args(
+            Repo::from_root(dir),
+            vec![format!("{c1}..{merge_commit}")],
+            false,
+        );
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains(&format!("{s1}..{s_merge}")),
+            "Header must retain start..end for merge commit with multiple parents: {row_0}"
+        );
+        assert!(!row_0.contains(&format!("{s_merge}^!")));
+    }
+
+    // 4. Explicit caret-bang on merge commit: displays merge^!
+    {
+        let target = ReviewTarget::from_repo_args(
+            Repo::from_root(dir),
+            vec![format!("{merge_commit}^!")],
+            false,
+        );
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains(&format!("{s_merge}^!")),
+            "Header must display explicit caret-bang on merge commit: {row_0}"
+        );
+    }
+}
