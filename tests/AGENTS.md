@@ -22,7 +22,7 @@ discipline for any change in golden output.
 
 > [!IMPORTANT]
 > **Validated vs. Provisional Goldens**:
-> - **Validated Goldens (`theme-scrollbar-palette`, `opt-4-manual-scanner-prefilter`, `container-compatibility`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strong signal against unintended changes and regressions, while allowing room for deliberate refinements, visual preferences, and demonstrable improvements.
+> - **Validated Goldens (`theme-scrollbar-palette`, `opt-4-manual-scanner-prefilter`, `container-compatibility`, `scrollbar-grab-drag`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strong signal against unintended changes and regressions, while allowing room for deliberate refinements, visual preferences, and demonstrable improvements.
 > - **Unvalidated / Provisional Goldens (all others)**: Captured from earlier engine runs and not yet fully audited for ideal rendering quality. They guard against unintended regressions, but carry lower inertia when algorithmic improvements produce demonstrably cleaner, strictly better diffs.
 
 | corpus | rust walk | render golden | status | notes |
@@ -43,7 +43,7 @@ discipline for any change in golden output.
 | `fn-return-tail` | ✅ | ✅ | Provisional | Return type slot pairing and trailing delimiter boundary alignment (pending full review) |
 | `osc11-query-gate` | ✅ | ✅ | Provisional | Terminal mode query gating and interactive reflow expansion (pending full review) |
 | `linenum-u32` | ✅ | ✅ | Provisional | Primitive line numbers and non-zero constructor preconditions refactoring (pending full review) |
-| `scrollbar-grab-drag` | ✅ | ✅ | Provisional | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction (pending full review) |
+| `scrollbar-grab-drag` | ✅ | ✅ | **Validated** | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction |
 | `viewport-scroll-boundaries` | ✅ | ✅ | Provisional | Viewport scroll boundaries and reflow expansion (pending full review) |
 | `container-compatibility` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (container compatibility in Gotoh alignment and submodule commit pairing); strong signal against changes |
 | `diffcoord-anchoring` | ✅ | ✅ | Provisional | Two-sided coordinate anchoring, multi-line ranges, rich markdown formatting, and unanchored source line preservation (pending full review) |
