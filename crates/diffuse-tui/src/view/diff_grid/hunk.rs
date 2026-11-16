@@ -1,9 +1,13 @@
-pub use diffuse_render::hunk_divider_text;
+pub use diffuse_render::{hunk_divider_spans, hunk_divider_text};
 use ratatui::text::Line;
 
 use crate::{
     core::wire::OutputHunk,
-    render::{Badge, DiffuseTheme, slice_by_visual_width, span::StyledSpan, width::display_width},
+    render::{
+        Badge, DiffuseTheme, slice_by_visual_width,
+        span::{StyledSpan, slice_spans, spans_width},
+        width::display_width,
+    },
     view::span::line_from_spans,
 };
 
@@ -60,19 +64,24 @@ pub fn hunk_divider_segment_line(
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
-    let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    let divider = theme.palette[crate::render::Cursor::from_banner_state(is_selected, is_current)]
-        .hunk_divider;
-    let total_w = display_width(&txt);
+    let tier = crate::render::Cursor::from_banner_state(is_selected, is_current);
+    let divider = &theme.palette[tier].hunk_divider;
+    let bg = if divider.bg != crate::render::Color::Primary {
+        Some(divider.bg)
+    } else {
+        None
+    };
+    let spans = hunk_divider_spans(badge, hunk, hidden_gap, divider, &theme.palette.ui, bg);
+    let total_w = spans_width(&spans);
     if seg_start >= total_w {
-        return line_from_spans(vec![divider_span("─".repeat(content_width), &divider)]);
+        return line_from_spans(vec![divider_span("─".repeat(content_width), divider)]);
     }
-    let mut piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let piece_w = display_width(&piece);
+    let mut sliced = slice_spans(&spans, seg_start, content_width);
+    let piece_w = spans_width(&sliced);
     if piece_w < content_width {
-        piece.push_str(&"─".repeat(content_width - piece_w));
+        sliced.push(divider_span("─".repeat(content_width - piece_w), divider));
     }
-    line_from_spans(vec![divider_span(piece, &divider)])
+    line_from_spans(sliced)
 }
 
 /// Render a hunk header divider as a styled Ratatui [`Line`] with theme

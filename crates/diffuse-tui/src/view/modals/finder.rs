@@ -237,10 +237,10 @@ pub fn render_finder_modal_widget(
                     total: Some(hunks.len()),
                 };
                 let mut div_line = hunk_divider_line(badge, h, 0, false, inner_w, theme);
-                if let Some(span) = div_line.spans.first_mut()
-                    && span.style.bg.is_none()
-                {
-                    span.style = span.style.bg(crate::view::to_color(p.bg_modal));
+                for span in &mut div_line.spans {
+                    if span.style.bg.is_none() {
+                        span.style = span.style.bg(crate::view::to_color(p.bg_modal));
+                    }
                 }
                 preview_lines.push(div_line);
 

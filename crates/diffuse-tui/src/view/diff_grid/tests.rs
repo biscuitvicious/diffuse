@@ -362,6 +362,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         mk(RowKind::Add),
         mk(RowKind::Mod),
     ];
+    let theme = DiffuseTheme::dark();
     let with_rows = hunk_divider_line(
         Badge {
             idx: 1,
@@ -371,12 +372,30 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::dark(),
+        &theme,
     );
-    assert!(
-        with_rows
-            .to_string()
-            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 ────")
+    assert!(with_rows.to_string().contains("Hunk 2/2 −1 +4 ~1 ────"));
+    assert!(!with_rows.to_string().contains("lines:"));
+
+    let find_span_color =
+        |line: &ratatui::text::Line, text: &str| -> Option<ratatui::style::Color> {
+            line.spans
+                .iter()
+                .find(|s| s.content == text)
+                .and_then(|s| s.style.fg)
+        };
+    let ui = &theme.palette.ui;
+    assert_eq!(
+        find_span_color(&with_rows, "−1"),
+        Some(crate::view::to_color(ui.count_dels))
+    );
+    assert_eq!(
+        find_span_color(&with_rows, "+4"),
+        Some(crate::view::to_color(ui.count_adds))
+    );
+    assert_eq!(
+        find_span_color(&with_rows, "~1"),
+        Some(crate::view::to_color(ui.count_mods))
     );
 
     // Normal 8 lines hidden gap
@@ -389,13 +408,14 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         8,
         false,
         80,
-        &DiffuseTheme::dark(),
+        &theme,
     );
     assert!(
         expanded
             .to_string()
-            .contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines ────")
+            .contains("Hunk 2/2 −1 +4 ~1 · 8 more lines ────")
     );
+    assert!(!expanded.to_string().contains("lines:"));
 
     // Zero-change hunk (e.g. synthetic note hunk) -> count badge is omitted
     let zero_hunk = OutputHunk {
@@ -414,7 +434,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::dark(),
+        &theme,
     );
     assert!(zero_div.to_string().contains("Hunk 1/1 ────"));
     assert!(!zero_div.to_string().contains("0 lines"));
@@ -429,7 +449,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         30,
         false,
         80,
-        &DiffuseTheme::dark(),
+        &theme,
     );
     assert!(
         zero_gap_div
@@ -449,12 +469,13 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::dark(),
+        &theme,
     );
-    assert!(
-        with_movs
-            .to_string()
-            .contains("Hunk 2/2 · 7 lines: −1 +4 ~1 ≈1 ────")
+    assert!(with_movs.to_string().contains("Hunk 2/2 −1 +4 ~1 ≈1 ────"));
+    assert!(!with_movs.to_string().contains("lines:"));
+    assert_eq!(
+        find_span_color(&with_movs, "≈1"),
+        Some(crate::view::to_color(ui.count_movs))
     );
 
     // Single line hidden
@@ -575,7 +596,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         30,
         &DiffuseTheme::dark(),
     );
-    assert!(seg0.to_string().contains("──── Hunk 2/2 ·"));
+    assert!(seg0.to_string().contains("──── Hunk 2/2 +50 ·"));
 
     // Segment 1 contains the wrapped continuation
     let seg1 = hunk_divider_segment_line(
@@ -946,8 +967,8 @@ fn test_divider_seg_count_drops_bar_only_trailing_segment() {
 
 #[test]
 fn test_divider_seg_count_keeps_salient_trailing_segment() {
-    // Leftover holds an arrow glyph: the wrap stays.
-    let txt = "──── H1 · 3 more lines: ▼ ────";
+    // Leftover holds text content: the wrap stays.
+    let txt = "──── Hunk 1/1 · 3 more lines ────";
     let w = display_width(txt) - 6;
     assert_eq!(divider_seg_count(txt, w), 2);
     // Narrow widths still wrap mid-content.

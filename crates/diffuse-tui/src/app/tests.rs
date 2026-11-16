@@ -1285,9 +1285,9 @@ index 111..222 100644
 
     // Verify dividers are re-rendered
     let frame = state.render_frame(140, 200);
-    assert!(frame.contains("──── Hunk 1/3 ·"));
-    assert!(frame.contains("──── Hunk 2/3 ·"));
-    assert!(frame.contains("──── Hunk 3/3 ·"));
+    assert!(frame.contains("──── Hunk 1/3"));
+    assert!(frame.contains("──── Hunk 2/3"));
+    assert!(frame.contains("──── Hunk 3/3"));
 }
 
 #[test]
@@ -1361,7 +1361,7 @@ index 1111111..2222222 100644
         "file header must remain visible on screen"
     );
     assert!(
-        frame_after.contains("──── Hunk 1/1 ·"),
+        frame_after.contains("──── Hunk 1/1"),
         "H1 divider must remain visible on screen"
     );
     assert!(
@@ -1527,8 +1527,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    // Narrow: the divider (~45 chars with the gap tail) wraps to 2 segs.
-    let (w, h) = (35, 16);
+    // Narrow: the divider (~38 chars with the gap tail) wraps to 2 segs.
+    let (w, h) = (28, 16);
     let mut state = AppState::new(
         output.clone(),
         "test_repo".into(),

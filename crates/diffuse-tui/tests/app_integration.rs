@@ -512,7 +512,7 @@ fn test_expand_all_merges_and_reset_restores() {
         "reset must split back"
     );
     let frame = state.render_frame(140, 80);
-    assert!(frame.contains("──── Hunk 1/2 ·") || frame.contains("──── Hunk 2/2 ·"));
+    assert!(frame.contains("──── Hunk 1/2") || frame.contains("──── Hunk 2/2"));
 }
 
 // 11. Streaming append — live file ingestion
@@ -623,7 +623,8 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[2].contains("+1 ~1"));
 
     // Row 3: Hunk divider with context
-    assert!(screen_lines[3].contains("Hunk 1/1 · 2 lines"));
+    assert!(screen_lines[3].contains("Hunk 1/1 +1 ~1"));
+    assert!(!screen_lines[3].contains("2 lines"));
     assert!(screen_lines[3].contains("1021 more lines"));
 
     // Row 4..: Context and diff lines with gutter expand icon

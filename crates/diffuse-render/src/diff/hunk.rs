@@ -4,12 +4,11 @@ use crate::{
     Badge,
     ansi::ColorExt,
     core::wire::{OutputFile, OutputHunk},
-    counts::format_counts_plain,
-    row::slice_by_visual_width,
-    span::StyledSpan,
-    theme::DiffuseTheme,
-    width::display_width,
+    counts::{count_cells, format_counts_plain},
+    span::{StyledSpan, slice_spans, spans_width},
+    theme::{DiffuseTheme, SurfaceColors, UiPalette},
 };
+use yansi::Color;
 
 /// Compute the hidden line count before hunk `hi` in `file`.
 #[must_use]
@@ -52,23 +51,15 @@ pub fn hunk_leading_gap(file: &OutputFile, hi: usize) -> usize {
 }
 
 /// Build the raw text of a hunk header divider with format
-/// `──── Hunk 2/3 · 6 lines: −1 +4 ~1 ────` plus optional hidden-gap tail.
+/// `──── Hunk 2/3 −1 +4 ~1 ────` plus optional hidden-gap tail.
 #[must_use]
 pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> String {
     let counts = hunk.counts();
-    let (dels, adds, mods, movs) = (counts.dels, counts.adds, counts.mods, counts.movs);
-    let total = dels + adds + mods + movs;
-    let summary_part = if total > 0 {
-        let unit = if total == 1 { "line" } else { "lines" };
-        let s = format!("{total} {unit}");
-        let counts_str = format_counts_plain(&counts);
-        if counts_str.is_empty() {
-            format!(" · {s}")
-        } else {
-            format!(" · {s}: {counts_str}")
-        }
-    } else {
+    let counts_str = format_counts_plain(&counts);
+    let summary_part = if counts_str.is_empty() {
         String::new()
+    } else {
+        format!(" {counts_str}")
     };
 
     let gap_part = if hidden_gap > 0 {
@@ -80,38 +71,47 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
     format!("──── {}{summary_part}{gap_part} ────", badge.hunk_text())
 }
 
-/// Project a hunk header divider onto a single bold [`StyledSpan`]: the
-/// ruler-filled divider text in the divider foreground on an explicit
-/// background. Rest state resolves at the cursor baseline tier, whose asset
-/// background is `primary`: the divider inherits the canvas instead of
-/// naming a color. The pager paints no canvas of its own, so an inherited
-/// background must be written out explicitly (falling back to `bg_base`);
-/// otherwise a terminal whose own background differs from the theme's (a
-/// light terminal running the dark theme) shows through the hunk headers.
-/// The CLI maps `Primary` to `bg_base` while the TUI inherits — by design.
+/// Build the structured spans of a hunk header divider. Base spans (rule
+/// prefix, separators, gap text, rule postfix) use `divider.fg`.
+/// Count spans use their bucket colors from `ui`. All spans use `bg` and are
+/// bold.
 #[must_use]
 pub fn hunk_divider_spans(
     badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
-    width: usize,
-    theme: &DiffuseTheme,
-) -> StyledSpan {
-    let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    let piece = slice_by_visual_width(&txt, 0, width);
-    let piece_w = display_width(&piece);
-    let bar_str = if piece_w < width {
-        let ruler_len = width - piece_w;
-        format!("{piece}{}", "─".repeat(ruler_len))
-    } else {
-        piece
-    };
-    let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
-    let bg = match divider.bg {
-        yansi::Color::Primary => theme.palette.ui.bg_base,
-        color => color,
-    };
-    StyledSpan::styled(bar_str, Some(divider.fg), Some(bg)).with_bold(true)
+    divider: &SurfaceColors,
+    ui: &UiPalette,
+    bg: Option<Color>,
+) -> Vec<StyledSpan> {
+    let mut spans = Vec::new();
+
+    // 1. Prefix: `──── {badge}`
+    let prefix = format!("──── {}", badge.hunk_text());
+    spans.push(StyledSpan::styled(prefix, Some(divider.fg), bg).with_bold(true));
+
+    // 2. Change counts (if any)
+    let counts = hunk.counts();
+    let cells = count_cells(&counts, ui);
+    if !cells.is_empty() {
+        for cell in &cells {
+            spans.push(StyledSpan::styled(" ", Some(divider.fg), bg).with_bold(true));
+            let cell_text = format!("{}{}", cell.marker, cell.value);
+            spans.push(StyledSpan::styled(cell_text, Some(cell.color), bg).with_bold(true));
+        }
+    }
+
+    // 3. Hidden gap (if any)
+    if hidden_gap > 0 {
+        let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };
+        let gap_str = format!(" · {hidden_gap} more {gap_unit}");
+        spans.push(StyledSpan::styled(gap_str, Some(divider.fg), bg).with_bold(true));
+    }
+
+    // 4. Suffix: ` ────`
+    spans.push(StyledSpan::styled(" ────", Some(divider.fg), bg).with_bold(true));
+
+    spans
 }
 
 /// Render a hunk header divider filling the specified width with horizontal bar
@@ -126,9 +126,44 @@ pub fn render_hunk_divider(
     width: usize,
     theme: &DiffuseTheme,
 ) -> String {
-    let span = hunk_divider_spans(badge, hunk, hidden_gap, width, theme);
-    let bg_code = span.bg.map(|color| color.bg_code()).unwrap_or_default();
-    let fg_code = span.fg.map(|color| color.fg_code()).unwrap_or_default();
-    debug_assert!(span.bold && span.sgrs.is_none());
-    format!("{bg_code}\x1b[1m{fg_code}{}\x1b[0m", span.text)
+    let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
+    let bg = match divider.bg {
+        Color::Primary => theme.palette.ui.bg_base,
+        color => color,
+    };
+    let mut spans = hunk_divider_spans(
+        badge,
+        hunk,
+        hidden_gap,
+        divider,
+        &theme.palette.ui,
+        Some(bg),
+    );
+    let total_w = spans_width(&spans);
+    if total_w < width {
+        let ruler_len = width - total_w;
+        spans.push(
+            StyledSpan::styled("─".repeat(ruler_len), Some(divider.fg), Some(bg)).with_bold(true),
+        );
+    } else if total_w > width {
+        spans = slice_spans(&spans, 0, width);
+    }
+
+    let mut out = String::with_capacity(width + 64);
+    out.push_str(&bg.bg_code());
+    out.push_str("\x1b[1m");
+    let mut current_fg: Option<Color> = None;
+    for span in &spans {
+        if span.fg != current_fg {
+            if let Some(color) = span.fg {
+                out.push_str(&color.fg_code());
+            } else {
+                out.push_str("\x1b[39m");
+            }
+            current_fg = span.fg;
+        }
+        out.push_str(&span.text);
+    }
+    out.push_str("\x1b[0m");
+    out
 }

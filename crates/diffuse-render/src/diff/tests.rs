@@ -1275,6 +1275,80 @@ fn test_hunk_divider_text_omits_icons() {
 }
 
 #[test]
+fn test_hunk_divider_text_change_counts_without_lines_prefix() {
+    use crate::core::{parse::RowKind, wire::OutputRow};
+    let mk = |kind: RowKind| OutputRow {
+        kind,
+        mov_side: None,
+        new_line: None,
+        old_line: None,
+        runs: Vec::new(),
+        wholesale: false,
+        group: None,
+    };
+    let hunk = OutputHunk {
+        old_start: 10,
+        old_count: 5,
+        new_start: 10,
+        new_count: 5,
+        rows: vec![
+            mk(RowKind::Ctx),
+            mk(RowKind::Del),
+            mk(RowKind::Add),
+            mk(RowKind::Add),
+            mk(RowKind::Mod),
+        ],
+    };
+    let badge = Badge {
+        idx: 1,
+        total: Some(3),
+    };
+    let text_no_gap = hunk_divider_text(badge, &hunk, 0);
+    assert_eq!(text_no_gap, "──── Hunk 2/3 −1 +2 ~1 ────");
+    assert!(!text_no_gap.contains("lines:"));
+
+    let text_with_gap = hunk_divider_text(badge, &hunk, 8);
+    assert_eq!(text_with_gap, "──── Hunk 2/3 −1 +2 ~1 · 8 more lines ────");
+    assert!(!text_with_gap.contains("lines:"));
+}
+
+#[test]
+fn test_render_hunk_divider_colors_change_counts() {
+    use crate::{
+        ansi::ColorExt,
+        core::{parse::RowKind, wire::OutputRow},
+    };
+    let mk = |kind: RowKind| OutputRow {
+        kind,
+        mov_side: None,
+        new_line: None,
+        old_line: None,
+        runs: Vec::new(),
+        wholesale: false,
+        group: None,
+    };
+    let hunk = OutputHunk {
+        old_start: 10,
+        old_count: 5,
+        new_start: 10,
+        new_count: 5,
+        rows: vec![mk(RowKind::Del), mk(RowKind::Add), mk(RowKind::Mod)],
+    };
+    let badge = Badge {
+        idx: 0,
+        total: Some(1),
+    };
+    let theme = DiffuseTheme::dark();
+    let rendered = render_hunk_divider(badge, &hunk, 0, 80, &theme);
+    assert!(!rendered.contains("lines:"));
+    assert!(!rendered.contains("line:"));
+    // Change counts must be colored with their ui palette colors
+    assert!(rendered.contains(&theme.palette.ui.count_dels.fg_code()));
+    assert!(rendered.contains(&theme.palette.ui.count_adds.fg_code()));
+    assert!(rendered.contains(&theme.palette.ui.count_mods.fg_code()));
+}
+
+#[test]
 fn test_render_side_by_side_diff_output() {
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n ctx line\n-old line\n+new line\n ctx line 2\n";
     let new_content = [(
