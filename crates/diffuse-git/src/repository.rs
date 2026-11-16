@@ -167,6 +167,39 @@ impl Repository {
         }
     }
 
+    /// Try to resolve a user-friendly symbolic name (branch, tag, or HEAD) for
+    /// a commit revision. If no symbolic reference is found, falls back to the
+    /// short commit hash.
+    pub fn resolve_commit_display_name(&self, rev: &str) -> Option<String> {
+        let rev = rev.trim();
+        if rev.is_empty() {
+            return None;
+        }
+
+        // 1. Direct HEAD check
+        if rev.eq_ignore_ascii_case("HEAD") {
+            return Some("HEAD".to_string());
+        }
+
+        // 2. Check if rev itself resolves to a reference (branch, tag, or remote
+        //    branch)
+        if let Ok(Some(r)) = self.inner.try_find_reference(rev) {
+            let full_name = r.name().as_bstr();
+            if full_name.starts_with(b"refs/heads/")
+                || full_name.starts_with(b"refs/tags/")
+                || full_name.starts_with(b"refs/remotes/")
+            {
+                return Some(r.name().shorten().to_string());
+            }
+            if full_name == b"HEAD" {
+                return Some("HEAD".to_string());
+            }
+        }
+
+        // 3. Fall back to short commit hash
+        self.rev_to_short_hash(rev)
+    }
+
     /// Resolve commit range string (e.g. `c1..c2` or `c2^!`) from `git_revs`.
     ///
     /// If a range `start..end` represents exactly one commit and `end^!` is the
@@ -183,8 +216,10 @@ impl Repository {
         if refs.len() == 1 {
             let r = refs[0];
             if let Some(c) = r.strip_suffix("^!") {
-                let h_new = self.rev_to_short_hash(c)?;
-                return Some(format!("{h_new}^!"));
+                let name = self
+                    .resolve_commit_display_name(c)
+                    .or_else(|| self.rev_to_short_hash(c))?;
+                return Some(format!("{name}^!"));
             }
             if let Some((old_r, new_r)) = r.split_once("...") {
                 let left = if old_r.is_empty() { "HEAD" } else { old_r };
@@ -199,20 +234,26 @@ impl Repository {
             {
                 let left = if old_r.is_empty() { "HEAD" } else { old_r };
                 let right = if new_r.is_empty() { "HEAD" } else { new_r };
-                let h_right = self.rev_to_short_hash(right)?;
                 if self.is_single_commit_range(left, right) {
-                    return Some(format!("{h_right}^!"));
+                    let name = self
+                        .resolve_commit_display_name(right)
+                        .or_else(|| self.rev_to_short_hash(right))?;
+                    return Some(format!("{name}^!"));
                 }
+                let h_right = self.rev_to_short_hash(right)?;
                 let h_left = self.rev_to_short_hash(left)?;
                 return Some(format!("{h_left}..{h_right}"));
             }
         }
 
         if refs.len() == 2 {
-            let h2 = self.rev_to_short_hash(refs[1])?;
             if self.is_single_commit_range(refs[0], refs[1]) {
-                return Some(format!("{h2}^!"));
+                let name = self
+                    .resolve_commit_display_name(refs[1])
+                    .or_else(|| self.rev_to_short_hash(refs[1]))?;
+                return Some(format!("{name}^!"));
             }
+            let h2 = self.rev_to_short_hash(refs[1])?;
             let h1 = self.rev_to_short_hash(refs[0])?;
             return Some(format!("{h1}..{h2}"));
         }

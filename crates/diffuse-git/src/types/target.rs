@@ -169,8 +169,11 @@ impl ReviewTarget {
             && let Ok(repo) = crate::repository::Repository::open(root)
             && repo.is_single_commit_range(&r.0, &r.1)
         {
-            let short = repo.rev_to_short_hash(&r.1).unwrap_or_else(|| r.1.clone());
-            return Some(format!("{short}^!"));
+            let name = repo
+                .resolve_commit_display_name(&r.1)
+                .or_else(|| repo.rev_to_short_hash(&r.1))
+                .unwrap_or_else(|| r.1.clone());
+            return Some(format!("{name}^!"));
         }
         self.range.as_ref().map(ToString::to_string)
     }

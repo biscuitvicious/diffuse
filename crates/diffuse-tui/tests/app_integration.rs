@@ -1674,4 +1674,56 @@ fn test_branch_badge_single_commit_range_vs_merge_commit() {
             "Header must display explicit caret-bang on merge commit: {row_0}"
         );
     }
+
+    // 5. Symbolic branch name with caret-bang (e.g. scrollbar-grab-drag^!)
+    {
+        repo.raw()
+            .reference(
+                "refs/heads/scrollbar-grab-drag",
+                c2,
+                gix::refs::transaction::PreviousValue::Any,
+                "create branch scrollbar-grab-drag",
+            )
+            .expect("create branch");
+
+        let target = ReviewTarget::from_repo_args(
+            Repo::from_root(dir),
+            vec!["scrollbar-grab-drag^!".to_string()],
+            false,
+        );
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains("scrollbar-grab-drag^!"),
+            "Header must display symbolic branch name with caret-bang: {row_0}"
+        );
+    }
+
+    // 6. HEAD with caret-bang (HEAD^!)
+    {
+        let target =
+            ReviewTarget::from_repo_args(Repo::from_root(dir), vec!["HEAD^!".to_string()], false);
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            diffuse_tui::render::DiffuseTheme::dark(),
+        )
+        .with_target(target);
+
+        let buf = state.render_to_buffer(w, h);
+        let row_0: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row_0.contains("HEAD^!"),
+            "Header must display HEAD with caret-bang: {row_0}"
+        );
+    }
 }

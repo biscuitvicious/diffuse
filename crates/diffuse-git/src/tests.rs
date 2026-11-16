@@ -1276,3 +1276,101 @@ fn test_pathspecs_match_with_excludes() {
     assert!(!pathspecs_match("crates/ignored/file.rs", &combo));
     assert!(!pathspecs_match("README.md", &combo));
 }
+
+#[test]
+fn test_resolve_commit_display_name() {
+    use crate::testing::{commit_files, create_tag, init_repo};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path()).expect("init_repo succeeds");
+
+    let c1 = commit_files(&repo, "c1", &[("a.txt", "1\n")]).expect("c1");
+    create_tag(&repo, "v1.0", c1).expect("tag v1.0");
+
+    let c2 = commit_files(&repo, "c2", &[("a.txt", "2\n")]).expect("c2");
+
+    repo.raw()
+        .reference(
+            "refs/heads/scrollbar-grab-drag",
+            c2,
+            gix::refs::transaction::PreviousValue::Any,
+            "create branch scrollbar-grab-drag",
+        )
+        .expect("create branch");
+
+    let _c3 = commit_files(&repo, "c3", &[("a.txt", "3\n")]).expect("c3");
+
+    // 1. Exact branch name
+    assert_eq!(
+        repo.resolve_commit_display_name("scrollbar-grab-drag"),
+        Some("scrollbar-grab-drag".to_string())
+    );
+
+    // 2. Exact tag name
+    assert_eq!(
+        repo.resolve_commit_display_name("v1.0"),
+        Some("v1.0".to_string())
+    );
+
+    // 3. HEAD (case-insensitive)
+    assert_eq!(
+        repo.resolve_commit_display_name("HEAD"),
+        Some("HEAD".to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_display_name("head"),
+        Some("HEAD".to_string())
+    );
+
+    // 4. Commit hash falls back to 7-character short hash
+    let s1 = &c1.to_string()[..7];
+    let s2 = &c2.to_string()[..7];
+    assert_eq!(
+        repo.resolve_commit_display_name(&c1.to_string()),
+        Some(s1.to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_display_name(&c2.to_string()),
+        Some(s2.to_string())
+    );
+
+    // 5. Test resolve_commit_range preserving symbolic branch/tag/HEAD names
+    assert_eq!(
+        repo.resolve_commit_range(&["scrollbar-grab-drag^!".to_string()]),
+        Some("scrollbar-grab-drag^!".to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&["v1.0^!".to_string()]),
+        Some("v1.0^!".to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&["HEAD^!".to_string()]),
+        Some("HEAD^!".to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&["head^!".to_string()]),
+        Some("HEAD^!".to_string())
+    );
+
+    // Single-commit range c1..scrollbar-grab-drag resolves to scrollbar-grab-drag^!
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c1}..scrollbar-grab-drag")]),
+        Some("scrollbar-grab-drag^!".to_string())
+    );
+    assert_eq!(
+        repo.resolve_commit_range(&[c1.to_string(), "scrollbar-grab-drag".to_string()]),
+        Some("scrollbar-grab-drag^!".to_string())
+    );
+
+    // Single-commit range HEAD~1..HEAD resolves to HEAD^!
+    assert_eq!(
+        repo.resolve_commit_range(&["HEAD~1..HEAD".to_string()]),
+        Some("HEAD^!".to_string())
+    );
+
+    // Single-commit range c1..c2 with commit hashes displays short hash ^!
+    assert_eq!(
+        repo.resolve_commit_range(&[format!("{c1}..{c2}")]),
+        Some(format!("{s2}^!"))
+    );
+}
