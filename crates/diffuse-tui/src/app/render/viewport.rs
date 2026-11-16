@@ -490,7 +490,7 @@ impl AppState {
                     };
                     let seg_count = seg_counts[idx];
 
-                    if self.side_by_side {
+                    if self.is_side_by_side() {
                         for s_idx in 0..seg_count {
                             if vis_i >= content_start_vis && vis_i < content_end_vis {
                                 let is_selected =

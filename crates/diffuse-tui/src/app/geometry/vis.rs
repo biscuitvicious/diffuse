@@ -143,12 +143,22 @@ impl AppState {
         left_cols >= MIN_SIDE_BY_SIDE_CONTENT_COLS && right_cols >= MIN_SIDE_BY_SIDE_CONTENT_COLS
     }
 
+    /// Returns true if side-by-side (split) layout is currently active.
+    ///
+    /// Raw diff mode always displays in unified mode (not split), so this
+    /// returns false when `raw_diff` is active even if `side_by_side` is
+    /// set to true.
+    #[inline]
+    pub fn is_side_by_side(&self) -> bool {
+        self.side_by_side && !self.raw_diff
+    }
+
     /// Assert that `content_width` can accommodate the line number prefix
     /// gutter plus at least one column of code text; fails fast with an
     /// informative error otherwise.
     #[inline]
     pub fn assert_content_width_fits_gutter(&self, content_width: usize) {
-        if self.side_by_side {
+        if self.is_side_by_side() {
             let (left_w, right_w) = diffuse_render::split_pane_widths(content_width);
             let left_gutter_w =
                 EXPAND_GUTTER_WIDTH + diffuse_render::gutter_width(self.old_line_num.width);
@@ -411,7 +421,7 @@ impl AppState {
                     && g.raw_diff == self.raw_diff
                     && g.col_offset == self.col_offset
                     && g.word_diff == self.word_diff
-                    && g.side_by_side == self.side_by_side
+                    && g.side_by_side == self.is_side_by_side()
             })
         }) {
             tracing::trace!(content_width, rows = self.flat.len(), "geometry cache hit");
@@ -437,7 +447,7 @@ impl AppState {
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             word_diff: self.word_diff,
-            side_by_side: self.side_by_side,
+            side_by_side: self.is_side_by_side(),
             starts,
             counts,
             seg_counts,
@@ -500,7 +510,7 @@ impl AppState {
             } else {
                 0
             };
-            let row_segs = if self.side_by_side {
+            let row_segs = if self.is_side_by_side() {
                 self.row_seg_count_side_by_side(idx, content_width, left_cols, right_cols)
             } else {
                 self.row_seg_count_with_gutter(idx, content_width, gutter_w)

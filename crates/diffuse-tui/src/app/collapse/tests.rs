@@ -1169,3 +1169,43 @@ fn test_adapt_side_by_side_to_width() {
     assert!(explicit_split.side_by_side);
     assert_eq!(explicit_split.explicit_side_by_side, Some(true));
 }
+
+#[test]
+fn test_raw_diff_suppresses_side_by_side_and_restores() {
+    let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let a = 1;
++    let a = 10;
+ }
+"#;
+    let mut state = AppState::new(
+        run_pipeline_full(diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    )
+    .with_side_by_side(true);
+
+    assert!(state.side_by_side);
+    assert!(state.is_side_by_side());
+
+    // Toggle raw diff [R] -> suppresses side_by_side layout
+    state.toggle_raw_diff();
+    assert!(state.raw_diff);
+    assert!(state.side_by_side);
+    assert!(!state.is_side_by_side());
+
+    // Toggle side_by_side while in raw diff is a no-op
+    state.toggle_side_by_side();
+    assert!(state.raw_diff);
+    assert!(!state.is_side_by_side());
+
+    // Toggle raw diff back -> side_by_side layout is restored
+    state.toggle_raw_diff();
+    assert!(!state.raw_diff);
+    assert!(state.side_by_side);
+    assert!(state.is_side_by_side());
+}

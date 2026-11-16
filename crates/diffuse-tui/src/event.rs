@@ -233,7 +233,7 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             state.execute(TuiCommand::ToggleWordDiff);
         }
         (KeyModifiers::NONE, KeyCode::Char('e')) => {
-            if !state.side_by_side {
+            if !state.is_side_by_side() {
                 state.execute(TuiCommand::ToggleExpandAllMods);
             }
         }

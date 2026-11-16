@@ -163,7 +163,7 @@ impl AppState {
 
     #[inline]
     pub fn is_mod_expanded(&self, file_idx: usize, row: &OutputRow) -> bool {
-        if self.side_by_side {
+        if self.is_side_by_side() {
             false
         } else {
             self.expanded_mods.contains(&ModRowKey::new(file_idx, row))

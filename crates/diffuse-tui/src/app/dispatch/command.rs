@@ -396,6 +396,9 @@ impl AppState {
     /// When switching back to unified mode, any expanded modification rows
     /// previously active are restored.
     pub fn toggle_side_by_side(&mut self) {
+        if self.raw_diff {
+            return;
+        }
         let snapshot = self.capture_cursor_snapshot();
         self.side_by_side = !self.side_by_side;
         self.explicit_side_by_side = Some(self.side_by_side);

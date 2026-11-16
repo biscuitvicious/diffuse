@@ -1727,3 +1727,82 @@ fn test_branch_badge_single_commit_range_vs_merge_commit() {
         );
     }
 }
+
+#[test]
+fn test_raw_diff_always_unified_not_split() {
+    let output = sample_output();
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    )
+    .with_side_by_side(true);
+
+    let (w, h) = (160, 24);
+    assert!(state.side_by_side);
+    assert!(state.is_side_by_side());
+
+    // 1. In side-by-side visual mode, center divider '│' appears in diff rows
+    let buf_sbs = state.render_to_buffer(w, h);
+    let (left_w, _right_w) = diffuse_render::split_pane_widths(w.saturating_sub(1) as usize);
+    let divider_col = left_w as u16;
+    let has_sbs_divider =
+        (0..buf_sbs.area().height).any(|y| buf_sbs[(divider_col, y)].symbol() == "│");
+    assert!(
+        has_sbs_divider,
+        "visual side-by-side mode must render center divider"
+    );
+
+    // 2. Toggle raw diff [R] -> raw diff mode must ALWAYS be unified (not split)
+    state.execute(TuiCommand::ToggleRawDiff);
+    assert!(state.raw_diff);
+    assert!(state.side_by_side); // preference preserved
+    assert!(
+        !state.is_side_by_side(),
+        "is_side_by_side must be false in raw diff mode"
+    );
+
+    let buf_raw = state.render_to_buffer(w, h);
+    // Center divider must NOT appear in raw diff mode
+    let has_raw_divider = (3..buf_raw.area().height.saturating_sub(2))
+        .any(|y| buf_raw[(divider_col, y)].symbol() == "│");
+    assert!(
+        !has_raw_divider,
+        "raw diff mode must NOT be split into side-by-side panes"
+    );
+
+    // Must render standard unified @@ hunk header
+    let mut raw_text = String::new();
+    for y in 0..buf_raw.area().height {
+        for x in 0..w {
+            raw_text.push_str(buf_raw[(x, y)].symbol());
+        }
+    }
+    assert!(
+        raw_text.contains("@@"),
+        "raw diff mode must render unified @@ header"
+    );
+
+    // 3. Toggling side-by-side while in raw mode is a no-op (raw mode stays
+    //    unified)
+    state.execute(TuiCommand::ToggleSideBySide);
+    assert!(state.raw_diff);
+    assert!(!state.is_side_by_side());
+
+    // 4. Exiting raw diff via [R] restores side-by-side mode
+    state.execute(TuiCommand::ToggleRawDiff);
+    assert!(!state.raw_diff);
+    assert!(
+        state.is_side_by_side(),
+        "side-by-side mode must be restored on exiting raw diff"
+    );
+
+    let buf_restored = state.render_to_buffer(w, h);
+    let has_restored_divider =
+        (0..buf_restored.area().height).any(|y| buf_restored[(divider_col, y)].symbol() == "│");
+    assert!(
+        has_restored_divider,
+        "center divider must reappear when exiting raw diff"
+    );
+}
