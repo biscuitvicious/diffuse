@@ -100,3 +100,45 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 ## 11. Code cleanup
 
 - [x] ~~**Remove unnecessary `split('\n')` on row text in apply module**~~: `apply/mod.rs` splits row text on `\n` before iterating, but rows are always single lines from the diff parser. Using the text directly avoids redundant iterations and allocations.
+
+## 12. Row grouping, anchor scope and reflow invariants
+
+This section documents the scope ambiguity problem in auxiliary row grouping (`RowGroup::Anchor` and `RowGroup::Aux`), the motivating real-world example, the container-balancing baseline, and the remaining structural solutions for future implementation.
+
+### Motivating Example: Spurious Auxiliary Absorption under Ambient Delimiters
+
+In `crates/diffuse-tui/src/app/dispatch.rs` (harvested in golden corpus `scrollbar-grab-drag`):
+
+```rust
+-            TuiCommand::MouseScrollUp(n) => {
+-                self.scroll_to_visual(self.scroll.saturating_sub(n));
++            TuiCommand::MouseScrollUp { n, row, col } => {
++                self.on_mouse_scroll(true, n, row, col);
+             }
+```
+
+- **Problem**: Line 45 replaces a tuple variant pattern with a struct variant pattern, both terminating with `{`. Historically, the engine checked whether `add.text()` ended with an opening delimiter (`ends_with('{')`), assuming that any line ending with an opening delimiter opened a new multi-line scope. Consequently, line 45 was promoted to `RowGroup::Anchor`, and the subsequent wholesale replacement lines (`self.scroll_to_visual(...)` / `self.on_mouse_scroll(...)`) were greedily claimed as auxiliary lines (`RowGroup::Aux`), suppressing independent move relocation and pairwise alignment.
+- **Implemented Baseline**: The engine now tracks terminal Dyck language pushdown container stacks (`has_trailing_delimiter_expansion` in `diffuse-algo::dyck`), requiring $N_{\text{add}}(id) > N_{\text{del}}(id)$ before an unclosed delimiter expansion group can form.
+
+### Complementary Structural Solutions (Roadmap)
+
+- [ ] **Trailing Context Invariance (LCS Tape Ground Truth)**: Guard auxiliary group formation on the edit state of the trailing delimiter in the Gotoh subline alignment tape.
+  - *Problem*: Even when a line ends with an opening delimiter, that delimiter may be entirely unmodified ambient context. In the example above, the Gotoh alignment between Old 45 and New 45 is:
+    $$\text{`TuiCommand::MouseScrollUp` } \underline{\text{`-(n)` / `+{ n, row, col }`}} \text{ `_ =>` } \text{ `_ {`}$$
+    The trailing tokens `=> {` were aligned as `RunKind::Ctx` (unmodified pre-image context).
+  - *Solution*: An edit can only expand into subsequent lines if the expansion boundary itself was mutated or introduced by the change. If a modification row terminates in an unbroken run of common context (`RunKind::Ctx`), the mutation was purely internal. Disqualify lines terminating with `RunKind::Ctx` from initiating multi-line anchor expansions.
+
+- [ ] **Information Conservation (The Non-Zero Reflow Invariant)**: Enforce token conservation between the anchor row and candidate auxiliary rows.
+  - *Problem*: The mathematical purpose of `RowGroup::Aux` is token conservation: explaining where struck characters from the anchor row relocated (`MovedSrc` $\to$ `MovedTgt`). In the motivating change, all struck characters (`-(n)`) were consumed in-place on the anchor row itself (`+{ n, row, col }`). Slicing candidate lines against the anchor yielded 0 moved tokens and explained 0% of the struck content; they shared zero mutual information with the anchor.
+  - *Solution*: Require candidate auxiliary lines to demonstrate non-zero token conservation (or unmatched prefix/suffix evidence) against the anchor row before admission into `RowGroup::Aux`. If slicing candidate lines produces 0 moved tokens and 0 common content with the anchor's delta, reject auxiliary grouping and preserve the lines as standalone `Row::Del` / `Row::Add` / `Row::Mov` rows.
+
+- [ ] **Decoupling Unpaired Deletions in `walk.rs`**: Restrict `Row::AuxDel` promotion to verified $N$-to-$1$ collapse blocks.
+  - *Problem*: In `crates/diffuse-core/src/collapse/walk.rs`, any ordinary unpaired deletion (`Row::Del`) that immediately succeeds a `RowGroup::Anchor` is indiscriminately converted into `RowGroup::Aux { anchor: nl }`:
+    ```rust
+    let grp = if keyed[mi].0.group() == Some(RowGroup::Anchor) {
+        keyed[mi].0.new_line().map(|nl| RowGroup::Aux { anchor: nl })
+    } else {
+        None
+    };
+    ```
+  - *Solution*: In the diffuse engine, `Row::AuxDel` properly represents verified $N$-to-$1$ collapse blocks where multiple old lines were unified into a single new line under a multi-line alignment tape. Standalone deletions that failed to pair with any addition row have no collapse block tape and should remain regular `Row::Del` (`-`) rows rather than being bundled into an anchor group.
