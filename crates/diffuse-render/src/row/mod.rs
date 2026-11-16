@@ -29,7 +29,9 @@ pub use gutter::{
     styled_split_right_prefix_spans, write_gutter_prefix,
 };
 pub use note::{note_segment_spans, render_note_segment, write_note_segment};
-pub use raw::{raw_row_spans, render_raw_row, write_raw_row};
+pub use raw::{
+    raw_hunk_header_spans, raw_row_spans, render_raw_row, write_raw_hunk_header, write_raw_row,
+};
 pub use segment::{
     RowSegmentLine, is_common_only_row, is_pure_deletion_mod, pane_text_seg_count,
     render_row_segment, render_side_by_side_row_segment, row_segment_spans,

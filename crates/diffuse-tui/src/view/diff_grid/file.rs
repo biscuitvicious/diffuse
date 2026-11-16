@@ -8,7 +8,7 @@ use crate::{
         span::{StyledSpan, slice_spans, spans_width},
         width::display_width,
     },
-    view::span::line_from_spans,
+    view::span::{fit_line, line_from_spans},
 };
 
 fn rename_prefix_visual_span(
@@ -169,5 +169,37 @@ pub fn file_header_line(
         content_width,
         theme,
         None,
+    )
+}
+
+/// Render a visual segment of a raw-mode file header (`--- a/path` or `+++
+/// b/path`) as a styled Ratatui [`Line`]. Sliced by visual columns and colored
+/// in the file header foreground (file header yellow).
+pub fn raw_file_header_segment_line(
+    file: &OutputFile,
+    s_idx: usize,
+    content_width: usize,
+    theme: &DiffuseTheme,
+    is_selected: bool,
+    is_current: bool,
+    in_band: bool,
+) -> Line<'static> {
+    let (l1, l2) = crate::render::raw_file_header_lines(file);
+    let text_cols = content_width.max(1);
+    let s1 = display_width(&l1).div_ceil(text_cols).max(1);
+    let piece = if s_idx < s1 {
+        crate::render::slice_by_visual_width(&l1, s_idx * text_cols, text_cols)
+    } else {
+        crate::render::slice_by_visual_width(&l2, (s_idx - s1) * text_cols, text_cols)
+    };
+
+    let tier = Cursor::from_banner_state(is_selected, is_current || in_band);
+    let fg = theme.palette[tier].file_header.fg;
+    let bg = Some(theme.palette[tier].file_header.bg);
+
+    fit_line(
+        vec![StyledSpan::styled(piece, Some(fg), bg)],
+        content_width,
+        bg,
     )
 }

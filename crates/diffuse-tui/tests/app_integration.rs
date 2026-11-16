@@ -1806,3 +1806,76 @@ fn test_raw_diff_always_unified_not_split() {
         "center divider must reappear when exiting raw diff"
     );
 }
+
+#[test]
+fn test_raw_diff_file_and_hunk_headers_colored() {
+    let output = sample_output();
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    let (w, h) = (120, 24);
+    // Move cursor away from row 0 so file header is in resting state
+    state.row_idx = 1;
+    // Enter raw diff mode
+    state.execute(TuiCommand::ToggleRawDiff);
+    assert!(state.raw_diff);
+
+    let buf = state.render_to_buffer(w, h);
+
+    // Locate line with "--- a/" and line with "+++ b/"
+    let mut minus_y = None;
+    let mut plus_y = None;
+    let mut hunk_y = None;
+
+    for y in 0..buf.area().height {
+        let mut row_text = String::new();
+        for x in 0..w {
+            row_text.push_str(buf[(x, y)].symbol());
+        }
+        if row_text.contains("--- a/") {
+            minus_y = Some(y);
+        }
+        if row_text.contains("+++ b/") {
+            plus_y = Some(y);
+        }
+        if row_text.contains("@@ -") {
+            hunk_y = Some(y);
+        }
+    }
+
+    let my = minus_y.expect("must find --- a/ line in raw mode buffer");
+    let py = plus_y.expect("must find +++ b/ line in raw mode buffer");
+    let hy = hunk_y.expect("must find @@ hunk header line in raw mode buffer");
+
+    assert_eq!(py, my + 1, "+++ line must immediately follow --- line");
+
+    // Check color of current file headers: current file header yellow (220 in dark
+    // mode)
+    let minus_cell = &buf[(0, my)];
+    assert_eq!(
+        minus_cell.fg,
+        ratatui::style::Color::Indexed(220),
+        "minus line must be colored in current file header yellow (220)"
+    );
+    let plus_cell = &buf[(0, py)];
+    assert_eq!(
+        plus_cell.fg,
+        ratatui::style::Color::Indexed(220),
+        "plus line must be colored in current file header yellow (220)"
+    );
+
+    // Check color of hunk header: hunk header purple (213 in dark mode)
+    let at_x = (0..w)
+        .find(|&x| buf[(x, hy)].symbol() == "@")
+        .expect("must find @ in hunk header row");
+    let hunk_cell = &buf[(at_x, hy)];
+    assert_eq!(
+        hunk_cell.fg,
+        ratatui::style::Color::Indexed(213),
+        "hunk header @@ must be colored in hunk header purple (213)"
+    );
+}

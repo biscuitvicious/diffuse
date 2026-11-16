@@ -12,7 +12,7 @@ use crate::{
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
     },
     notes::{DEFAULT_CALLOUT_WIDTH, render_output_note_callout},
-    row::{styled_prefix_spans, write_raw_row},
+    row::{styled_prefix_spans, write_raw_hunk_header, write_raw_row},
     theme::DiffuseTheme,
 };
 
@@ -420,16 +420,7 @@ pub fn render_raw_file_diff_with_width(
             "@@ -{},{} +{},{} @@",
             h.old_start, h.old_count, h.new_start, h.new_count
         );
-        let _ = write_raw_row(
-            &mut out,
-            RowKind::Ctx,
-            &[],
-            &sep_text,
-            false,
-            false,
-            true,
-            theme,
-        );
+        let _ = write_raw_hunk_header(&mut out, &sep_text, theme);
         out.push('\n');
 
         for r in &h.rows {

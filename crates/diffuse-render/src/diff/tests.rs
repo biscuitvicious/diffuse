@@ -1143,23 +1143,13 @@ fn test_banner_spans_underline_rename_range() {
     assert_eq!(underlined[0].fg, Some(yansi::Color::Fixed(139)));
 }
 
-/// Raw-mode file headers use traditional unified-diff markers: `---` in
-/// the deletion foreground, `+++` in the addition foreground, whole-line.
-fn raw_header_colors() -> (String, String) {
-    use crate::theme::{Cursor, DiffKind};
+/// Raw-mode file headers use traditional unified-diff markers: `---` and `+++`
+/// riding whole-line in the file header yellow foreground.
+fn raw_header_color() -> String {
+    use crate::theme::Cursor;
 
     let theme = DiffuseTheme::dark();
-    let del_fg = theme.palette[Cursor::Rest][DiffKind::Del]
-        .gutter
-        .icon
-        .color
-        .fg_code();
-    let add_fg = theme.palette[Cursor::Rest][DiffKind::Add]
-        .gutter
-        .icon
-        .color
-        .fg_code();
-    (del_fg, add_fg)
+    theme.palette[Cursor::Rest].file_header.fg.fg_code()
 }
 
 fn raw_header_rendered(file: &OutputFile) -> String {
@@ -1175,14 +1165,14 @@ fn test_raw_file_header_modified_paths() {
         strip_ansi(&rendered),
         "--- a/src/main.rs\n+++ b/src/main.rs\n"
     );
-    let (del_fg, add_fg) = raw_header_colors();
+    let header_fg = raw_header_color();
     assert!(
-        rendered.contains(&format!("{del_fg}--- a/src/main.rs")),
-        "minus line rides whole-line in the deletion foreground"
+        rendered.contains(&format!("{header_fg}--- a/src/main.rs")),
+        "minus line rides whole-line in the file header foreground"
     );
     assert!(
-        rendered.contains(&format!("{add_fg}+++ b/src/main.rs")),
-        "plus line rides whole-line in the addition foreground"
+        rendered.contains(&format!("{header_fg}+++ b/src/main.rs")),
+        "plus line rides whole-line in the file header foreground"
     );
 }
 
@@ -1254,6 +1244,14 @@ fn test_raw_pipeline_output_opens_with_traditional_header() {
     assert!(
         !stripped.contains('\u{2550}'),
         "raw output must not carry the banner ruler"
+    );
+    let hunk_fg = DiffuseTheme::dark().palette[crate::theme::Cursor::Rest]
+        .hunk_divider
+        .fg
+        .fg_code();
+    assert!(
+        rendered.contains(&format!("{hunk_fg}@@ -1,2 +1,2 @@")),
+        "hunk header must be painted in hunk header purple: {rendered:?}"
     );
 }
 

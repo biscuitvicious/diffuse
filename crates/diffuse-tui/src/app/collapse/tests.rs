@@ -692,7 +692,7 @@ fn test_expand_file_ui_change_while_streaming_cancels_auto_scroll() {
     assert!(state.is_file_loaded(24));
     // Must not jump downwards to scroll file 24 into view
     assert_eq!(
-        state.scroll, 5,
+        state.scroll, 30,
         "UI state change while streaming must cancel auto-scroll"
     );
 }

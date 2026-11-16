@@ -286,16 +286,24 @@ impl AppState {
         match item.kind {
             FlatRowKind::FileHeader => {
                 let file_obj = self.output.files.get(item.file_idx)?;
-                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let txt = crate::view::diff_grid::file_header_text_with_prefix(
-                    file_obj,
-                    self.file_badge(item.file_idx),
-                    is_collapsed,
-                    self.output.common_directory_prefix().as_deref(),
-                );
-                let len = display_width(txt);
-                let text_cols = content_width.max(1);
-                Some(if len == 0 { 1 } else { len.div_ceil(text_cols) })
+                if self.raw_diff {
+                    let (l1, l2) = crate::render::raw_file_header_lines(file_obj);
+                    let text_cols = content_width.max(1);
+                    let s1 = display_width(&l1).div_ceil(text_cols).max(1);
+                    let s2 = display_width(&l2).div_ceil(text_cols).max(1);
+                    Some(s1 + s2)
+                } else {
+                    let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                    let txt = crate::view::diff_grid::file_header_text_with_prefix(
+                        file_obj,
+                        self.file_badge(item.file_idx),
+                        is_collapsed,
+                        self.output.common_directory_prefix().as_deref(),
+                    );
+                    let len = display_width(txt);
+                    let text_cols = content_width.max(1);
+                    Some(if len == 0 { 1 } else { len.div_ceil(text_cols) })
+                }
             }
             FlatRowKind::HunkDivider { hunk_idx } => {
                 let file = self.output.files.get(item.file_idx)?;

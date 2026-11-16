@@ -1117,3 +1117,56 @@ fn test_file_header_zero_counts_omitted() {
         "no double space when counts omitted: {banner:?}"
     );
 }
+
+#[test]
+fn test_raw_file_header_segment_line_formatting_and_colors() {
+    let theme = DiffuseTheme::dark();
+    let f = dummy_file();
+
+    // Segment 0: minus line
+    let seg0 = raw_file_header_segment_line(&f, 0, 80, &theme, false, false, false);
+    assert_eq!(seg0.to_string().trim_end(), "--- a/src/main.rs");
+    let span0 = &seg0.spans[0];
+    assert_eq!(
+        span0.style.fg,
+        Some(ratatui::style::Color::Indexed(214)),
+        "resting file header must use file header yellow (214)"
+    );
+
+    // Segment 1: plus line
+    let seg1 = raw_file_header_segment_line(&f, 1, 80, &theme, false, false, false);
+    assert_eq!(seg1.to_string().trim_end(), "+++ b/src/main.rs");
+    let span1 = &seg1.spans[0];
+    assert_eq!(
+        span1.style.fg,
+        Some(ratatui::style::Color::Indexed(214)),
+        "resting file header must use file header yellow (214)"
+    );
+
+    // Selected state
+    let seg_sel = raw_file_header_segment_line(&f, 0, 80, &theme, true, false, false);
+    assert_eq!(
+        seg_sel.spans[0].style.fg,
+        Some(ratatui::style::Color::Indexed(221)),
+        "selected file header must use selected yellow (221)"
+    );
+
+    // Added file uses /dev/null on minus side
+    let mut f_added = dummy_file();
+    f_added.status = diffuse_core::FileStatus::Added;
+    let seg_added0 = raw_file_header_segment_line(&f_added, 0, 80, &theme, false, false, false);
+    assert_eq!(seg_added0.to_string().trim_end(), "--- /dev/null");
+
+    // Deleted file uses /dev/null on plus side
+    let mut f_deleted = dummy_file();
+    f_deleted.status = diffuse_core::FileStatus::Deleted;
+    let seg_del1 = raw_file_header_segment_line(&f_deleted, 1, 80, &theme, false, false, false);
+    assert_eq!(seg_del1.to_string().trim_end(), "+++ /dev/null");
+
+    // Renamed file uses old_path on minus side
+    let mut f_renamed = dummy_file();
+    f_renamed.status = diffuse_core::FileStatus::Renamed;
+    f_renamed.old_path = Some("src/old.rs".to_string());
+    let seg_ren0 = raw_file_header_segment_line(&f_renamed, 0, 80, &theme, false, false, false);
+    assert_eq!(seg_ren0.to_string().trim_end(), "--- a/src/old.rs");
+}

@@ -8,18 +8,18 @@ use ratatui::text::Line;
 use super::buffer::escape_ansi_for_diagnostic;
 use crate::{
     app::{AppState, notes::NoteRowFocus},
-    core::parse::RowKind,
     render::{
-        continuation_prefix_spans_with_mod_side_and_widths, raw_row_spans, row_segment_spans,
-        side_by_side_row_segment_spans, slice_by_visual_width, span::StyledSpan, split_pane_widths,
-        styled_prefix_spans_with_widths, styled_split_left_continuation_prefix_spans,
-        styled_split_left_prefix_spans, styled_split_right_continuation_prefix_spans,
-        styled_split_right_prefix_spans,
+        continuation_prefix_spans_with_mod_side_and_widths, raw_hunk_header_spans, raw_row_spans,
+        row_segment_spans, side_by_side_row_segment_spans, slice_by_visual_width, span::StyledSpan,
+        split_pane_widths, styled_prefix_spans_with_widths,
+        styled_split_left_continuation_prefix_spans, styled_split_left_prefix_spans,
+        styled_split_right_continuation_prefix_spans, styled_split_right_prefix_spans,
     },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
         diff_grid::{
             bottom_gap_divider_segment_line, file_header_segment_line, hunk_divider_segment_line,
+            raw_file_header_segment_line,
         },
         span::fit_line,
     },
@@ -412,18 +412,30 @@ impl AppState {
                             let text_cols = content_width.max(1);
                             let seg_start = s_idx * text_cols;
                             line_src.push(Some(idx));
-                            lines.push(file_header_segment_line(
-                                file_obj,
-                                self.file_badge(item.file_idx),
-                                is_collapsed,
-                                is_selected,
-                                is_current,
-                                in_band,
-                                seg_start,
-                                text_cols,
-                                &self.theme,
-                                common_prefix.as_deref(),
-                            ));
+                            if self.raw_diff {
+                                lines.push(raw_file_header_segment_line(
+                                    file_obj,
+                                    s_idx,
+                                    content_width,
+                                    &self.theme,
+                                    is_selected,
+                                    is_current,
+                                    in_band,
+                                ));
+                            } else {
+                                lines.push(file_header_segment_line(
+                                    file_obj,
+                                    self.file_badge(item.file_idx),
+                                    is_collapsed,
+                                    is_selected,
+                                    is_current,
+                                    in_band,
+                                    seg_start,
+                                    text_cols,
+                                    &self.theme,
+                                    common_prefix.as_deref(),
+                                ));
+                            }
                         }
                         vis_i += 1;
                     }
@@ -446,15 +458,11 @@ impl AppState {
                             let text_cols = content_width.max(1);
                             let piece =
                                 slice_by_visual_width(&sep_text, s_idx * text_cols, text_cols);
-                            let is_last_seg = s_idx + 1 == seg_count;
                             line_src.push(Some(idx));
-                            let raw = raw_row_spans(
-                                RowKind::Ctx,
-                                Vec::new(),
+                            let raw = raw_hunk_header_spans(
                                 &piece,
                                 is_selected,
                                 in_band && !is_selected,
-                                is_last_seg,
                                 &self.theme,
                             );
                             lines.push(fit_line(raw.spans, content_width, raw.line_bg));

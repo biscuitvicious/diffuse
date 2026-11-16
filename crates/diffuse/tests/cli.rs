@@ -716,6 +716,18 @@ index 0000000..1111111 100644\n\
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
+        stdout.contains("\x1b[38;5;214m--- a/hello.rs"),
+        "raw header minus line must be colored in file header yellow (214), got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\x1b[38;5;214m+++ b/hello.rs"),
+        "raw header plus line must be colored in file header yellow (214), got: {stdout}"
+    );
+    assert!(
+        stdout.contains("\x1b[38;5;213m@@ -1,2 +1,2 @@"),
+        "raw hunk header must be colored in hunk header purple (213), got: {stdout}"
+    );
+    assert!(
         stdout.contains("\x1b[38;5;120m") || stdout.contains("\x1b[38;5;203m"),
         "raw output must use raw-mode colors, got: {:.300}",
         stdout
@@ -743,6 +755,9 @@ index 0000000..1111111 100644\n\
 fn gutter_symbol_live_color(output: &str, symbol: char, fg: u8) -> bool {
     for raw_line in output.lines() {
         let stripped = strip_ansi_codes(raw_line);
+        if stripped.starts_with("---") || stripped.starts_with("+++") {
+            continue;
+        }
         let Some(sym_idx) = stripped.find(symbol) else {
             continue;
         };

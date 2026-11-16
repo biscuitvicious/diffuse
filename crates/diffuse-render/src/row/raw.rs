@@ -96,6 +96,30 @@ pub fn write_raw_row<W: Write>(
     out.write_str("\x1b[39m\x1b[22m")
 }
 
+/// Write a raw-mode hunk header (`@@ -...,... +...,... @@`) directly to a
+/// buffer in the hunk header purple foreground.
+pub fn write_raw_hunk_header<W: Write>(
+    out: &mut W,
+    text: &str,
+    theme: &DiffuseTheme,
+) -> fmt::Result {
+    let row = raw_hunk_header_spans(text, false, false, theme);
+    let line_bg_code = bg_code(row.line_bg);
+    let fg_code = match row
+        .spans
+        .first()
+        .and_then(|s| s.fg)
+        .filter(|c| *c != Color::Primary)
+    {
+        Some(color) => color.fg_code(),
+        None => String::new(),
+    };
+    out.write_str(&line_bg_code)?;
+    out.write_str(&fg_code)?;
+    out.write_str(text)?;
+    out.write_str("\x1b[49m\x1b[39m\x1b[22m")
+}
+
 /// Render a row in the raw unified-diff representation with theme support:
 /// the 6-character line-number gutter plus the line text in flat
 /// green/red/muted text color on a default black background (or cursor/band
@@ -197,4 +221,34 @@ pub fn raw_row_spans(
     }
 
     RowSegmentLine { spans, line_bg }
+}
+
+/// Build the structured spans for a raw-mode hunk header (`@@ -...,... +...,...
+/// @@`), styled in the hunk header purple foreground (`hunk_divider.fg`).
+#[must_use]
+pub fn raw_hunk_header_spans(
+    text: &str,
+    selected: bool,
+    band: bool,
+    theme: &DiffuseTheme,
+) -> RowSegmentLine {
+    let palette = theme.palette;
+    let tier = if selected { Cursor::Row } else { Cursor::Rest };
+    let fg_color = palette[tier].hunk_divider.fg;
+    let line_bg = if selected {
+        Some(palette[Cursor::Row][DiffKind::Ctx].surface.bg)
+    } else if band {
+        Some(palette[Cursor::Row].band.bg)
+    } else {
+        Some(palette[Cursor::Rest][DiffKind::Ctx].surface.bg)
+    };
+
+    RowSegmentLine {
+        spans: vec![StyledSpan::styled(
+            text.to_string(),
+            Some(fg_color),
+            line_bg,
+        )],
+        line_bg,
+    }
 }
