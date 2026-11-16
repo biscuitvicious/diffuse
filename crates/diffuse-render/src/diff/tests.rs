@@ -555,8 +555,8 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     assert!(plain.contains("a.txt −2 +2"));
 
     // Each hunk has a hunk divider
-    assert!(plain.contains("──── Hunk 1/2"));
-    assert!(plain.contains("──── Hunk 2/2"));
+    assert!(plain.contains("──── 1/2"));
+    assert!(plain.contains("──── 2/2"));
 
     // -p hunk headers do not contain the hidden gap / expansion arrows (the
     // file banner above them carries the collapse caret).
@@ -564,7 +564,7 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     assert!(
         !rendered
             .lines()
-            .filter(|line| line.contains("──── Hunk"))
+            .filter(|line| line.contains("──── 1/2") || line.contains("──── 2/2"))
             .any(|line| line.contains('▼')),
         "hunk headers must not carry expansion arrows"
     );
@@ -574,7 +574,7 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     // show a white band across every hunk header.
     let dark_divider = rendered
         .lines()
-        .find(|line| line.contains("──── Hunk 1/2"))
+        .find(|line| line.contains("──── 1/2"))
         .expect("hunk divider line");
     assert!(
         dark_divider.starts_with("\x1b[48;5;233m"),
@@ -584,7 +584,7 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     let light = render_file_diff(&out.files[0], None, &DiffuseTheme::light(), true);
     let light_divider = light
         .lines()
-        .find(|line| line.contains("──── Hunk 1/2"))
+        .find(|line| line.contains("──── 1/2"))
         .expect("hunk divider line");
     assert!(
         light_divider.starts_with("\x1b[48;2;250;250;250m"),
@@ -774,7 +774,7 @@ fn test_render_file_diff_continuation_lines_indented_gutter_width() {
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
         .into_iter()
-        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── 1/1"))
         .collect();
 
     assert_eq!(
@@ -852,7 +852,7 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
         .into_iter()
-        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── 1/1"))
         .collect();
 
     assert_eq!(
@@ -942,7 +942,7 @@ fn test_render_file_diff_adjacent_expanded_mods_merged_into_unified_cluster() {
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
         .into_iter()
-        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── 1/1"))
         .collect();
 
     // 3 dels followed by 3 adds: 6 lines total
@@ -1271,7 +1271,7 @@ fn test_hunk_divider_text_omits_icons() {
         total: Some(3),
     };
     let text = hunk_divider_text(badge, &hunk, 8);
-    assert_eq!(text, "──── Hunk 2/3 · 8 more lines ────");
+    assert_eq!(text, "──── 2/3 · 8 more lines ────");
 }
 
 #[test]
@@ -1304,11 +1304,11 @@ fn test_hunk_divider_text_change_counts_without_lines_prefix() {
         total: Some(3),
     };
     let text_no_gap = hunk_divider_text(badge, &hunk, 0);
-    assert_eq!(text_no_gap, "──── Hunk 2/3 −1 +2 ~1 ────");
+    assert_eq!(text_no_gap, "──── 2/3 −1 +2 ~1 ────");
     assert!(!text_no_gap.contains("lines:"));
 
     let text_with_gap = hunk_divider_text(badge, &hunk, 8);
-    assert_eq!(text_with_gap, "──── Hunk 2/3 −1 +2 ~1 · 8 more lines ────");
+    assert_eq!(text_with_gap, "──── 2/3 −1 +2 ~1 · 8 more lines ────");
     assert!(!text_with_gap.contains("lines:"));
 }
 

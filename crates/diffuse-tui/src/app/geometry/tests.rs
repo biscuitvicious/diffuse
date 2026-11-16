@@ -202,13 +202,13 @@ fn test_hunk_divider_renders_and_extent_lift() {
 
     let frame = state.render_frame(120, 80);
     assert!(
-        frame.contains("Hunk 1"),
+        frame.contains("──── 1/"),
         "the first hunk needs a divider: {:.300}",
         frame
     );
-    assert!(frame.contains("Hunk 2"), "the second hunk needs a divider");
+    assert!(frame.contains("──── 2/"), "the second hunk needs a divider");
     assert!(
-        frame.contains("−1,7 +1,8") || frame.contains("-1,7 +1,8") || frame.contains("Hunk 1"),
+        frame.contains("−1,7 +1,8") || frame.contains("-1,7 +1,8") || frame.contains("──── 1/"),
         "the divider carries the hunk span: {:.300}",
         frame
     );
@@ -228,7 +228,7 @@ fn test_hunk_divider_renders_and_extent_lift() {
     state.next_hunk();
     let frame2 = state.render_frame(120, 40);
     assert!(
-        frame2.contains("Hunk 2"),
+        frame2.contains("──── 2/"),
         "the second hunk keeps its divider in hunk 2"
     );
 }

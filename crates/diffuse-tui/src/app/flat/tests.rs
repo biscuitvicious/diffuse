@@ -463,8 +463,8 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
     state.jump_to_row(plan_file_row, false);
 
     let frame = state.render_frame(140, 40);
-    assert!(frame.contains("Hunk 1"), "must contain H1 divider");
-    assert!(frame.contains("Hunk 2"), "must contain H2 divider");
+    assert!(frame.contains("──── 1/"), "must contain H1 divider");
+    assert!(frame.contains("──── 2/"), "must contain H2 divider");
 }
 
 #[test]

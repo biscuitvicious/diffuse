@@ -527,12 +527,12 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
 
     // Must contain both hunk divider badges
     assert!(
-        full_text.contains("Hunk 1/2"),
-        "preview must show Hunk 1/2 divider: {full_text}"
+        full_text.contains("1/2"),
+        "preview must show 1/2 divider: {full_text}"
     );
     assert!(
-        full_text.contains("Hunk 2/2"),
-        "preview must show Hunk 2/2 divider: {full_text}"
+        full_text.contains("2/2"),
+        "preview must show 2/2 divider: {full_text}"
     );
     assert!(full_text.contains("first hunk add"));
     assert!(full_text.contains("second hunk del"));

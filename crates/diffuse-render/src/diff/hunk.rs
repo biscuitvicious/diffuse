@@ -51,7 +51,7 @@ pub fn hunk_leading_gap(file: &OutputFile, hi: usize) -> usize {
 }
 
 /// Build the raw text of a hunk header divider with format
-/// `──── Hunk 2/3 −1 +4 ~1 ────` plus optional hidden-gap tail.
+/// `──── 2/3 −1 +4 ~1 ────` plus optional hidden-gap tail.
 #[must_use]
 pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> String {
     let counts = hunk.counts();
@@ -68,7 +68,7 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
     } else {
         String::new()
     };
-    format!("──── {}{summary_part}{gap_part} ────", badge.hunk_text())
+    format!("──── {}{summary_part}{gap_part} ────", badge.number_text())
 }
 
 /// Build the structured spans of a hunk header divider. Base spans (rule
@@ -87,7 +87,7 @@ pub fn hunk_divider_spans(
     let mut spans = Vec::new();
 
     // 1. Prefix: `──── {badge}`
-    let prefix = format!("──── {}", badge.hunk_text());
+    let prefix = format!("──── {}", badge.number_text());
     spans.push(StyledSpan::styled(prefix, Some(divider.fg), bg).with_bold(true));
 
     // 2. Change counts (if any)

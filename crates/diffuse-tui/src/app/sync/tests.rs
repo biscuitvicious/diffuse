@@ -123,11 +123,11 @@ fn test_streaming_append_file_multi_hunk_with_gap() {
 
     let frame = state.render_frame(140, 40);
     assert!(
-        frame.contains("──── Hunk 1/"),
+        frame.contains("──── 1/"),
         "streaming render must contain H1 divider"
     );
     assert!(
-        frame.contains("──── Hunk 2/"),
+        frame.contains("──── 2/"),
         "streaming render must contain H2 divider"
     );
 }
