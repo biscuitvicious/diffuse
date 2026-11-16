@@ -164,22 +164,15 @@ impl AppState {
         let fi = item.file_idx;
         let hi = item.hunk_idx()?;
 
-        // Fast-path for interior rows: if flat_idx has >= 2 diff rows before it and
-        // >= 2 diff rows after it within the same hunk, it is guaranteed that
-        // hunk_vis >= 2 and total_vis - hunk_vis >= 3. Consequently, it can never
-        // match visual lines 0, 1, total_vis - 2, or total_vis - 1, and returns None in
-        // O(1).
+        // Fast-path for interior rows: if flat_idx has >= 1 diff row before it and
+        // >= 1 diff row after it within the same hunk, it can never match visual
+        // line 0 or total_vis - 1, and returns None in O(1).
         let is_same_hunk_diff = |idx: usize| {
             self.flat
                 .get(idx)
                 .is_some_and(|r| r.file_idx == fi && r.hunk_idx() == Some(hi) && r.is_diff_row())
         };
-        if flat_idx >= 2
-            && is_same_hunk_diff(flat_idx - 1)
-            && is_same_hunk_diff(flat_idx - 2)
-            && is_same_hunk_diff(flat_idx + 1)
-            && is_same_hunk_diff(flat_idx + 2)
-        {
+        if flat_idx >= 1 && is_same_hunk_diff(flat_idx - 1) && is_same_hunk_diff(flat_idx + 1) {
             return None;
         }
 
@@ -257,15 +250,6 @@ impl AppState {
             } else {
                 None
             };
-        }
-
-        if total_vis >= 4 {
-            if has_above && hunk_vis == 1 {
-                return Some(crate::types::HunkExpandIcon::UpStem);
-            }
-            if has_below && hunk_vis + 2 == total_vis {
-                return Some(crate::types::HunkExpandIcon::DownStem);
-            }
         }
 
         None

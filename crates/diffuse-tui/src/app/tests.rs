@@ -1411,7 +1411,7 @@ index 1111111..2222222 100644
         .with_options(opts_u0)
         .run();
 
-    // 1. Unwrapped: wide screen (140 cols). Single-line hunk collapses icon to ⬍
+    // 1. Unwrapped: wide screen (140 cols). Single-line hunk collapses icon to ⇕
     let mut state = AppState::new(
         output.clone(),
         "test_repo".into(),
@@ -1420,11 +1420,11 @@ index 1111111..2222222 100644
     );
     let frame_wide = state.render_frame(140, 30);
     assert!(
-        frame_wide.contains('⬍'),
-        "unwrapped 1-line hunk with context in both directions must display ⬍"
+        frame_wide.contains('⇕'),
+        "unwrapped 1-line hunk with context in both directions must display ⇕"
     );
 
-    // Clicking ⬍ (col 0) expands both directions
+    // Clicking ⇕ (col 0) expands both directions
     let (starts, counts, seg_counts, _) = state.visual_geometry(state.last_content_width);
     let hunk_start = state.hunk_starts[0].flat;
     let div_segs = counts[hunk_start].saturating_sub(seg_counts[hunk_start]);
@@ -1438,15 +1438,15 @@ index 1111111..2222222 100644
     });
     assert!(
         state.hunk_leading_gap(0, 0) < gap_above_pre,
-        "clicking ⬍ must expand above"
+        "clicking ⇕ must expand above"
     );
     assert!(
         state.hunk_trailing_gap(0) < gap_below_pre,
-        "clicking ⬍ must expand below"
+        "clicking ⇕ must expand below"
     );
 
     // 2. Wrapped: narrow screen (40 cols). Single-line hunk with wrapped segments
-    // displays ▲ on segment 0 and ▼ on final segment.
+    // displays ⇑ on segment 0 and ⇓ on final segment.
     let mut state_narrow = AppState::new(
         output,
         "test_repo".into(),
@@ -1455,12 +1455,12 @@ index 1111111..2222222 100644
     );
     let frame_narrow = state_narrow.render_frame(40, 30);
     assert!(
-        frame_narrow.contains('▲'),
-        "wrapped 1-line hunk must display ▲ on segment 0"
+        frame_narrow.contains('⇑'),
+        "wrapped 1-line hunk must display ⇑ on segment 0"
     );
     assert!(
-        frame_narrow.contains('▼'),
-        "wrapped 1-line hunk must display ▼ on final segment"
+        frame_narrow.contains('⇓'),
+        "wrapped 1-line hunk must display ⇓ on final segment"
     );
 }
 
@@ -4355,7 +4355,7 @@ fn test_expand_below_cursor_above_divider() {
             );
         }
 
-        // Test B: click ▼ (expand context below hunk 0) retains visual cursor
+        // Test B: click ⇓ (expand context below hunk 0) retains visual cursor
         // position
         {
             let mut state = AppState::new(
@@ -4395,11 +4395,11 @@ fn test_expand_below_cursor_above_divider() {
             let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
             assert_eq!(
                 cursor_rel_after, cursor_rel_before,
-                "click ▼: cursor visual position must be retained for row {test_row}"
+                "click ⇓: cursor visual position must be retained for row {test_row}"
             );
         }
 
-        // Test C: click ▲ on hunk 1 first row retains visual cursor position
+        // Test C: click ⇑ on hunk 1 first row retains visual cursor position
         {
             let mut state = AppState::new(
                 two_hunk_gap_output(),
@@ -4439,7 +4439,7 @@ fn test_expand_below_cursor_above_divider() {
             let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
             assert_eq!(
                 cursor_rel_after, cursor_rel_before,
-                "click ▲: cursor visual position must be retained for row {test_row}"
+                "click ⇑: cursor visual position must be retained for row {test_row}"
             );
         }
     }

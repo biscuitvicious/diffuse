@@ -519,7 +519,8 @@ impl AppState {
                                         icon_glyph.to_string(),
                                         Some(gutter_icon_color),
                                         None,
-                                    ),
+                                    )
+                                    .with_bold(expand_icon.is_some()),
                                 );
                                 let r_pref = if s_idx == 0 {
                                     styled_split_right_prefix_spans(
@@ -604,7 +605,8 @@ impl AppState {
                                         icon_glyph.to_string(),
                                         Some(gutter_icon_color),
                                         None,
-                                    ),
+                                    )
+                                    .with_bold(expand_icon.is_some()),
                                 );
                                 let rendered_row = if self.raw_diff {
                                     let piece = slice_by_visual_width(

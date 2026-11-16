@@ -627,7 +627,7 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[3].contains("1021 more lines"));
 
     // Row 4..: Context and diff lines with gutter expand icon
-    assert!(screen_lines[4].contains("▲1022"));
+    assert!(screen_lines[4].contains("⇑1022"));
 
     // Row 7..: Diff lines with line numbers and change markers
     assert!(screen_lines[7].contains("1025"));
@@ -965,7 +965,13 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         if line.contains("──── Hunk ") {
             hunk_header_count += 1;
             assert!(
-                !line.contains('▲') && !line.contains('▼') && !line.contains('⬍'),
+                !line.contains('⇑')
+                    && !line.contains('⇓')
+                    && !line.contains('⇕')
+                    && !line.contains('↑')
+                    && !line.contains('↓')
+                    && !line.contains('▲')
+                    && !line.contains('▼'),
                 "hunk header line {y} must not contain expansion arrows: {line:?}"
             );
             assert!(
@@ -1003,27 +1009,27 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
     let first_row_screen =
         state.last_viewport_start + (starts[div_flat] + div_segs).saturating_sub(state.scroll);
 
-    // Verify cell (0, first_row_screen) has the '▲' expand icon in the buffer
+    // Verify cell (0, first_row_screen) has the '⇑' expand icon in the buffer
     let icon_cell = buf
         .cell((0, first_row_screen as u16))
         .map(|c| c.symbol())
         .unwrap_or(" ");
     assert_eq!(
-        icon_cell, "▲",
-        "first diff row gutter col 0 must render ▲ icon"
+        icon_cell, "⇑",
+        "first diff row gutter col 0 must render ⇑ icon"
     );
 
-    // Verify cell (0, first_row_screen + 1) has the '│' stem icon
+    // Verify cell (0, first_row_screen + 1) has no stem icon (single char arrow)
     let stem_cell = buf
         .cell((0, (first_row_screen + 1) as u16))
         .map(|c| c.symbol())
         .unwrap_or(" ");
     assert_eq!(
-        stem_cell, "│",
-        "diff row under top arrow must render │ stem icon"
+        stem_cell, " ",
+        "diff row under top arrow must render space in gutter"
     );
 
-    // Verify bottom arrow and stem for the hunk
+    // Verify bottom arrow for the hunk
     let end_flat = state
         .flat
         .iter()
@@ -1039,8 +1045,8 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         .map(|c| c.symbol())
         .unwrap_or(" ");
     assert_eq!(
-        down_icon_cell, "▼",
-        "last diff row gutter col 0 must render ▼ icon"
+        down_icon_cell, "⇓",
+        "last diff row gutter col 0 must render ⇓ icon"
     );
 
     let down_stem_cell = buf
@@ -1048,16 +1054,16 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         .map(|c| c.symbol())
         .unwrap_or(" ");
     assert_eq!(
-        down_stem_cell, "│",
-        "diff row above bottom arrow must render │ stem icon"
+        down_stem_cell, " ",
+        "diff row above bottom arrow must render space in gutter"
     );
 
     // Park cursor on row 0 to test click swallowing
     state.row_idx = 0;
     state.vis_line = 0;
 
-    // 3. Click at col 0: expands by 10 lines (default expand lines) and swallows
-    //    click
+    // 3. Click at col 0 on the top arrow row: expands by 10 lines (default expand
+    //    lines) and swallows click
     state.execute(TuiCommand::MouseClick {
         row: first_row_screen,
         col: 0,
@@ -1074,41 +1080,44 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         "clicking col 0 must swallow click without moving cursor"
     );
 
-    // 4. Click at col 0 on the stem row (first_row_screen + 1): also expands above
-    //    and swallows click
-    state.execute(TuiCommand::MouseClick {
-        row: first_row_screen + 1,
-        col: 0,
-        shift: false,
-    });
-    let gap_after_stem = state.hunk_leading_gap(fi, hi);
-    assert_eq!(
-        gap_after_stem,
-        gap_after_col0.saturating_sub(10),
-        "clicking col 0 on stem must expand 10 lines into the gap"
-    );
-    assert_eq!(
-        state.row_idx, 0,
-        "clicking col 0 on stem must swallow click without moving cursor"
-    );
-
-    // 5. Click at col 1 (stretch 1 column to the right) on the stem row: also
+    // 4. Click at col 1 (stretch 1 column to the right) on the top arrow row: also
     //    expands and swallows click
     state.execute(TuiCommand::MouseClick {
-        row: first_row_screen + 1,
+        row: first_row_screen,
         col: 1,
         shift: false,
     });
     let gap_after_col1 = state.hunk_leading_gap(fi, hi);
     assert_eq!(
         gap_after_col1,
-        gap_after_stem.saturating_sub(10),
-        "clicking col 1 on stem must expand 10 lines into the gap"
+        gap_after_col0.saturating_sub(10),
+        "clicking col 1 must expand 10 lines into the gap"
     );
     assert_eq!(
         state.row_idx, 0,
         "clicking col 1 must swallow click without moving cursor"
     );
+
+    // 5. Click at col 0 on row under top arrow (first_row_screen + 1): has no
+    //    arrow, does NOT expand, moves cursor
+    state.execute(TuiCommand::MouseClick {
+        row: first_row_screen + 1,
+        col: 0,
+        shift: false,
+    });
+    let gap_after_row1 = state.hunk_leading_gap(fi, hi);
+    assert_eq!(
+        gap_after_row1, gap_after_col1,
+        "clicking col 0 on row without arrow must not expand gap"
+    );
+    assert_ne!(
+        state.row_idx, 0,
+        "clicking row without arrow must move cursor to clicked row"
+    );
+
+    // Park cursor back on row 0 to test col 2 click
+    state.row_idx = 0;
+    state.vis_line = 0;
 
     // 6. Click at col 2 (outside hit area): does NOT expand, moves cursor
     state.execute(TuiCommand::MouseClick {

@@ -6,27 +6,22 @@ use diffuse_core::{ModGlyph, ModSide, notes::DiffCoord, wire::OutputRow};
 /// Context expansion indicator icon displayed in the TUI expand gutter column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HunkExpandIcon {
-    /// Upwards triangle ("▲"): more context available above this hunk.
+    /// Upwards double arrow ("⇑"): more context available above this hunk.
     Up,
-    /// Downwards triangle ("▼"): more context available below this hunk.
+    /// Downwards double arrow ("⇓"): more context available below this hunk.
     Down,
-    /// Up/down arrow ("⬍"): single-line hunk with context available in both
-    /// directions.
+    /// Up/down double arrow ("⇕"): single-line hunk with context available in
+    /// both directions.
     Both,
-    /// Stem underneath the top arrow ("│").
-    UpStem,
-    /// Stem above the bottom arrow ("│").
-    DownStem,
 }
 
 impl HunkExpandIcon {
     #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Up => "▲",
-            Self::Down => "▼",
-            Self::Both => "⬍",
-            Self::UpStem | Self::DownStem => "│",
+            Self::Up => "⇑",
+            Self::Down => "⇓",
+            Self::Both => "⇕",
         }
     }
 
@@ -34,14 +29,14 @@ impl HunkExpandIcon {
     #[inline]
     #[must_use]
     pub const fn expands_above(self) -> bool {
-        matches!(self, Self::Up | Self::Both | Self::UpStem)
+        matches!(self, Self::Up | Self::Both)
     }
 
     /// Whether this expansion indicator expands context below the hunk.
     #[inline]
     #[must_use]
     pub const fn expands_below(self) -> bool {
-        matches!(self, Self::Down | Self::Both | Self::DownStem)
+        matches!(self, Self::Down | Self::Both)
     }
 }
 
@@ -379,11 +374,9 @@ mod tests {
 
     #[test]
     fn test_hunk_expand_icon_methods() {
-        assert_eq!(HunkExpandIcon::Up.as_str(), "▲");
-        assert_eq!(HunkExpandIcon::Down.as_str(), "▼");
-        assert_eq!(HunkExpandIcon::Both.as_str(), "⬍");
-        assert_eq!(HunkExpandIcon::UpStem.as_str(), "│");
-        assert_eq!(HunkExpandIcon::DownStem.as_str(), "│");
+        assert_eq!(HunkExpandIcon::Up.as_str(), "⇑");
+        assert_eq!(HunkExpandIcon::Down.as_str(), "⇓");
+        assert_eq!(HunkExpandIcon::Both.as_str(), "⇕");
 
         assert!(HunkExpandIcon::Up.expands_above());
         assert!(!HunkExpandIcon::Up.expands_below());
@@ -393,12 +386,6 @@ mod tests {
 
         assert!(HunkExpandIcon::Both.expands_above());
         assert!(HunkExpandIcon::Both.expands_below());
-
-        assert!(HunkExpandIcon::UpStem.expands_above());
-        assert!(!HunkExpandIcon::UpStem.expands_below());
-
-        assert!(!HunkExpandIcon::DownStem.expands_above());
-        assert!(HunkExpandIcon::DownStem.expands_below());
     }
 
     #[test]

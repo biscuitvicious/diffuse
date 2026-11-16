@@ -879,19 +879,19 @@ fn test_hunk_expand_icon_for_segment_branches() {
         Some(HunkExpandIcon::Down)
     );
 
-    // When seg_count == 4 (wrapped): s_idx 0 is Up, s_idx 1 is UpStem, s_idx 2 is
-    // DownStem, s_idx 3 is Down (space for both stems!)
+    // When seg_count == 4 (wrapped): s_idx 0 is Up, interior segments are None,
+    // s_idx 3 is Down (single char arrows, no stems)
     assert_eq!(
         state_mid.hunk_expand_icon_for_segment(diff_row_idx, 0, &[4]),
         Some(HunkExpandIcon::Up)
     );
     assert_eq!(
         state_mid.hunk_expand_icon_for_segment(diff_row_idx, 1, &[4]),
-        Some(HunkExpandIcon::UpStem)
+        None
     );
     assert_eq!(
         state_mid.hunk_expand_icon_for_segment(diff_row_idx, 2, &[4]),
-        Some(HunkExpandIcon::DownStem)
+        None
     );
     assert_eq!(
         state_mid.hunk_expand_icon_for_segment(diff_row_idx, 3, &[4]),
@@ -959,11 +959,11 @@ fn test_hunk_expand_icon_for_segment_branches() {
         state_top.hunk_expand_icon_for_segment(row_top, 0, &[1]),
         Some(HunkExpandIcon::Down)
     );
-    // When wrapped into 4 visual segments, segment 2 is DownStem and segment 3 is
-    // Down
+    // When wrapped into 4 visual segments, segment 2 is None and segment 3 is
+    // Down (single char arrow)
     assert_eq!(
         state_top.hunk_expand_icon_for_segment(row_top, 2, &[4]),
-        Some(HunkExpandIcon::DownStem)
+        None
     );
     assert_eq!(
         state_top.hunk_expand_icon_for_segment(row_top, 3, &[4]),
@@ -1002,14 +1002,14 @@ fn test_hunk_expand_icon_for_segment_branches() {
         state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[1]),
         Some(HunkExpandIcon::Up)
     );
-    // When wrapped into 4 visual segments, segment 0 is Up and segment 1 is UpStem
+    // When wrapped into 4 visual segments, segment 0 is Up and segment 1 is None
     assert_eq!(
         state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[4]),
         Some(HunkExpandIcon::Up)
     );
     assert_eq!(
         state_bot.hunk_expand_icon_for_segment(row_bot, 1, &[4]),
-        Some(HunkExpandIcon::UpStem)
+        None
     );
 
     // 5. Multi-line hunk in middle of file
@@ -1048,9 +1048,9 @@ fn test_hunk_expand_icon_for_segment_branches() {
     assert_eq!(multi_rows.len(), 6);
 
     let first_row = multi_rows[0];
-    let stem_up_row = multi_rows[1];
+    let row_1 = multi_rows[1];
     let mid_row = multi_rows[2];
-    let stem_down_row = multi_rows[4];
+    let row_4 = multi_rows[4];
     let last_row = multi_rows[5];
     let flat_segs = vec![1; state_multi.flat.len()];
 
@@ -1060,22 +1060,22 @@ fn test_hunk_expand_icon_for_segment_branches() {
         Some(HunkExpandIcon::Up)
     );
 
-    // Row 1 (visual line 1): UpStem because total_vis >= 4 and both contexts exist
+    // Row 1 (visual line 1): None (single char arrows, no stems)
     assert_eq!(
-        state_multi.hunk_expand_icon_for_segment(stem_up_row, 0, &flat_segs),
-        Some(HunkExpandIcon::UpStem)
+        state_multi.hunk_expand_icon_for_segment(row_1, 0, &flat_segs),
+        None
     );
 
-    // Row 2 (visual line 2): None (interior line between stems)
+    // Row 2 (visual line 2): None (interior line)
     assert_eq!(
         state_multi.hunk_expand_icon_for_segment(mid_row, 0, &flat_segs),
         None
     );
 
-    // Row 4 (visual line 4 = 6 - 2): DownStem
+    // Row 4 (visual line 4 = 6 - 2): None
     assert_eq!(
-        state_multi.hunk_expand_icon_for_segment(stem_down_row, 0, &flat_segs),
-        Some(HunkExpandIcon::DownStem)
+        state_multi.hunk_expand_icon_for_segment(row_4, 0, &flat_segs),
+        None
     );
 
     // Last row (visual line 5 = 6 - 1): Down
@@ -1084,7 +1084,7 @@ fn test_hunk_expand_icon_for_segment_branches() {
         Some(HunkExpandIcon::Down)
     );
 
-    // 6. Exactly 3 visual lines: no stems (not enough space for both)
+    // 6. Exactly 3 visual lines: Up at top, Down at bottom, None in middle
     let diff_3 = "diff --git a/three.rs b/three.rs\n--- a/three.rs\n+++ b/three.rs\n@@ -5,3 +5,0 @@\n-old 5\n-old 6\n-old 7\n";
     let mut old_3 = (1..=15).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
     old_3[4] = "old 5\n".into();
