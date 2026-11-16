@@ -262,7 +262,7 @@ fn test_write_file_header_bar_direct_buffer() {
     )
     .unwrap();
     assert!(
-        buf_badged.contains("File 1/2"),
+        buf_badged.contains("1/2"),
         "badged banner must show file position: {buf_badged:?}"
     );
 }
@@ -1384,4 +1384,51 @@ fn test_render_side_by_side_diff_output() {
         render_pipeline_output_with_all_options(&out, &theme, true, 80, None, None, true);
     let pipe_stripped = strip_ansi(&pipe_rendered);
     assert!(pipe_stripped.contains('│'));
+}
+
+#[test]
+fn test_file_header_reordered_layout() {
+    use crate::FileHeaderSpec;
+
+    let mut file = OutputFile {
+        path: "app.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: diffuse_core::FileStatus::Modified,
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts {
+            adds: 2,
+            dels: 1,
+            ..Default::default()
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: Some(9216),
+        new_bytes: Some(9216),
+        raw_source: None,
+    };
+    let spec = FileHeaderSpec {
+        badge: Some(Badge {
+            idx: 0,
+            total: Some(7),
+        }),
+        is_collapsed: false,
+        common_prefix: None,
+    };
+    let text = file_header_text(&file, &spec);
+    assert_eq!(text, "════ ▼ app.rs 1/7 −1 +2 (9kB) ");
+
+    // Binary file: no caret
+    file.is_binary = true;
+    let text_bin = file_header_text(&file, &spec);
+    assert_eq!(text_bin, "════ app.rs 1/7 −1 +2 (binary, 9kB) ");
 }

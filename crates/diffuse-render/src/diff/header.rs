@@ -83,14 +83,10 @@ fn walk(
         role: HeaderRole::Base,
     };
 
-    // Indicator: ruler, collapse caret (regular files only), position badge.
+    // Indicator: ruler and collapse caret (regular files only).
     let mut indicator = String::from("════ ");
     if !file.is_binary {
         indicator.push_str(if spec.is_collapsed { "▶ " } else { "▼ " });
-    }
-    if let Some(badge) = spec.badge {
-        indicator.push_str(&badge.file_text());
-        indicator.push_str(" · ");
     }
     text.push_str(&indicator);
     spans.push(base(&indicator));
@@ -101,6 +97,12 @@ fn walk(
         role: HeaderRole::Path,
     });
     text.push_str(&path);
+
+    if let Some(badge) = spec.badge {
+        let badge_text = format!(" {}", badge.number_text());
+        text.push_str(&badge_text);
+        spans.push(base(&badge_text));
+    }
 
     let counts_text = format_counts_plain(&file.counts);
     if !counts_text.is_empty() {

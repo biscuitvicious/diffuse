@@ -128,7 +128,7 @@ fn test_binary_file_header_has_no_expand_caret() {
         "binary file must not show collapsed caret ▶"
     );
     assert!(
-        rendered.contains("════ File 1/1 · test.png −2 +5 ~1"),
+        rendered.contains("════ test.png 1/1 −2 +5 ~1"),
         "binary file header must start with flat rule without caret: {rendered:?}"
     );
     assert!(
@@ -906,7 +906,7 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
         "file header banner must omit '(modified)', got: {banner}"
     );
     assert!(
-        banner.contains("════ ▼ File 1/1 · src/main.rs −2 +5 ~1"),
+        banner.contains("════ ▼ src/main.rs 1/1 −2 +5 ~1"),
         "file header banner should directly show path and counts without '(modified)', got: {banner}"
     );
 
@@ -1101,7 +1101,7 @@ fn test_file_header_zero_counts_omitted() {
         "zero counts must be omitted: {banner:?}"
     );
     assert!(
-        banner.contains("════ ▼ File 1/1 · src/main.rs"),
+        banner.contains("════ ▼ src/main.rs 1/1"),
         "no double space when counts omitted: {banner:?}"
     );
 }

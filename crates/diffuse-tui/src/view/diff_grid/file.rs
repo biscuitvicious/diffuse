@@ -13,7 +13,6 @@ use crate::{
 
 fn rename_prefix_visual_span(
     file: &OutputFile,
-    badge: Badge,
     common_prefix: Option<&str>,
 ) -> Option<(usize, usize)> {
     let old_path = file.old_path.as_deref()?;
@@ -50,14 +49,9 @@ fn rename_prefix_visual_span(
 
     if common_len > 0 {
         let prefix = old_parts[..common_len].join("/");
-        // Prefix starts after the indicator, badge and dot (`════ ▼ File 3/17 · `
-        // or `════ File 3/17 · ` for binaries) and includes trailing '/'
-        let badge_shift = display_width(format!("{} · ", badge.file_text()));
-        let p_start = if file.is_binary {
-            5 + badge_shift
-        } else {
-            7 + badge_shift
-        };
+        // Prefix starts after the indicator (`════ ▼ ` for regular files
+        // or `════ ` for binaries) and includes trailing '/'
+        let p_start = if file.is_binary { 5 } else { 7 };
         let p_len = display_width(prefix) + 1;
         Some((p_start, p_start + p_len))
     } else {
@@ -133,7 +127,7 @@ pub fn file_header_segment_line(
     if seg_start >= total_w {
         return line_from_spans(vec![ruler()]);
     }
-    let rename = rename_prefix_visual_span(file, badge, common_prefix);
+    let rename = rename_prefix_visual_span(file, common_prefix);
     let mut sliced = slice_spans(&banner_spans(&banner, rename), seg_start, content_width);
     let piece_w = spans_width(&sliced);
     if piece_w < content_width {

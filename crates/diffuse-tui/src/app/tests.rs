@@ -3232,20 +3232,22 @@ fn test_file_badge_omits_total_while_streaming() {
 
     state.is_streaming = true;
     let streaming = state.render_frame(120, 20);
+    let plain_streaming = crate::render::strip_ansi(&streaming);
     assert!(
-        streaming.contains("File 1"),
-        "streaming banner keeps the position:\n{streaming}"
+        plain_streaming.contains("a.rs 1 "),
+        "streaming banner keeps the position:\n{plain_streaming}"
     );
     assert!(
-        !streaming.contains("File 1/2"),
-        "streaming banner must omit the still-growing total:\n{streaming}"
+        !plain_streaming.contains("a.rs 1/2"),
+        "streaming banner must omit the still-growing total:\n{plain_streaming}"
     );
 
     state.is_streaming = false;
     let loaded = state.render_frame(120, 20);
+    let plain_loaded = crate::render::strip_ansi(&loaded);
     assert!(
-        loaded.contains("File 1/2"),
-        "the total appears once the diff is loaded:\n{loaded}"
+        plain_loaded.contains("a.rs 1/2"),
+        "the total appears once the diff is loaded:\n{plain_loaded}"
     );
 }
 

@@ -619,7 +619,7 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(!screen_lines[1].contains("hunk"));
 
     // Row 2: File Header Banner in Diff Viewport
-    assert!(screen_lines[2].contains("▼ File 1/1 · filesystem.rs"));
+    assert!(screen_lines[2].contains("▼ filesystem.rs 1/1"));
     assert!(screen_lines[2].contains("+1 ~1"));
 
     // Row 3: Hunk divider with context
@@ -715,7 +715,7 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(screen_lines[1].contains("crates/diffuse-core/src/moves/"));
 
     // Row 2: File header banner
-    assert!(screen_lines[2].contains("▼ File 1/2 · mod.rs"));
+    assert!(screen_lines[2].contains("▼ mod.rs 1/2"));
 
     // Bottom Navigation Ribbon
     assert!(screen_lines[height - 1].contains("[j/k]move"));

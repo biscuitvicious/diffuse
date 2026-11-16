@@ -377,19 +377,20 @@ fn test_cli_pager_flag() {
         stdout.contains("\x1b["),
         "stdout must contain ANSI colored diff"
     );
+    let plain = diffuse_render::ansi::strip_ansi(&stdout);
     // The pager streams, so the banner carries the position alone: the total
     // is not known until the stream ends.
     assert!(
-        stdout.contains("File 1 ·"),
-        "pager banner must carry the file position: {stdout:.400}"
+        plain.contains("a.txt 1 "),
+        "pager banner must carry the file position: {plain:.400}"
     );
     assert!(
-        stdout.contains("File 2 ·"),
-        "pager banner must carry the last file position: {stdout:.400}"
+        plain.contains("b.txt 2 "),
+        "pager banner must carry the last file position: {plain:.400}"
     );
     assert!(
-        !stdout.contains("File 1/2") && !stdout.contains("File 2/2"),
-        "a streaming banner must not claim a total: {stdout:.400}"
+        !plain.contains("1/2") && !plain.contains("2/2"),
+        "a streaming banner must not claim a total: {plain:.400}"
     );
 }
 

@@ -12,7 +12,8 @@ pub struct Badge {
 }
 
 impl Badge {
-    /// File badge text (`File 3/17`, or `F3` when the total is not known yet).
+    /// File badge text (`File 3/17`, or `File 3` when the total is not known
+    /// yet).
     #[must_use]
     pub fn file_text(&self) -> String {
         match self.total {
@@ -21,7 +22,17 @@ impl Badge {
         }
     }
 
-    /// Hunk badge text (`Hunk 2/3`, or `H2` when the total is not known yet).
+    /// Number text (`3/17`, or `3` when the total is not known yet).
+    #[must_use]
+    pub fn number_text(&self) -> String {
+        match self.total {
+            Some(total) => format!("{}/{total}", self.idx + 1),
+            None => format!("{}", self.idx + 1),
+        }
+    }
+
+    /// Hunk badge text (`Hunk 2/3`, or `Hunk 2` when the total is not known
+    /// yet).
     #[must_use]
     pub fn hunk_text(&self) -> String {
         match self.total {
@@ -42,16 +53,19 @@ mod tests {
             total: Some(17),
         };
         assert_eq!(file.file_text(), "File 3/17");
+        assert_eq!(file.number_text(), "3/17");
         let hunk = Badge {
             idx: 1,
             total: Some(3),
         };
         assert_eq!(hunk.hunk_text(), "Hunk 2/3");
+        assert_eq!(hunk.number_text(), "2/3");
         let single = Badge {
             idx: 0,
             total: Some(1),
         };
         assert_eq!(single.file_text(), "File 1/1");
+        assert_eq!(single.number_text(), "1/1");
         assert_eq!(single.hunk_text(), "Hunk 1/1");
     }
 
@@ -62,10 +76,12 @@ mod tests {
             total: None,
         };
         assert_eq!(file.file_text(), "File 3");
+        assert_eq!(file.number_text(), "3");
         let hunk = Badge {
             idx: 1,
             total: None,
         };
         assert_eq!(hunk.hunk_text(), "Hunk 2");
+        assert_eq!(hunk.number_text(), "2");
     }
 }
