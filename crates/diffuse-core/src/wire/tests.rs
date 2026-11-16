@@ -494,12 +494,12 @@ fn test_output_file_untracked_reverse_involution() {
     };
 
     assert_eq!(file.byte_size(), Some(42));
-    assert_eq!(file.display_size(), "42B");
+    assert_eq!(file.display_size(), "+42B");
 
     let rev = file.clone().reverse();
     assert_eq!(rev.status, "untracked");
     assert_eq!(rev.byte_size(), Some(42));
-    assert_eq!(rev.display_size(), "42B");
+    assert_eq!(rev.display_size(), "+42B");
     assert_eq!(rev.counts.adds, 0);
     assert_eq!(rev.counts.dels, 2);
 

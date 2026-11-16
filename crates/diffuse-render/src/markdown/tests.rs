@@ -198,7 +198,7 @@ fn test_render_markdown_summary_table() {
     assert!(md.contains("### Diff Summary"));
     assert!(md.contains("**2 files changed**: **-1** deletions, **+3** additions"));
     assert!(md.contains("| `src/main.rs` | `0B` | -1 | +1 |"));
-    assert!(md.contains("| `README.md` | `added, 0B` | -0 | +2 |"));
+    assert!(md.contains("| `README.md` | `added, +0B` | -0 | +2 |"));
 }
 
 #[test]

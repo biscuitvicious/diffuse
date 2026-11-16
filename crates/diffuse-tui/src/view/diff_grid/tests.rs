@@ -880,12 +880,24 @@ fn test_file_header_text_identical_formatted_size() {
         false,
     );
     assert!(
-        banner.contains("(15kB)"),
-        "banner must contain '(15kB)', got: {banner}"
+        banner.contains("(15kB +5B)"),
+        "banner must contain '(15kB +5B)', got: {banner}"
+    );
+
+    // Exact equal byte sizes render single size without delta
+    f.old_bytes = Some(15110);
+    f.new_bytes = Some(15110);
+    let banner_exact = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
     );
     assert!(
-        !banner.contains('➞') && !banner.contains("->"),
-        "banner must NOT contain an arrow when formatted sizes match, got: {banner}"
+        banner_exact.contains("(15kB)"),
+        "banner must contain '(15kB)', got: {banner_exact}"
     );
 }
 

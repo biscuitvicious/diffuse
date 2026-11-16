@@ -179,7 +179,7 @@ index 1111111..2222222 100644
     let frame = state.render_frame(100, 30);
     let plain_frame = crate::render::strip_ansi(&frame);
     assert!(
-        plain_frame.contains("▶ untracked.rs 2/2 +1 (untracked, 21B) [collapsed]"),
+        plain_frame.contains("▶ untracked.rs 2/2 +1 (untracked, +21B) [collapsed]"),
         "frame shows collapsed indicator"
     );
 
@@ -198,7 +198,7 @@ index 1111111..2222222 100644
     let frame_expanded = state.render_frame(100, 30);
     let plain_expanded = crate::render::strip_ansi(&frame_expanded);
     assert!(
-        plain_expanded.contains("▼ untracked.rs 2/2 +1 (untracked, 21B)"),
+        plain_expanded.contains("▼ untracked.rs 2/2 +1 (untracked, +21B)"),
         "frame shows expanded indicator"
     );
 }

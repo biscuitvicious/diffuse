@@ -214,9 +214,10 @@ impl OutputFile {
         }
     }
 
-    /// Formats the file size, displaying `from_size ➞ to_size` if the
-    /// formatted values differ, or a single size if unchanged (or if
-    /// added/deleted/untracked).
+    /// Formats the file size, displaying the current size alongside the change
+    /// delta if modified (e.g. `24kB +3.3kB` or `21kB −1.2kB`), a single size
+    /// if unchanged, or `+size` / `−size` for added, untracked, and deleted
+    /// files.
     pub fn display_size(&self) -> String {
         if self.old_bytes.is_none() && self.new_bytes.is_none() {
             return String::new();
@@ -224,19 +225,44 @@ impl OutputFile {
         let new_fmt = self.new_bytes.map(format_byte_size);
         let old_fmt = self.old_bytes.map(format_byte_size);
         if self.status == "added" {
-            new_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
+            match new_fmt {
+                Some(n) => format!("+{n}"),
+                None => UNKNOWN_SYMBOL.to_string(),
+            }
         } else if self.status == "deleted" {
-            old_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
+            match old_fmt {
+                Some(o) => format!("−{o}"),
+                None => UNKNOWN_SYMBOL.to_string(),
+            }
         } else if self.status == "untracked" {
-            new_fmt
-                .or(old_fmt)
-                .unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
+            let fmt = new_fmt.or(old_fmt);
+            match fmt {
+                Some(s) => format!("+{s}"),
+                None => UNKNOWN_SYMBOL.to_string(),
+            }
         } else {
-            match (old_fmt, new_fmt) {
-                (Some(o), Some(n)) if o != n => format!("{o} {ARROW_SYMBOL} {n}"),
-                (Some(_), Some(n)) => n,
-                (Some(o), None) => format!("{o} {ARROW_SYMBOL} {UNKNOWN_SYMBOL}"),
-                (None, Some(n)) => format!("{UNKNOWN_SYMBOL} {ARROW_SYMBOL} {n}"),
+            match (self.old_bytes, self.new_bytes) {
+                (Some(o), Some(n)) => {
+                    let base = format_byte_size(n);
+                    let delta = n as i64 - o as i64;
+                    if delta > 0 {
+                        let delta_fmt = format_byte_size(delta as usize);
+                        format!("{base} +{delta_fmt}")
+                    } else if delta < 0 {
+                        let delta_fmt = format_byte_size((-delta) as usize);
+                        format!("{base} −{delta_fmt}")
+                    } else {
+                        base
+                    }
+                }
+                (Some(o), None) => {
+                    let o_fmt = format_byte_size(o);
+                    format!("{o_fmt} {ARROW_SYMBOL} {UNKNOWN_SYMBOL}")
+                }
+                (None, Some(n)) => {
+                    let n_fmt = format_byte_size(n);
+                    format!("{UNKNOWN_SYMBOL} {ARROW_SYMBOL} {n_fmt}")
+                }
                 (None, None) => String::new(),
             }
         }

@@ -767,7 +767,7 @@ Binary files differ
     assert_eq!(out.old_bytes, Some(2048));
     assert_eq!(out.new_byte_size(), Some(4096));
     assert_eq!(out.old_byte_size(), Some(2048));
-    assert_eq!(out.display_size(), "2kB ➞ 4kB");
+    assert_eq!(out.display_size(), "4kB +2kB");
 }
 
 #[test]
@@ -802,7 +802,7 @@ new file mode 100644
     assert_eq!(out.old_bytes, None);
     assert_eq!(out.new_byte_size(), Some(0));
     assert_eq!(out.old_byte_size(), None);
-    assert_eq!(out.display_size(), "0B");
+    assert_eq!(out.display_size(), "+0B");
 }
 
 #[test]
@@ -821,8 +821,8 @@ deleted file mode 100644
     assert_eq!(out.old_bytes, Some(6));
     assert_eq!(out.new_byte_size(), None);
     assert_eq!(out.old_byte_size(), Some(6));
-    assert_eq!(out.display_size(), "6B");
-    assert_eq!(out.display_status(), "deleted, 6B");
+    assert_eq!(out.display_size(), "−6B");
+    assert_eq!(out.display_status(), "deleted, −6B");
 }
 
 #[test]
@@ -840,7 +840,7 @@ fn test_empty_file_modified_to_content_shows_zero_to_new_size() {
     let out = process_single_diff_file(f, Some("keep\n"), Some(""), None, &opts);
     assert_eq!(out.old_bytes, Some(0));
     assert_eq!(out.new_bytes, Some(5));
-    assert_eq!(out.display_size(), "0B ➞ 5B");
+    assert_eq!(out.display_size(), "5B +5B");
 }
 
 #[test]
@@ -964,9 +964,9 @@ fn test_formatted_size_identical_renders_single_size() {
     assert_eq!(crate::wire::format_byte_size(15115), "15kB");
     assert_eq!(out.old_bytes, Some(15110));
     assert_eq!(out.new_bytes, Some(15115));
-    // Must render single formatted size "15kB", never "15kB -> 15kB"
-    assert_eq!(out.display_size(), "15kB");
-    assert_eq!(out.display_status(), "15kB");
+    // When formatted sizes match but exact delta is non-zero, renders delta
+    assert_eq!(out.display_size(), "15kB +5B");
+    assert_eq!(out.display_status(), "15kB +5B");
 
     // Exact equal byte sizes also render single formatted size
     let mut f_exact = crate::parse::parse_diff(diff).into_iter().next().unwrap();

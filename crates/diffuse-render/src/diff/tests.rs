@@ -1432,3 +1432,80 @@ fn test_file_header_reordered_layout() {
     let text_bin = file_header_text(&file, &spec);
     assert_eq!(text_bin, "════ app.rs 1/7 −1 +2 (binary, 9kB) ");
 }
+
+#[test]
+fn test_file_header_banner_size_delta_plain_coloring() {
+    use crate::{FileHeaderSpec, HeaderRole, theme::Cursor};
+
+    let theme = DiffuseTheme::dark();
+    let mut file = banner_test_file();
+    // Modified file with positive delta: 21,000 -> 24,300 (+3.2kB)
+    file.old_bytes = Some(21000);
+    file.new_bytes = Some(24300);
+
+    let spec = FileHeaderSpec {
+        badge: Some(Badge {
+            idx: 0,
+            total: Some(1),
+        }),
+        is_collapsed: false,
+        common_prefix: None,
+    };
+    let banner = file_header_banner(&file, &spec, &theme, Cursor::Rest);
+    assert_eq!(banner.text, "════ ▼ src/main.rs 1/1 −2 +5 (24kB +3.2kB) ");
+
+    // Verify status tag uses plain HeaderRole::Path
+    let status_span = banner
+        .spans
+        .iter()
+        .find(|s| s.text == " (24kB +3.2kB)")
+        .expect("must have status tag span");
+    assert_eq!(status_span.role, HeaderRole::Path);
+
+    // Negative delta (shrinkage): 24,300 -> 21,000 (-3.2kB)
+    file.old_bytes = Some(24300);
+    file.new_bytes = Some(21000);
+    let banner_neg = file_header_banner(&file, &spec, &theme, Cursor::Rest);
+    assert_eq!(
+        banner_neg.text,
+        "════ ▼ src/main.rs 1/1 −2 +5 (21kB −3.2kB) "
+    );
+    let neg_span = banner_neg
+        .spans
+        .iter()
+        .find(|s| s.text == " (21kB −3.2kB)")
+        .expect("must have status tag span");
+    assert_eq!(neg_span.role, HeaderRole::Path);
+
+    // Added file: +24kB
+    file.status = diffuse_core::FileStatus::Added;
+    file.old_bytes = None;
+    file.new_bytes = Some(24300);
+    let banner_add = file_header_banner(&file, &spec, &theme, Cursor::Rest);
+    assert_eq!(
+        banner_add.text,
+        "════ ▼ src/main.rs 1/1 −2 +5 (added, +24kB) "
+    );
+    let add_span = banner_add
+        .spans
+        .iter()
+        .find(|s| s.text == " (added, +24kB)")
+        .expect("must have status tag span");
+    assert_eq!(add_span.role, HeaderRole::Path);
+
+    // Deleted file: −21kB
+    file.status = diffuse_core::FileStatus::Deleted;
+    file.old_bytes = Some(21000);
+    file.new_bytes = None;
+    let banner_del = file_header_banner(&file, &spec, &theme, Cursor::Rest);
+    assert_eq!(
+        banner_del.text,
+        "════ ▼ src/main.rs 1/1 −2 +5 (deleted, −21kB) "
+    );
+    let del_span = banner_del
+        .spans
+        .iter()
+        .find(|s| s.text == " (deleted, −21kB)")
+        .expect("must have status tag span");
+    assert_eq!(del_span.role, HeaderRole::Path);
+}

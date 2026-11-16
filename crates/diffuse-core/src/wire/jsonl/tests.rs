@@ -363,22 +363,36 @@ fn test_display_status_mode_change_and_renames() {
     file.status = FileStatus::Modified;
     assert_eq!(file.display_status(), "1kB");
 
-    // Size changes between old and new
+    // Size changes between old and new: post-image base + delta
     file.old_bytes = Some(1024);
     file.new_bytes = Some(2048);
-    assert_eq!(file.display_status(), "1kB ➞ 2kB");
+    assert_eq!(file.display_status(), "2kB +1kB");
 
-    // Added file
+    // Negative delta (shrinkage)
+    file.old_bytes = Some(2048);
+    file.new_bytes = Some(1024);
+    assert_eq!(file.display_status(), "1kB −1kB");
+
+    // Small delta on large file
+    file.old_bytes = Some(15110);
+    file.new_bytes = Some(15115);
+    assert_eq!(file.display_status(), "15kB +5B");
+
+    // Added file with sign
     file.status = FileStatus::Added;
     file.old_bytes = None;
     file.new_bytes = Some(1024);
-    assert_eq!(file.display_status(), "added, 1kB");
+    assert_eq!(file.display_status(), "added, +1kB");
 
-    // Deleted file
+    // Untracked file with sign
+    file.status = FileStatus::Untracked;
+    assert_eq!(file.display_status(), "untracked, +1kB");
+
+    // Deleted file with sign
     file.status = FileStatus::Deleted;
     file.old_bytes = Some(1024);
     file.new_bytes = None;
-    assert_eq!(file.display_status(), "deleted, 1kB");
+    assert_eq!(file.display_status(), "deleted, −1kB");
 
     // When both old_bytes and new_bytes are None, size is omitted completely
     file.old_bytes = None;
