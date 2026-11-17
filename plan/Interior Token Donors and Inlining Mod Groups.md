@@ -3,7 +3,7 @@
 - [x] **Phase 1: Information-Theoretic Transitive Co-occurrence and Donor Invariants**
 - [x] **Phase 2: Interior Donor Detection in `diffuse-core::collapse::assemble`**
 - [x] **Phase 3: Sliced Run Assignment & Subline Moved Token Labeling**
-- [·] **Phase 4: Golden Corpus Acceptance Analysis, Dual-Leg Verification & Visual Sign-off**
+- [x] **Phase 4: Golden Corpus Acceptance Analysis, Dual-Leg Verification & Visual Sign-off**
 
 ---
 
