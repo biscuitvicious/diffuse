@@ -430,6 +430,182 @@ pub(crate) fn matches_interior_donor(
     false
 }
 
+pub(crate) fn identify_donated_tokens(
+    del_row_text: &str,
+    add_row_text: &str,
+    del_spans: &[(usize, usize)],
+    add_spans: &[(usize, usize)],
+    cand_text: &str,
+) -> Vec<String> {
+    let mut donated = Vec::new();
+    let struck_tokens = extract_significant_tokens(del_row_text, del_spans, 3);
+    let added_tokens = extract_significant_tokens(add_row_text, add_spans, 4);
+
+    // Predicate A: Transitive co-occurrence
+    for a in &struck_tokens {
+        if contains_subline_token(cand_text, a) {
+            for b in &added_tokens {
+                if a != b && contains_subline_token(cand_text, b) {
+                    donated.push(b.clone());
+                }
+            }
+        }
+    }
+
+    // Predicate B: Substantial information deficit conservation
+    for b in &added_tokens {
+        if b.chars().count() >= 8 && contains_subline_token(cand_text, b) {
+            donated.push(b.clone());
+        }
+    }
+
+    donated.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    donated.dedup();
+    donated
+}
+
+fn count_token_occurrences(text: &str, donated_tokens: &[String]) -> FxHashMap<String, usize> {
+    let mut occupied: Vec<bool> = vec![false; text.chars().count()];
+    let mut found = FxHashMap::default();
+
+    for token in donated_tokens {
+        for (idx, _) in text.match_indices(token) {
+            let end_idx = idx + token.len();
+            let left_ok = idx == 0
+                || text[..idx]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            let right_ok = end_idx >= text.len()
+                || text[end_idx..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            if left_ok && right_ok {
+                let char_start = text[..idx].chars().count();
+                let char_len = token.chars().count();
+                let char_end = char_start + char_len;
+                if char_end <= occupied.len() && !occupied[char_start..char_end].iter().any(|&b| b)
+                {
+                    occupied[char_start..char_end].fill(true);
+                    *found.entry(token.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    found
+}
+
+fn find_budgeted_token_char_ranges(
+    text: &str,
+    donated_tokens: &[String],
+    budget: &mut FxHashMap<String, usize>,
+) -> Vec<(usize, usize)> {
+    let mut moved_ranges = Vec::new();
+    let mut occupied: Vec<bool> = vec![false; text.chars().count()];
+
+    for token in donated_tokens {
+        let Some(rem) = budget.get_mut(token) else {
+            continue;
+        };
+        if *rem == 0 {
+            continue;
+        }
+
+        for (idx, _) in text.match_indices(token) {
+            if *rem == 0 {
+                break;
+            }
+            let end_idx = idx + token.len();
+            let left_ok = idx == 0
+                || text[..idx]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            let right_ok = end_idx >= text.len()
+                || text[end_idx..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            if left_ok && right_ok {
+                let char_start = text[..idx].chars().count();
+                let char_len = token.chars().count();
+                let char_end = char_start + char_len;
+                if char_end <= occupied.len() && !occupied[char_start..char_end].iter().any(|&b| b)
+                {
+                    occupied[char_start..char_end].fill(true);
+                    moved_ranges.push((char_start, char_end));
+                    *rem -= 1;
+                }
+            }
+        }
+    }
+    if !moved_ranges.is_empty() {
+        moved_ranges.sort_unstable();
+        normalize_ranges(&mut moved_ranges);
+    }
+    moved_ranges
+}
+
+fn split_run_into_moved(
+    text: &str,
+    base_kind: RunKind,
+    moved_kind: RunKind,
+    moved_ranges: &[(usize, usize)],
+) -> Vec<(RunKind, String)> {
+    if moved_ranges.is_empty() {
+        return vec![(base_kind, text.to_string())];
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut runs = Vec::new();
+    let mut pos = 0usize;
+    for &(ms, me) in moved_ranges {
+        if ms > pos {
+            runs.push((base_kind, chars[pos..ms].iter().collect()));
+        }
+        runs.push((moved_kind, chars[ms..me].iter().collect()));
+        pos = me;
+    }
+    if pos < chars.len() {
+        runs.push((base_kind, chars[pos..].iter().collect()));
+    }
+    runs
+}
+
+fn split_del_runs_for_moved_src(
+    text: &str,
+    donated_tokens: &[String],
+    budget: &mut FxHashMap<String, usize>,
+) -> Vec<(RunKind, String)> {
+    let ranges = find_budgeted_token_char_ranges(text, donated_tokens, budget);
+    split_run_into_moved(text, RunKind::Del, RunKind::MovedSrc, &ranges)
+}
+
+fn relabel_anchor_add_to_moved_tgt(
+    runs: Vec<(RunKind, String)>,
+    donated_tokens: &[String],
+    budget: &mut FxHashMap<String, usize>,
+) -> Vec<(RunKind, String)> {
+    if donated_tokens.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len());
+    for (kind, text) in runs {
+        if kind != RunKind::Add {
+            out.push((kind, text));
+            continue;
+        }
+        let ranges = find_budgeted_token_char_ranges(&text, donated_tokens, budget);
+        out.extend(split_run_into_moved(
+            &text,
+            RunKind::Add,
+            RunKind::MovedTgt,
+            &ranges,
+        ));
+    }
+    out
+}
+
 pub fn pass_assemble_mods(
     h: &Hunk,
     ctx: &PairingContext,
@@ -578,7 +754,6 @@ pub fn pass_assemble_mods(
             }
         }
     }
-
 
     let mut precomputed_pairs: FxHashMap<usize, PrecomputedPair> = if ctx.paired_dels.len() > 32 {
         ctx.paired_dels
@@ -1031,17 +1206,71 @@ pub fn pass_assemble_mods(
             let mut anchor_group = if let Some(donors) = donor_dels.get(&add_ri) {
                 let anchor_nl = add.new_line_num().unwrap();
                 interior_anchor_news.insert(anchor_nl);
+                let mut all_donated_tokens = Vec::new();
                 for &di in donors {
                     let d_text = h.rows[di].text();
-                    del_groups.insert(di, RowGroup::Aux { anchor: anchor_nl });
-                    del_spans.insert(
-                        di,
-                        Spans {
-                            del: vec![(0, d_text.chars().count())],
-                            add: Vec::new(),
-                        },
+                    let donated = identify_donated_tokens(
+                        &del_text,
+                        add.text(),
+                        &spans.del,
+                        &spans.add,
+                        d_text,
                     );
-                    del_runs.insert(di, vec![(RunKind::Del, d_text.to_string())]);
+                    all_donated_tokens.extend(donated);
+                }
+                all_donated_tokens.sort_by_key(|t| std::cmp::Reverse(t.len()));
+                all_donated_tokens.dedup();
+
+                // Step 1: Count available occurrences on anchor in RunKind::Add runs
+                let mut anchor_add_counts: FxHashMap<String, usize> = FxHashMap::default();
+                for (kind, text) in &runs {
+                    if *kind == RunKind::Add {
+                        let counts = count_token_occurrences(text, &all_donated_tokens);
+                        for (tok, count) in counts {
+                            *anchor_add_counts.entry(tok).or_default() += count;
+                        }
+                    }
+                }
+
+                // Step 2: Count available occurrences across all donor deletion rows
+                let mut donor_counts: FxHashMap<String, usize> = FxHashMap::default();
+                for &di in donors {
+                    let d_text = h.rows[di].text();
+                    let counts = count_token_occurrences(d_text, &all_donated_tokens);
+                    for (tok, count) in counts {
+                        *donor_counts.entry(tok).or_default() += count;
+                    }
+                }
+
+                // Step 3: Compute the exact conservation budget for each token
+                let mut anchor_budget: FxHashMap<String, usize> = FxHashMap::default();
+                let mut donor_budget: FxHashMap<String, usize> = FxHashMap::default();
+                for tok in &all_donated_tokens {
+                    let a_cnt = anchor_add_counts.get(tok).copied().unwrap_or(0);
+                    let d_cnt = donor_counts.get(tok).copied().unwrap_or(0);
+                    let allowed = a_cnt.min(d_cnt);
+                    if allowed > 0 {
+                        anchor_budget.insert(tok.clone(), allowed);
+                        donor_budget.insert(tok.clone(), allowed);
+                    }
+                }
+
+                // Step 4: Relabel anchor add runs to MovedTgt using anchor_budget
+                runs =
+                    relabel_anchor_add_to_moved_tgt(runs, &all_donated_tokens, &mut anchor_budget);
+
+                // Step 5: Relabel donor deletion runs to MovedSrc using donor_budget
+                for &di in donors {
+                    let d_text = h.rows[di].text();
+                    let d_runs = split_del_runs_for_moved_src(
+                        d_text,
+                        &all_donated_tokens,
+                        &mut donor_budget,
+                    );
+                    let aux_spans = compute_aux_del_spans(&d_runs);
+                    del_groups.insert(di, RowGroup::Aux { anchor: anchor_nl });
+                    del_spans.insert(di, aux_spans);
+                    del_runs.insert(di, d_runs);
                     kept_dels.push(di);
                 }
                 Some(RowGroup::Anchor)

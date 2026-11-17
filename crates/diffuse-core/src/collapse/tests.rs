@@ -3467,6 +3467,45 @@ fn test_interior_donor_inlining_mod_group_assembly() {
         }
         _ => panic!("Expected Row::Mod at index 1, got {:?}", out[1]),
     }
+
+    assert!(
+        out[0]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedSrc && text == "is_on_scrollbar"),
+        "AuxDel row must label donated token as MovedSrc, got: {:?}",
+        out[0].cached_runs()
+    );
+    assert!(
+        out[1]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedTgt && text == "is_on_scrollbar"),
+        "Anchor Mod row must label received token as MovedTgt, got: {:?}",
+        out[1].cached_runs()
+    );
+}
+
+#[test]
+fn test_interior_donor_token_identification_and_boundary_isolation() {
+    use super::assemble::identify_donated_tokens;
+
+    let old_m = "    if scrollbar_seek {";
+    let new_m = "    if is_on_scrollbar {";
+    let del_spans = vec![(7, 21)]; // "scrollbar_seek"
+    let add_spans = vec![(7, 22)]; // "is_on_scrollbar"
+    let donor_del = "    let scrollbar_seek = is_on_scrollbar;";
+
+    let donated = identify_donated_tokens(old_m, new_m, &del_spans, &add_spans, donor_del);
+    assert_eq!(donated, vec!["is_on_scrollbar"]);
+
+    let embedded_donor = "    let scrollbar_seek = is_on_scrollbar_active;";
+    let empty_donated =
+        identify_donated_tokens(old_m, new_m, &del_spans, &add_spans, embedded_donor);
+    assert!(
+        empty_donated.is_empty(),
+        "Embedded identifier should not match as donated token"
+    );
 }
 
 #[test]
