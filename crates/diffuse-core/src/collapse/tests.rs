@@ -3425,6 +3425,51 @@ fn test_lcs_mod_hunk_15_stepwise() {
 }
 
 #[test]
+fn test_interior_donor_inlining_mod_group_assembly() {
+    let rs = None;
+    let h = hunk(vec![
+        Row::Del(DelLine::new(
+            227,
+            "                let scrollbar_seek = is_on_scrollbar;",
+        )),
+        Row::Del(DelLine::new(228, "                if scrollbar_seek {")),
+        Row::Add(AddLine::new(237, "                if is_on_scrollbar {")),
+    ]);
+    let out = collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(
+        out.len(),
+        2,
+        "Expected exactly 2 rows (AuxDel + anchor Mod), got: {out:?}"
+    );
+    match &out[0] {
+        Row::AuxDel { anchor, line, .. } => {
+            assert_eq!(*anchor, 237, "Expected AuxDel anchor to point to 237");
+            assert_eq!(line.num, 227);
+            assert_eq!(
+                line.text,
+                "                let scrollbar_seek = is_on_scrollbar;"
+            );
+        }
+        _ => panic!("Expected Row::AuxDel at index 0, got {:?}", out[0]),
+    }
+    match &out[1] {
+        Row::Mod {
+            old_line,
+            new_line,
+            is_anchor,
+            ..
+        } => {
+            assert_eq!(old_line.num, 228);
+            assert_eq!(old_line.text, "                if scrollbar_seek {");
+            assert_eq!(new_line.num, 237);
+            assert_eq!(new_line.text, "                if is_on_scrollbar {");
+            assert!(*is_anchor, "Expected is_anchor to be true");
+        }
+        _ => panic!("Expected Row::Mod at index 1, got {:?}", out[1]),
+    }
+}
+
+#[test]
 fn test_interior_donor_transitive_cooccurrence_and_deficit_conservation() {
     use super::assemble::matches_interior_donor;
 

@@ -1,8 +1,8 @@
 # Interior Token Donors and Inlining Mod Groups
 
 - [x] **Phase 1: Information-Theoretic Transitive Co-occurrence and Donor Invariants**
-- [·] **Phase 2: Interior Donor Detection in `diffuse-core::collapse::assemble`**
-- [ ] **Phase 3: Sliced Run Assignment & Subline Moved Token Labeling**
+- [x] **Phase 2: Interior Donor Detection in `diffuse-core::collapse::assemble`**
+- [·] **Phase 3: Sliced Run Assignment & Subline Moved Token Labeling**
 - [ ] **Phase 4: Golden Corpus Acceptance Analysis, Dual-Leg Verification & Visual Sign-off**
 
 ---

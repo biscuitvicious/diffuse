@@ -25,6 +25,7 @@ pub fn pass_sort_ordered_walk(
         del_spans,
         del_groups,
         del_runs,
+        interior_anchor_news,
         ..
     } = assembled;
     // Stage reflow-synthesized Ctx rows alongside `out` rows before
@@ -41,6 +42,13 @@ pub fn pass_sort_ordered_walk(
 
     let mut out = out;
     out.extend(staged_ctx);
+
+    let mut anchor_old_of: FxHashMap<u32, u32> = FxHashMap::default();
+    for r in &out {
+        if let (Some(nl), Some(ol)) = (r.new_line(), r.old_line()) {
+            anchor_old_of.insert(nl, ol);
+        }
+    }
 
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
     for &di in &reflow.meaningful_dels {
@@ -105,7 +113,13 @@ pub fn pass_sort_ordered_walk(
                 },
                 other => other.clone(),
             };
-            let key = (anchor, 1.1);
+            let sub_key =
+                if let (Some(d_old), Some(&a_old)) = (d.old_line(), anchor_old_of.get(&anchor)) {
+                    if d_old < a_old { 0.9 } else { 1.1 }
+                } else {
+                    1.1
+                };
+            let key = (anchor, sub_key);
             keyed.push((row, key));
             continue;
         }
@@ -114,7 +128,9 @@ pub fn pass_sort_ordered_walk(
             None => ((0, d.old_line().unwrap_or(0) as f64), None),
             Some(&mi) => {
                 let base = keyed[mi].1.0;
-                let grp = if keyed[mi].0.group() == Some(RowGroup::Anchor) {
+                let grp = if keyed[mi].0.group() == Some(RowGroup::Anchor)
+                    && !interior_anchor_news.contains(&keyed[mi].0.new_line().unwrap_or(0))
+                {
                     keyed[mi]
                         .0
                         .new_line()

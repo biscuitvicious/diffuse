@@ -143,6 +143,7 @@ pub struct AssembledMods {
     pub del_spans: FxHashMap<usize, Spans>,
     pub del_groups: FxHashMap<usize, RowGroup>,
     pub del_runs: FxHashMap<usize, Vec<(RunKind, String)>>,
+    pub interior_anchor_news: FxHashSet<u32>,
 }
 
 /// Per paired del row: donor text, first del number, word spans, and the
@@ -324,7 +325,6 @@ fn matches_unmatched_suffix(
     verify_reflow_evidence(&unmatched_suffix_chars, &cand_chars, false)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn contains_subline_token(haystack: &str, needle: &str) -> bool {
     let needle = needle.trim();
     if needle.is_empty() || needle.len() > haystack.len() {
@@ -351,7 +351,6 @@ fn contains_subline_token(haystack: &str, needle: &str) -> bool {
     false
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn extract_significant_tokens(text: &str, spans: &[(usize, usize)], min_len: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut tokens = Vec::new();
@@ -380,7 +379,6 @@ fn extract_significant_tokens(text: &str, spans: &[(usize, usize)], min_len: usi
 /// Computes whether candidate content provides information-theoretic evidence
 /// of an interior donor (such as variable inlining / expression relocation),
 /// satisfying transitive co-occurrence or substantial token conservation.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn matches_interior_donor(
     del_row_text: &str,
     add_row_text: &str,
@@ -448,15 +446,30 @@ pub fn pass_assemble_mods(
     let mut del_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
 
     let mut collapse_blocks = ctx.collapse_blocks.clone();
+    let in_expand_adds: FxHashSet<usize> = ctx
+        .expand_blocks
+        .values()
+        .flat_map(|b| b.iter().copied())
+        .collect();
+    let in_collapse_dels: FxHashSet<usize> = collapse_blocks
+        .values()
+        .flat_map(|b| b.iter().copied())
+        .collect();
     let mut claimed_dels: FxHashSet<usize> = ctx
         .paired_dels
         .iter()
         .copied()
-        .chain(collapse_blocks.values().flat_map(|b| b.iter().copied()))
+        .chain(in_collapse_dels.iter().copied())
         .collect();
+
+    let mut donor_dels: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut interior_anchor_news: FxHashSet<u32> = FxHashSet::default();
 
     for &del_ri in ctx.paired_dels {
         let add_ri = ctx.add_of[&del_ri];
+        if in_expand_adds.contains(&add_ri) || in_collapse_dels.contains(&del_ri) {
+            continue;
+        }
         if !collapse_blocks.contains_key(&add_ri) && !ctx.expand_blocks.contains_key(&add_ri) {
             let add_row = &h.rows[add_ri];
             let del_row = &h.rows[del_ri];
@@ -510,9 +523,62 @@ pub fn pass_assemble_mods(
                 block_dels.dedup();
                 claimed_dels.extend(&block_dels);
                 collapse_blocks.insert(add_ri, block_dels);
+            } else {
+                let mut donors = Vec::new();
+                let mut cand_k = del_ri;
+                let mut count = 0;
+                while cand_k > 0 && count < MAX_REFLOW_SCAN_DISTANCE {
+                    cand_k -= 1;
+                    count += 1;
+                    let cand_row = &h.rows[cand_k];
+                    if !matches!(cand_row, Row::Del(_)) || claimed_dels.contains(&cand_k) {
+                        break;
+                    }
+                    if matches_interior_donor(
+                        del_row.text(),
+                        add_row.text(),
+                        &spans.del,
+                        &spans.add,
+                        cand_row.text(),
+                    ) {
+                        donors.push(cand_k);
+                    } else {
+                        break;
+                    }
+                }
+                let mut cand_k = del_ri + 1;
+                let mut count = 0;
+                while cand_k < h.rows.len() && count < MAX_REFLOW_SCAN_DISTANCE {
+                    let current_k = cand_k;
+                    cand_k += 1;
+                    count += 1;
+                    let cand_row = &h.rows[current_k];
+                    if !matches!(cand_row, Row::Del(_)) || claimed_dels.contains(&current_k) {
+                        break;
+                    }
+                    if matches_interior_donor(
+                        del_row.text(),
+                        add_row.text(),
+                        &spans.del,
+                        &spans.add,
+                        cand_row.text(),
+                    ) {
+                        donors.push(current_k);
+                    } else {
+                        break;
+                    }
+                }
+
+                if !donors.is_empty() {
+                    donors.sort_unstable();
+                    donors.dedup();
+                    claimed_dels.extend(&donors);
+                    donor_dels.insert(add_ri, donors);
+                }
             }
         }
     }
+
 
     let mut precomputed_pairs: FxHashMap<usize, PrecomputedPair> = if ctx.paired_dels.len() > 32 {
         ctx.paired_dels
@@ -962,7 +1028,26 @@ pub fn pass_assemble_mods(
                 normalize_ranges(&mut moved);
                 (moved, full_adds, full_runs)
             };
-            let mut anchor_group = None;
+            let mut anchor_group = if let Some(donors) = donor_dels.get(&add_ri) {
+                let anchor_nl = add.new_line_num().unwrap();
+                interior_anchor_news.insert(anchor_nl);
+                for &di in donors {
+                    let d_text = h.rows[di].text();
+                    del_groups.insert(di, RowGroup::Aux { anchor: anchor_nl });
+                    del_spans.insert(
+                        di,
+                        Spans {
+                            del: vec![(0, d_text.chars().count())],
+                            add: Vec::new(),
+                        },
+                    );
+                    del_runs.insert(di, vec![(RunKind::Del, d_text.to_string())]);
+                    kept_dels.push(di);
+                }
+                Some(RowGroup::Anchor)
+            } else {
+                None
+            };
             let actually_moved = if !next_adds.is_empty() {
                 let anchor_num = add.new_line_num().unwrap();
                 anchor_group = Some(RowGroup::Anchor);
@@ -1917,5 +2002,6 @@ pub fn pass_assemble_mods(
         del_spans,
         del_groups,
         del_runs,
+        interior_anchor_news,
     }
 }
