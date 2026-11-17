@@ -150,6 +150,10 @@ pub struct AssembledMods {
 /// profiled-tape merged runs handed from assemble to render.
 type PrecomputedPair = (String, u32, Spans, Vec<(RunKind, String)>);
 
+/// Compound mod group entry: peer row index, donor_is_aux flag, active tokens,
+/// and shared conservation token budget.
+type CompoundGroupEntry = (usize, bool, Vec<String>, FxHashMap<String, usize>);
+
 fn compute_anchor_mod_spans(anchor_runs: &[(RunKind, String)]) -> Spans {
     let mut anchor_del_spans = Vec::new();
     let mut anchor_add_spans = Vec::new();
@@ -330,20 +334,23 @@ fn contains_subline_token(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() || needle.len() > haystack.len() {
         return false;
     }
+    let first_char = needle.chars().next().unwrap();
+    let last_char = needle.chars().next_back().unwrap();
     for (start_idx, _) in haystack.match_indices(needle) {
         let end_idx = start_idx + needle.len();
-        let left_ok = if start_idx == 0 {
+        let left_ok = if start_idx == 0 || (!first_char.is_alphanumeric() && first_char != '_') {
             true
         } else {
             let prev_char = haystack[..start_idx].chars().next_back().unwrap();
             !prev_char.is_alphanumeric() && prev_char != '_'
         };
-        let right_ok = if end_idx >= haystack.len() {
-            true
-        } else {
-            let next_char = haystack[end_idx..].chars().next().unwrap();
-            !next_char.is_alphanumeric() && next_char != '_'
-        };
+        let right_ok =
+            if end_idx >= haystack.len() || (!last_char.is_alphanumeric() && last_char != '_') {
+                true
+            } else {
+                let next_char = haystack[end_idx..].chars().next().unwrap();
+                !next_char.is_alphanumeric() && next_char != '_'
+            };
         if left_ok && right_ok {
             return true;
         }
@@ -359,12 +366,15 @@ fn extract_significant_tokens(text: &str, spans: &[(usize, usize)], min_len: usi
             continue;
         }
         let span_str: String = chars[s..e.min(chars.len())].iter().collect();
-        let trimmed = span_str.trim();
+        let trimmed = span_str.trim().trim_matches(|c: char| c == ',' || c == ';');
         if trimmed.chars().count() >= min_len && trimmed.chars().any(|c| c.is_alphabetic()) {
+            if span_str.ends_with(' ') {
+                tokens.push(format!("{trimmed} "));
+            }
             tokens.push(trimmed.to_string());
         }
         for part in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            let part_trim = part.trim();
+            let part_trim = part.trim().trim_matches(|c: char| c == ',' || c == ';');
             if part_trim.chars().count() >= min_len
                 && part_trim.chars().any(|c| c.is_alphabetic())
                 && part_trim != trimmed
@@ -461,7 +471,16 @@ pub(crate) fn identify_donated_tokens(
 
     donated.sort_by_key(|t| std::cmp::Reverse(t.len()));
     donated.dedup();
-    donated
+    let mut filtered_donated = Vec::new();
+    for tok in donated {
+        if !filtered_donated
+            .iter()
+            .any(|existing: &String| existing.trim() == tok.trim() && existing.len() > tok.len())
+        {
+            filtered_donated.push(tok);
+        }
+    }
+    filtered_donated
 }
 
 fn count_token_occurrences(text: &str, donated_tokens: &[String]) -> FxHashMap<String, usize> {
@@ -469,14 +488,18 @@ fn count_token_occurrences(text: &str, donated_tokens: &[String]) -> FxHashMap<S
     let mut found = FxHashMap::default();
 
     for token in donated_tokens {
+        let first_char = token.chars().next().unwrap();
+        let last_char = token.chars().next_back().unwrap();
         for (idx, _) in text.match_indices(token) {
             let end_idx = idx + token.len();
             let left_ok = idx == 0
+                || (!first_char.is_alphanumeric() && first_char != '_')
                 || text[..idx]
                     .chars()
                     .next_back()
                     .is_none_or(|c| !c.is_alphanumeric() && c != '_');
             let right_ok = end_idx >= text.len()
+                || (!last_char.is_alphanumeric() && last_char != '_')
                 || text[end_idx..]
                     .chars()
                     .next()
@@ -496,6 +519,22 @@ fn count_token_occurrences(text: &str, donated_tokens: &[String]) -> FxHashMap<S
     found
 }
 
+fn count_token_occurrences_in_runs(
+    runs: &[(RunKind, String)],
+    target_kind: RunKind,
+    tokens: &[String],
+) -> FxHashMap<String, usize> {
+    let mut counts: FxHashMap<String, usize> = FxHashMap::default();
+    for (kind, text) in runs {
+        if *kind == target_kind {
+            for (tok, count) in count_token_occurrences(text, tokens) {
+                *counts.entry(tok).or_default() += count;
+            }
+        }
+    }
+    counts
+}
+
 fn find_budgeted_token_char_ranges(
     text: &str,
     donated_tokens: &[String],
@@ -512,17 +551,21 @@ fn find_budgeted_token_char_ranges(
             continue;
         }
 
+        let first_char = token.chars().next().unwrap();
+        let last_char = token.chars().next_back().unwrap();
         for (idx, _) in text.match_indices(token) {
             if *rem == 0 {
                 break;
             }
             let end_idx = idx + token.len();
             let left_ok = idx == 0
+                || (!first_char.is_alphanumeric() && first_char != '_')
                 || text[..idx]
                     .chars()
                     .next_back()
                     .is_none_or(|c| !c.is_alphanumeric() && c != '_');
             let right_ok = end_idx >= text.len()
+                || (!last_char.is_alphanumeric() && last_char != '_')
                 || text[end_idx..]
                     .chars()
                     .next()
@@ -606,6 +649,116 @@ fn relabel_anchor_add_to_moved_tgt(
     out
 }
 
+fn relabel_mod_del_to_moved_src(
+    runs: Vec<(RunKind, String)>,
+    donated_tokens: &[String],
+    budget: &mut FxHashMap<String, usize>,
+) -> Vec<(RunKind, String)> {
+    if donated_tokens.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len());
+    for (kind, text) in runs {
+        if kind != RunKind::Del {
+            out.push((kind, text));
+            continue;
+        }
+        let ranges = find_budgeted_token_char_ranges(&text, donated_tokens, budget);
+        out.extend(split_run_into_moved(
+            &text,
+            RunKind::Del,
+            RunKind::MovedSrc,
+            &ranges,
+        ));
+    }
+    out
+}
+
+fn is_common_type_or_keyword(tok: &str) -> bool {
+    matches!(
+        tok,
+        "String"
+            | "str"
+            | "Option"
+            | "Some"
+            | "None"
+            | "Result"
+            | "Ok"
+            | "Err"
+            | "Vec"
+            | "bool"
+            | "true"
+            | "false"
+            | "self"
+            | "Self"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    )
+}
+
+fn find_cross_mod_donated_tokens(
+    donor_del_text: &str,
+    donor_del_spans: &[(usize, usize)],
+    recip_add_text: &str,
+    recip_add_spans: &[(usize, usize)],
+) -> Vec<String> {
+    if donor_del_spans.is_empty() || recip_add_spans.is_empty() {
+        return Vec::new();
+    }
+    let mut donated = Vec::new();
+    let cand_tokens = extract_significant_tokens(donor_del_text, donor_del_spans, 3);
+    for tok in cand_tokens {
+        let tok_len = tok.chars().count();
+        if tok_len < 6 {
+            continue;
+        }
+        if !tok.chars().any(|c| c.is_alphabetic()) {
+            continue;
+        }
+        let is_single_ident = tok.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if is_single_ident && (tok_len < 8 || is_common_type_or_keyword(&tok)) {
+            continue;
+        }
+        if contains_subline_token(recip_add_text, &tok) {
+            for (idx, _) in recip_add_text.match_indices(&tok) {
+                let char_start = recip_add_text[..idx].chars().count();
+                let char_end = char_start + tok_len;
+                if recip_add_spans
+                    .iter()
+                    .any(|&(as_, ae)| as_ < char_end && char_start < ae)
+                {
+                    donated.push(tok.clone());
+                    break;
+                }
+            }
+        }
+    }
+    donated.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    donated.dedup();
+    let mut filtered_donated = Vec::new();
+    for tok in donated {
+        if !filtered_donated
+            .iter()
+            .any(|existing: &String| existing.trim() == tok.trim() && existing.len() > tok.len())
+        {
+            filtered_donated.push(tok);
+        }
+    }
+    filtered_donated
+}
+
 pub fn pass_assemble_mods(
     h: &Hunk,
     ctx: &PairingContext,
@@ -640,6 +793,261 @@ pub fn pass_assemble_mods(
 
     let mut donor_dels: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     let mut interior_anchor_news: FxHashSet<u32> = FxHashSet::default();
+
+    // Pre-pass: Detect compound mod groups between adjacent paired modifications
+    // sharing substantial information transfer (e.g. multi-line closure wrapping,
+    // expression reflow, or relocated parameters).
+    let mut compound_anchors: FxHashMap<usize, CompoundGroupEntry> = FxHashMap::default();
+    let mut compound_aux_of: FxHashMap<usize, CompoundGroupEntry> = FxHashMap::default();
+
+    let mut paired_pairs: Vec<(usize, usize)> = ctx
+        .paired_dels
+        .iter()
+        .map(|&del_ri| (del_ri, ctx.add_of[&del_ri]))
+        .collect();
+    paired_pairs.sort_by_key(|&(_, add_ri)| add_ri);
+
+    for (idx1, &(del_ri1, add_ri1)) in paired_pairs.iter().enumerate() {
+        if in_expand_adds.contains(&add_ri1)
+            || in_collapse_dels.contains(&del_ri1)
+            || collapse_blocks.contains_key(&add_ri1)
+            || ctx.expand_blocks.contains_key(&add_ri1)
+            || compound_anchors.contains_key(&add_ri1)
+            || compound_aux_of.contains_key(&add_ri1)
+        {
+            continue;
+        }
+
+        if let Some(&(del_ri2, add_ri2)) = paired_pairs.get(idx1 + 1) {
+            let (Some(new_1), Some(new_2)) =
+                (h.rows[add_ri1].new_line(), h.rows[add_ri2].new_line())
+            else {
+                continue;
+            };
+            let (Some(old_1), Some(old_2)) =
+                (h.rows[del_ri1].old_line(), h.rows[del_ri2].old_line())
+            else {
+                continue;
+            };
+            if new_2 != new_1 + 1 || old_2 != old_1 + 1 {
+                continue;
+            }
+            if in_expand_adds.contains(&add_ri2)
+                || in_collapse_dels.contains(&del_ri2)
+                || collapse_blocks.contains_key(&add_ri2)
+                || ctx.expand_blocks.contains_key(&add_ri2)
+                || compound_anchors.contains_key(&add_ri2)
+                || compound_aux_of.contains_key(&add_ri2)
+            {
+                continue;
+            }
+
+            let (spans_1, runs_1) = word_spans_and_runs_with_profile(
+                h.rows[del_ri1].text(),
+                h.rows[add_ri1].text(),
+                profile,
+            );
+            let (spans_2, runs_2) = word_spans_and_runs_with_profile(
+                h.rows[del_ri2].text(),
+                h.rows[add_ri2].text(),
+                profile,
+            );
+
+            if crate::merge::is_wholesale_replacement_spans(
+                h.rows[del_ri1].text(),
+                h.rows[add_ri1].text(),
+                &spans_1,
+            ) || crate::merge::is_wholesale_replacement_spans(
+                h.rows[del_ri2].text(),
+                h.rows[add_ri2].text(),
+                &spans_2,
+            ) {
+                continue;
+            }
+
+            // Check Direction A: del_2 donated to add_1 (donor is aux)
+            let tokens_2_to_1 = find_cross_mod_donated_tokens(
+                h.rows[del_ri2].text(),
+                &spans_2.del,
+                h.rows[add_ri1].text(),
+                &spans_1.add,
+            );
+
+            // Check Direction B: del_1 donated to add_2 (donor is anchor)
+            let tokens_1_to_2 = find_cross_mod_donated_tokens(
+                h.rows[del_ri1].text(),
+                &spans_1.del,
+                h.rows[add_ri2].text(),
+                &spans_2.add,
+            );
+
+            if !tokens_2_to_1.is_empty() {
+                let donor_counts =
+                    count_token_occurrences_in_runs(&runs_2, RunKind::Del, &tokens_2_to_1);
+                let recip_counts =
+                    count_token_occurrences_in_runs(&runs_1, RunKind::Add, &tokens_2_to_1);
+                let mut budget = FxHashMap::default();
+                for tok in &tokens_2_to_1 {
+                    let allowed = donor_counts
+                        .get(tok)
+                        .copied()
+                        .unwrap_or(0)
+                        .min(recip_counts.get(tok).copied().unwrap_or(0));
+                    if allowed > 0 {
+                        budget.insert(tok.clone(), allowed);
+                    }
+                }
+                let mut active: Vec<String> = tokens_2_to_1
+                    .into_iter()
+                    .filter(|t| budget.contains_key(t))
+                    .collect();
+
+                let mut trailing_adds = Vec::new();
+                let mut depth = line_delim_delta(h.rows[add_ri1].text())
+                    + line_delim_delta(h.rows[add_ri2].text());
+                if depth > 0 {
+                    let mut k = add_ri2 + 1;
+                    while k < h.rows.len()
+                        && matches!(h.rows[k], Row::Add(_))
+                        && !ctx.pair_of.contains_key(&k)
+                    {
+                        let nxt_t = h.rows[k].text().trim();
+                        let delta = line_delim_delta(nxt_t);
+                        depth += delta;
+                        trailing_adds.push(k);
+                        if depth <= 0 {
+                            break;
+                        }
+                        k += 1;
+                    }
+                    if depth > 0 {
+                        trailing_adds.clear();
+                    }
+                }
+                for (kind, del_text_piece) in &runs_2 {
+                    if *kind != RunKind::Del {
+                        continue;
+                    }
+                    let del_tok = del_text_piece.trim();
+                    if del_tok.is_empty() || budget.contains_key(del_tok) {
+                        continue;
+                    }
+                    let mut ta_count = 0usize;
+                    for &ta_ri in &trailing_adds {
+                        let ta_text = h.rows[ta_ri].text();
+                        if contains_subline_token(ta_text, del_tok)
+                            || ta_text.trim_end().ends_with(del_tok)
+                        {
+                            ta_count += 1;
+                        }
+                    }
+                    if ta_count > 0 {
+                        let donor_count = count_token_occurrences_in_runs(
+                            &runs_2,
+                            RunKind::Del,
+                            &[del_tok.to_string()],
+                        )
+                        .get(del_tok)
+                        .copied()
+                        .unwrap_or(0);
+                        let allowed = donor_count.min(ta_count);
+                        if allowed > 0 {
+                            budget.insert(del_tok.to_string(), allowed);
+                            active.push(del_tok.to_string());
+                        }
+                    }
+                }
+
+                if !budget.is_empty() {
+                    compound_anchors
+                        .insert(add_ri1, (add_ri2, true, active.clone(), budget.clone()));
+                    compound_aux_of.insert(add_ri2, (add_ri1, true, active, budget));
+                }
+            } else if !tokens_1_to_2.is_empty() {
+                let donor_counts =
+                    count_token_occurrences_in_runs(&runs_1, RunKind::Del, &tokens_1_to_2);
+                let recip_counts =
+                    count_token_occurrences_in_runs(&runs_2, RunKind::Add, &tokens_1_to_2);
+                let mut budget = FxHashMap::default();
+                for tok in &tokens_1_to_2 {
+                    let allowed = donor_counts
+                        .get(tok)
+                        .copied()
+                        .unwrap_or(0)
+                        .min(recip_counts.get(tok).copied().unwrap_or(0));
+                    if allowed > 0 {
+                        budget.insert(tok.clone(), allowed);
+                    }
+                }
+                let mut active: Vec<String> = tokens_1_to_2
+                    .into_iter()
+                    .filter(|t| budget.contains_key(t))
+                    .collect();
+
+                let mut trailing_adds = Vec::new();
+                let mut depth = line_delim_delta(h.rows[add_ri1].text())
+                    + line_delim_delta(h.rows[add_ri2].text());
+                if depth > 0 {
+                    let mut k = add_ri2 + 1;
+                    while k < h.rows.len()
+                        && matches!(h.rows[k], Row::Add(_))
+                        && !ctx.pair_of.contains_key(&k)
+                    {
+                        let nxt_t = h.rows[k].text().trim();
+                        let delta = line_delim_delta(nxt_t);
+                        depth += delta;
+                        trailing_adds.push(k);
+                        if depth <= 0 {
+                            break;
+                        }
+                        k += 1;
+                    }
+                    if depth > 0 {
+                        trailing_adds.clear();
+                    }
+                }
+                for (kind, del_text_piece) in &runs_1 {
+                    if *kind != RunKind::Del {
+                        continue;
+                    }
+                    let del_tok = del_text_piece.trim();
+                    if del_tok.is_empty() || budget.contains_key(del_tok) {
+                        continue;
+                    }
+                    let mut ta_count = 0usize;
+                    for &ta_ri in &trailing_adds {
+                        let ta_text = h.rows[ta_ri].text();
+                        if contains_subline_token(ta_text, del_tok)
+                            || ta_text.trim_end().ends_with(del_tok)
+                        {
+                            ta_count += 1;
+                        }
+                    }
+                    if ta_count > 0 {
+                        let donor_count = count_token_occurrences_in_runs(
+                            &runs_1,
+                            RunKind::Del,
+                            &[del_tok.to_string()],
+                        )
+                        .get(del_tok)
+                        .copied()
+                        .unwrap_or(0);
+                        let allowed = donor_count.min(ta_count);
+                        if allowed > 0 {
+                            budget.insert(del_tok.to_string(), allowed);
+                            active.push(del_tok.to_string());
+                        }
+                    }
+                }
+
+                if !budget.is_empty() {
+                    compound_anchors
+                        .insert(add_ri1, (add_ri2, false, active.clone(), budget.clone()));
+                    compound_aux_of.insert(add_ri2, (add_ri1, false, active, budget));
+                }
+            }
+        }
+    }
 
     for &del_ri in ctx.paired_dels {
         let add_ri = ctx.add_of[&del_ri];
@@ -848,6 +1256,32 @@ pub fn pass_assemble_mods(
                 continue;
             }
 
+            if let Some(&(anchor_add_ri, donor_is_aux, ref donated_tokens, ref budget)) =
+                compound_aux_of.get(&add_ri)
+            {
+                let anchor_nl = h.rows[anchor_add_ri].new_line().unwrap();
+                let mut runs = runs;
+                let mut aux_budget = budget.clone();
+                if donor_is_aux {
+                    runs = relabel_mod_del_to_moved_src(runs, donated_tokens, &mut aux_budget);
+                } else {
+                    runs = relabel_anchor_add_to_moved_tgt(runs, donated_tokens, &mut aux_budget);
+                }
+
+                let spans = compute_anchor_mod_spans(&runs);
+                let old_line = DelLine::new(first_old_num, del_text);
+                let new_line = AddLine::new(add.new_line_num().unwrap(), add.text());
+                let mod_row = Row::Mod {
+                    old_line,
+                    new_line,
+                    spans,
+                    cached_runs: runs,
+                    group: Some(RowGroup::Aux { anchor: anchor_nl }),
+                };
+                out.push(mod_row);
+                continue;
+            }
+
             if let Some(block_dels) = collapse_blocks.get(&add_ri) {
                 let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
                 let SlicedMultilineDelRuns {
@@ -865,7 +1299,7 @@ pub fn pass_assemble_mods(
                     new_line,
                     spans: anchor_spans,
                     cached_runs: anchor_runs,
-                    is_anchor: true,
+                    group: Some(RowGroup::Anchor),
                 };
                 out.push(mod_row);
 
@@ -886,6 +1320,9 @@ pub fn pass_assemble_mods(
 
             let mut next_adds = Vec::new();
             let mut max_scanned = add_ri;
+            if let Some(&(aux_add_ri, ..)) = compound_anchors.get(&add_ri) {
+                max_scanned = max_scanned.max(aux_add_ri);
+            }
             if let Some(block) = ctx.expand_blocks.get(&add_ri) {
                 for &ai in block {
                     if ai != add_ri {
@@ -912,7 +1349,9 @@ pub fn pass_assemble_mods(
                     }
                 });
 
-                if (has_deleted_content || ctx.expand_blocks.contains_key(&add_ri))
+                if (has_deleted_content
+                    || ctx.expand_blocks.contains_key(&add_ri)
+                    || compound_anchors.contains_key(&add_ri))
                     && let Some(p) = profile
                 {
                     let opens_delim = has_trailing_delimiter_expansion(
@@ -921,10 +1360,14 @@ pub fn pass_assemble_mods(
                         &UniversalDelimiterClassifier,
                     ) || p.is_import_statement(&del_text)
                         || (ctx.expand_blocks.contains_key(&add_ri)
-                            && (del_text.contains('{') || del_text.contains('(')));
+                            && (del_text.contains('{') || del_text.contains('(')))
+                        || compound_anchors.contains_key(&add_ri);
 
                     if opens_delim {
                         let mut depth = line_delim_delta(add.text());
+                        if let Some(&(aux_add_ri, ..)) = compound_anchors.get(&add_ri) {
+                            depth += line_delim_delta(h.rows[aux_add_ri].text());
+                        }
                         let mut already_closed = false;
                         for &ai in &next_adds {
                             let nxt_t = h.rows[ai].text().trim();
@@ -1203,6 +1646,11 @@ pub fn pass_assemble_mods(
                 normalize_ranges(&mut moved);
                 (moved, full_adds, full_runs)
             };
+            let mut compound_group_budget = compound_anchors.get(&add_ri).map(
+                |&(_aux_add_ri, donor_is_aux, ref donated_tokens, ref budget)| {
+                    (donor_is_aux, donated_tokens.clone(), budget.clone())
+                },
+            );
             let mut anchor_group = if let Some(donors) = donor_dels.get(&add_ri) {
                 let anchor_nl = add.new_line_num().unwrap();
                 interior_anchor_news.insert(anchor_nl);
@@ -1272,6 +1720,15 @@ pub fn pass_assemble_mods(
                     del_spans.insert(di, aux_spans);
                     del_runs.insert(di, d_runs);
                     kept_dels.push(di);
+                }
+                Some(RowGroup::Anchor)
+            } else if let Some((donor_is_aux, ref donated_tokens, ref mut b)) =
+                compound_group_budget
+            {
+                if donor_is_aux {
+                    runs = relabel_anchor_add_to_moved_tgt(runs, donated_tokens, b);
+                } else {
+                    runs = relabel_mod_del_to_moved_src(runs, donated_tokens, b);
                 }
                 Some(RowGroup::Anchor)
             } else {
@@ -1587,14 +2044,16 @@ pub fn pass_assemble_mods(
                                 claims,
                             });
                         } else {
-                            let text_len = add_nxt.text().chars().count();
-                            let spans = Spans {
-                                del: Vec::new(),
-                                add: vec![(0, text_len)],
-                            };
+                            let mut line_runs = vec![(RunKind::Add, add_nxt.text().to_string())];
+                            if let Some((donor_is_aux, ref tokens, ref mut b)) =
+                                compound_group_budget
+                                && donor_is_aux {
+                                    line_runs =
+                                        relabel_anchor_add_to_moved_tgt(line_runs, tokens, b);
+                                }
+                            let spans = compute_anchor_mod_spans(&line_runs);
                             add_spans.insert(nxt_i, spans);
-                            add_runs
-                                .insert(nxt_i, vec![(RunKind::Add, add_nxt.text().to_string())]);
+                            add_runs.insert(nxt_i, line_runs);
                         }
                     }
 
@@ -2189,7 +2648,12 @@ pub fn pass_assemble_mods(
                             normalize_ranges(&mut p.donor.add);
                         }
                         let dels = attached_dels.remove(&p.nxt_i).unwrap_or_default();
-                        let aux_runs = build_aux_runs(&p.aux_chars, &p.donor.add, &dels);
+                        let mut aux_runs = build_aux_runs(&p.aux_chars, &p.donor.add, &dels);
+                        if let Some((donor_is_aux, ref tokens, ref mut b)) = compound_group_budget
+                            && donor_is_aux {
+                                aux_runs = relabel_anchor_add_to_moved_tgt(aux_runs, tokens, b);
+                                p.donor = compute_anchor_mod_spans(&aux_runs);
+                            }
                         add_runs.insert(p.nxt_i, aux_runs);
                         add_spans.insert(p.nxt_i, p.donor);
                     }
@@ -2201,12 +2665,18 @@ pub fn pass_assemble_mods(
 
             let old_line = DelLine::new(first_old_num, del_text);
             let new_line = AddLine::new(add.new_line_num().unwrap(), add.text());
+            let cached_runs = relabel_moved_runs(runs, &actually_moved);
+            let spans = if compound_anchors.contains_key(&add_ri) {
+                compute_anchor_mod_spans(&cached_runs)
+            } else {
+                spans
+            };
             let mod_row = Row::Mod {
                 old_line,
                 new_line,
                 spans,
-                cached_runs: relabel_moved_runs(runs, &actually_moved),
-                is_anchor: anchor_group == Some(RowGroup::Anchor),
+                cached_runs,
+                group: anchor_group,
             };
             out.push(mod_row);
         } else if in_collapse_blocks.contains(&ri) || del_groups.contains_key(&ri) {

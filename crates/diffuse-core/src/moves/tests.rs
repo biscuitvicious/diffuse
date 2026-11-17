@@ -41,7 +41,7 @@ fn mod_row(old_num: u32, new_num: u32, old_text: &str, new_text: &str) -> Row {
         new_line: AddLine::new(new_num, new_text),
         spans: Spans::default(),
         cached_runs: Vec::new(),
-        is_anchor: false,
+        group: None,
     }
 }
 

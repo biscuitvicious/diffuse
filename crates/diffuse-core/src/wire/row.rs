@@ -249,13 +249,12 @@ impl From<&OutputRow> for Row {
                 let new_num = r.new_line.expect("Mod row must have new line");
                 let old_line = DelLine::new(old_num, r.old_text());
                 let new_line = AddLine::new(new_num, r.new_text());
-                let is_anchor = r.group == Some(RowGroup::Anchor);
                 Row::Mod {
                     old_line,
                     new_line,
                     spans,
                     cached_runs,
-                    is_anchor,
+                    group: r.group,
                 }
             }
             RowKind::Mov => match r.mov_side {

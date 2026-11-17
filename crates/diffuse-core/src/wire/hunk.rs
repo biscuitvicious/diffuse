@@ -413,6 +413,10 @@ impl OutputHunk {
                 .iter()
                 .filter(|r| r.kind == RowKind::Del)
                 .collect();
+            let aux_mods: Vec<&&OutputRow> = group_rows
+                .iter()
+                .filter(|r| r.kind == RowKind::Mod && r.group != Some(RowGroup::Anchor))
+                .collect();
             let has_aux_dels = group_rows.iter().any(|r| {
                 r.kind == RowKind::Del
                     || (r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Src))
@@ -422,7 +426,64 @@ impl OutputHunk {
                     || (r.kind == RowKind::Mov && r.mov_side == Some(MovSide::Tgt))
             });
 
-            if !aux_adds.is_empty() && !has_aux_dels {
+            if !aux_mods.is_empty() {
+                let group_moved_src: String = group_rows
+                    .iter()
+                    .flat_map(|r| &r.runs)
+                    .filter(|run| run.kind == RunKind::MovedSrc)
+                    .map(|run| run.text.as_ref())
+                    .collect();
+                let group_moved_tgt: String = group_rows
+                    .iter()
+                    .flat_map(|r| &r.runs)
+                    .filter(|run| run.kind == RunKind::MovedTgt)
+                    .map(|run| run.text.as_ref())
+                    .collect();
+
+                let mut s1: Vec<char> = group_moved_src
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let mut s2: Vec<char> = group_moved_tgt
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                s1.sort_unstable();
+                s2.sort_unstable();
+                if s1 != s2 {
+                    return Err(format!(
+                        "Anchor line {anchor_num} compound mod group character conservation mismatch:\n  group MovedSrc chars: {s1:?}\n  group MovedTgt chars: {s2:?}"
+                    ));
+                }
+
+                let mut last_old = None;
+                for r in &group_rows {
+                    if let Some(ol) = r.old_line {
+                        if let Some(prev) = last_old
+                            && ol <= prev
+                        {
+                            return Err(format!(
+                                "Compound mod group old line {ol} <= previous old line {prev}"
+                            ));
+                        }
+                        last_old = Some(ol);
+                    }
+                }
+
+                let mut last_new = None;
+                for r in &group_rows {
+                    if let Some(nl) = r.new_line {
+                        if let Some(prev) = last_new
+                            && nl <= prev
+                        {
+                            return Err(format!(
+                                "Compound mod group new line {nl} <= previous new line {prev}"
+                            ));
+                        }
+                        last_new = Some(nl);
+                    }
+                }
+            } else if !aux_adds.is_empty() && !has_aux_dels {
                 let is_import =
                     profile.is_some_and(|p| p.is_import_statement(&anchor_row.old_text()));
 

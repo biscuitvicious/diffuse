@@ -159,7 +159,7 @@ pub const fn split_left_glyph(
     group: Option<RowGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Anchor), RowKind::Mod) => "~ ",
+        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => "~ ",
         (Some(RowGroup::Aux { .. }), RowKind::Del) => "~-",
         _ => match kind {
             RowKind::Mod => " ~",
@@ -182,7 +182,7 @@ pub const fn split_right_glyph(
     group: Option<RowGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Anchor), RowKind::Mod) => "~ ",
+        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => "~ ",
         (Some(RowGroup::Aux { .. }), RowKind::Add) => "~+",
         _ => match kind {
             RowKind::Mod => " ~",
@@ -463,6 +463,7 @@ pub fn prefix_of_with_mod_side_and_widths(
                 Some(RowGroup::Aux { .. }) => match kind {
                     RowKind::Add => "~+".to_string(),
                     RowKind::Del => "~-".to_string(),
+                    RowKind::Mod => "~ ".to_string(),
                     _ => "  ".to_string(),
                 },
                 _ => match kind {
@@ -508,6 +509,9 @@ pub fn prefix_of_with_mod_side_and_widths(
                 }
                 RowKind::Del => {
                     format!("{}~-", format_line_num(old_line, new_line_width, &mut buf))
+                }
+                RowKind::Mod => {
+                    format!("{}~ ", format_line_num(new_line, new_line_width, &mut buf))
                 }
                 _ => format!(
                     "{}  ",
@@ -565,6 +569,7 @@ pub fn prefix_of_with_mod_side_and_widths(
         Some(RowGroup::Aux { .. }) => match kind {
             RowKind::Add => format!("{blank_old} {new_pad}~+"),
             RowKind::Del => format!("{old_pad} {blank_new}~-"),
+            RowKind::Mod => format!("{old_pad} {new_pad}~ "),
             _ => format!("{old_pad} {new_pad}  "),
         },
         _ => match kind {
@@ -735,6 +740,14 @@ pub fn styled_prefix_spans_with_widths(
                 }
             }
             Some(RowGroup::Aux { .. }) => match kind {
+                RowKind::Mod => {
+                    if new_line_width == 0 {
+                        vec![r#mod.icon.span("~ ", bg)]
+                    } else {
+                        let pad = format_line_num(new_line, new_line_width, &mut buf);
+                        vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
+                    }
+                }
                 RowKind::Add => {
                     if new_line_width == 0 {
                         vec![r#mod.icon.span("~", bg), add.icon.span("+", bg)]
@@ -879,6 +892,12 @@ pub fn styled_prefix_spans_with_widths(
             r#mod.icon.span("~ ", bg),
         ],
         Some(RowGroup::Aux { .. }) => match kind {
+            RowKind::Mod => vec![
+                r#mod.num.span(old_pad, bg),
+                StyledSpan::styled(" ", Some(r#mod.num.color), bg),
+                r#mod.num.span(new_pad, bg),
+                r#mod.icon.span("~ ", bg),
+            ],
             RowKind::Add => vec![
                 StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
                 add.num.span(new_pad, bg),
@@ -995,7 +1014,7 @@ pub fn styled_split_left_prefix_spans(
     let pad = format_line_num(old_line, old_line_width, &mut buf);
 
     match (group, kind) {
-        (Some(RowGroup::Anchor), RowKind::Mod) => {
+        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => {
             vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
         }
         (Some(RowGroup::Aux { .. }), RowKind::Del) => vec![
@@ -1063,7 +1082,7 @@ pub fn styled_split_right_prefix_spans(
     let pad = format_line_num(new_line, new_line_width, &mut buf);
 
     match (group, kind) {
-        (Some(RowGroup::Anchor), RowKind::Mod) => {
+        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => {
             vec![r#mod.num.span(pad, bg), r#mod.icon.span("~ ", bg)]
         }
         (Some(RowGroup::Aux { .. }), RowKind::Add) => vec![

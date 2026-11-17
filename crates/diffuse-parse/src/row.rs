@@ -216,8 +216,8 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        is_anchor: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<RowGroup>,
     },
     MovSrc {
         line: DelLine,
@@ -261,7 +261,7 @@ impl Row {
             new_line,
             spans: Spans::default(),
             cached_runs: Vec::new(),
-            is_anchor: false,
+            group: None,
         }
     }
 
@@ -272,7 +272,7 @@ impl Row {
             new_line,
             spans,
             cached_runs: Vec::new(),
-            is_anchor: false,
+            group: None,
         }
     }
 
@@ -288,7 +288,7 @@ impl Row {
             new_line,
             spans,
             cached_runs,
-            is_anchor: false,
+            group: None,
         }
     }
 
@@ -304,7 +304,7 @@ impl Row {
             new_line,
             spans,
             cached_runs,
-            is_anchor: true,
+            group: Some(RowGroup::Anchor),
         }
     }
 
@@ -477,9 +477,7 @@ impl Row {
     #[inline]
     pub fn group(&self) -> Option<RowGroup> {
         match self {
-            Row::Mod {
-                is_anchor: true, ..
-            } => Some(RowGroup::Anchor),
+            Row::Mod { group, .. } => *group,
             Row::AuxAdd { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
             Row::AuxDel { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
             _ => None,
@@ -489,7 +487,15 @@ impl Row {
     /// Whether this row is an auxiliary row within a multiline cluster.
     #[inline]
     pub fn is_aux(&self) -> bool {
-        matches!(self, Row::AuxAdd { .. } | Row::AuxDel { .. })
+        matches!(
+            self,
+            Row::AuxAdd { .. }
+                | Row::AuxDel { .. }
+                | Row::Mod {
+                    group: Some(RowGroup::Aux { .. }),
+                    ..
+                }
+        )
     }
 
     pub fn reverse(self) -> Self {
@@ -506,7 +512,7 @@ impl Row {
                 new_line,
                 spans,
                 cached_runs,
-                is_anchor,
+                group,
             } => Row::Mod {
                 old_line: DelLine::new(new_line.num, new_line.text),
                 new_line: AddLine::new(old_line.num, old_line.text),
@@ -515,7 +521,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                is_anchor,
+                group,
             },
             Row::MovSrc {
                 line,

@@ -112,7 +112,7 @@ pub fn pass_filter_reflows(
                     ),
                     spans,
                     cached_runs: runs,
-                    is_anchor: false,
+                    group: None,
                 });
                 break;
             }

@@ -3269,7 +3269,7 @@ fn test_normalize_identical_mods_skips_anchors_but_converts_plain() {
             add: vec![],
         },
         cached_runs: vec![],
-        is_anchor: true,
+        group: Some(RowGroup::Anchor),
     };
     let res = vec![
         anchor,
@@ -3321,7 +3321,7 @@ fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
         Row::Mod {
             old_line,
             new_line,
-            is_anchor,
+            group,
             ..
         } => {
             assert_eq!(old_line.num, 10);
@@ -3331,7 +3331,7 @@ fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
                 new_line.text,
                 "fn render(&self) -> String { return self.name.clone(); }"
             );
-            assert!(*is_anchor, "Expected is_anchor to be true");
+            assert_eq!(*group, Some(RowGroup::Anchor));
         }
         _ => panic!("Expected Row::Mod at index 0, got {:?}", out[0]),
     }
@@ -3456,14 +3456,14 @@ fn test_interior_donor_inlining_mod_group_assembly() {
         Row::Mod {
             old_line,
             new_line,
-            is_anchor,
+            group,
             ..
         } => {
             assert_eq!(old_line.num, 228);
             assert_eq!(old_line.text, "                if scrollbar_seek {");
             assert_eq!(new_line.num, 237);
             assert_eq!(new_line.text, "                if is_on_scrollbar {");
-            assert!(*is_anchor, "Expected is_anchor to be true");
+            assert_eq!(*group, Some(RowGroup::Anchor));
         }
         _ => panic!("Expected Row::Mod at index 1, got {:?}", out[1]),
     }
@@ -3482,6 +3482,74 @@ fn test_interior_donor_inlining_mod_group_assembly() {
             .iter()
             .any(|(kind, text)| *kind == RunKind::MovedTgt && text == "is_on_scrollbar"),
         "Anchor Mod row must label received token as MovedTgt, got: {:?}",
+        out[1].cached_runs()
+    );
+}
+
+#[test]
+fn test_compound_mod_group_closure_reflow_assembly() {
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+    let h = hunk(vec![
+        Row::Del(DelLine::new(
+            293,
+            "                                    let hit =",
+        )),
+        Row::Del(DelLine::new(
+            294,
+            "                                        |pat: &str| wrapped_glyph_hit(&txt, pat, seg_off, col, cw);",
+        )),
+        Row::Add(AddLine::new(
+            288,
+            "                                        let hit = |pat: &str| {",
+        )),
+        Row::Add(AddLine::new(
+            289,
+            "                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)",
+        )),
+        Row::Add(AddLine::new(
+            290,
+            "                                        };",
+        )),
+    ]);
+    let out = collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(
+        out.len(),
+        3,
+        "Expected exactly 3 rows (Anchor Mod + Aux Mod + AuxAdd), got: {out:?}"
+    );
+
+    // Row 0: Anchor Mod (293 -> 288)
+    assert_eq!(out[0].old_line(), Some(293));
+    assert_eq!(out[0].new_line(), Some(288));
+    assert_eq!(out[0].group(), Some(RowGroup::Anchor));
+
+    // Row 1: Aux Mod (294 -> 289)
+    assert_eq!(out[1].old_line(), Some(294));
+    assert_eq!(out[1].new_line(), Some(289));
+    assert_eq!(out[1].group(), Some(RowGroup::Aux { anchor: 288 }));
+
+    // Row 2: AuxAdd (290)
+    assert_eq!(out[2].old_line(), None);
+    assert_eq!(out[2].new_line(), Some(290));
+    assert_eq!(out[2].group(), Some(RowGroup::Aux { anchor: 288 }));
+
+    // Row 0 (288) must have |pat: &str| as MovedTgt
+    assert!(
+        out[0]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedTgt && text.contains("pat")),
+        "Anchor Mod (288) must label received closure parameter as MovedTgt, got: {:?}",
+        out[0].cached_runs()
+    );
+
+    // Row 1 (294) must have |pat: &str| as MovedSrc
+    assert!(
+        out[1]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedSrc && text.contains("pat")),
+        "Aux Mod (294) must label moved closure parameter as MovedSrc, got: {:?}",
         out[1].cached_runs()
     );
 }

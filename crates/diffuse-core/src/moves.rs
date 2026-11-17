@@ -1353,7 +1353,7 @@ pub fn collapse_touching_moves(
                         new_line: AddLine::new(n, new_text),
                         spans,
                         cached_runs,
-                        is_anchor: false,
+                        group: None,
                     });
                 }
             }

@@ -1468,6 +1468,68 @@ fn test_side_by_side_aux_deletion_gutter_icon() {
 }
 
 #[test]
+fn test_compound_mod_group_side_by_side_moved_src_struck() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+    state.side_by_side = true;
+
+    // Find row 294 in flat rows (file 3 app/dispatch.rs)
+    let mut target_idx = None;
+    for (idx, item) in state.flat.iter().enumerate() {
+        if let Some(r) = state.row_of(item)
+            && r.old_line == Some(294) {
+                target_idx = Some(idx);
+                break;
+            }
+    }
+    let target_idx = target_idx.expect("must find old line 294 in flat list");
+    state.row_idx = target_idx;
+    state.vis_line = 0;
+
+    let (w, h) = (200, 40);
+    let buf = state.render_to_buffer(w, h);
+
+    // Locate the line containing wrapped_glyph_hit
+    let mut found_struck = false;
+    for y in 0..h {
+        let mut line_str = String::new();
+        for x in 0..w {
+            line_str.push_str(buf[(x, y)].symbol());
+        }
+        if line_str.contains("wrapped_glyph_hit") {
+            // Verify old line 294 has |pat: &str| on the left pane and it is struck out
+            assert!(
+                line_str.contains("|pat: &str| "),
+                "left pane must include moved source text:\n{line_str}"
+            );
+            let pat_pos = line_str.find("|pat: &str| ").unwrap();
+            for x in (pat_pos as u16)..(pat_pos as u16 + 12) {
+                let cell = &buf[(x, y)];
+                if cell
+                    .modifier
+                    .contains(ratatui::style::Modifier::CROSSED_OUT)
+                {
+                    found_struck = true;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+    assert!(
+        found_struck,
+        "old line 294 moved-src span must have CROSSED_OUT strikethrough in split mode"
+    );
+}
+
+#[test]
 fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());

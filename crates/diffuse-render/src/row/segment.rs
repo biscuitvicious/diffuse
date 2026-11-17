@@ -338,7 +338,7 @@ pub fn row_segment_spans(
         (Some(MovSide::Src), _) | (_, Some(ModSide::Del)) => {
             filtered_runs = runs
                 .iter()
-                .filter(|t| !t.kind.is_add_like() && t.kind != RunKind::MovedSrc)
+                .filter(|t| !t.kind.is_add_like())
                 .cloned()
                 .collect();
             &filtered_runs
@@ -365,7 +365,7 @@ pub fn row_segment_spans(
     let base_bg = |tok_kind: RunKind| -> Option<Color> {
         if is_ctx {
             line_bg
-        } else if tok_kind == RunKind::Del {
+        } else if tok_kind == RunKind::Del || tok_kind == RunKind::MovedSrc {
             del_bg
         } else if tok_kind == RunKind::Add
             && (is_mod_row || has_subwords || is_expansion_add || mod_side == Some(ModSide::Add))
@@ -439,7 +439,7 @@ pub fn row_segment_spans(
                 continue;
             }
             let bg = base_bg(tok.kind);
-            if tok.kind == RunKind::Del {
+            if tok.kind == RunKind::Del || tok.kind == RunKind::MovedSrc {
                 spans.push(StyledSpan {
                     text: tok.text.to_string(),
                     fg: Some(del_fg),
@@ -496,7 +496,7 @@ pub fn row_segment_spans(
         }
 
         let bg = base_bg(tok.kind);
-        if tok.kind == RunKind::Del {
+        if tok.kind == RunKind::Del || tok.kind == RunKind::MovedSrc {
             spans.push(StyledSpan {
                 text: sub_piece,
                 fg: Some(del_fg),
