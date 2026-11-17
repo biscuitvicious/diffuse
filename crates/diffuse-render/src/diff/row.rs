@@ -17,42 +17,28 @@ use crate::{
     width::display_width,
 };
 
-/// Render one diff row (gutter prefix, run coloring, wrapping, padding)
-/// exactly as `render_file_diff` does, appending complete lines to `out`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_row_line(
-    out: &mut String,
+fn make_prefix(
     r: &OutputRow,
-    theme: &DiffuseTheme,
-    width: usize,
-    styled_prefixes: bool,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
+    styled_prefixes: bool,
+    theme: &DiffuseTheme,
     line_num_width: usize,
-) {
-    let (pfx, cont_pfx): (Vec<StyledSpan>, Vec<StyledSpan>) = if styled_prefixes {
-        (
-            styled_prefix_spans_with_width(
-                r.kind,
-                r.mov_side,
-                mod_side,
-                mod_glyph,
-                r.group,
-                r.new_line,
-                r.old_line,
-                &r.runs,
-                false,
-                None,
-                theme,
-                line_num_width,
-            ),
-            continuation_prefix_spans_with_mod_side_and_width(
-                mod_side,
-                mod_glyph,
-                theme,
-                None,
-                line_num_width,
-            ),
+) -> Vec<StyledSpan> {
+    if styled_prefixes {
+        styled_prefix_spans_with_width(
+            r.kind,
+            r.mov_side,
+            mod_side,
+            mod_glyph,
+            r.group,
+            r.new_line,
+            r.old_line,
+            &r.runs,
+            false,
+            None,
+            theme,
+            line_num_width,
         )
     } else {
         let plain = prefix_of_with_mod_side_and_width(
@@ -66,18 +52,45 @@ pub(crate) fn render_row_line(
             &r.runs,
             line_num_width,
         );
-        (
-            vec![StyledSpan::plain(format!("{plain} "))],
-            vec![StyledSpan::plain(
-                continuation_prefix_plain_with_mod_side_and_width(
-                    mod_side,
-                    mod_glyph,
-                    line_num_width,
-                ),
-            )],
-        )
-    };
+        vec![StyledSpan::plain(format!("{plain} "))]
+    }
+}
 
+fn make_cont_prefix(
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    styled_prefixes: bool,
+    theme: &DiffuseTheme,
+    line_num_width: usize,
+) -> Vec<StyledSpan> {
+    if styled_prefixes {
+        continuation_prefix_spans_with_mod_side_and_width(
+            mod_side,
+            mod_glyph,
+            theme,
+            None,
+            line_num_width,
+        )
+    } else {
+        vec![StyledSpan::plain(
+            continuation_prefix_plain_with_mod_side_and_width(mod_side, mod_glyph, line_num_width),
+        )]
+    }
+}
+
+/// Render one diff row (gutter prefix, run coloring, wrapping, padding)
+/// exactly as `render_file_diff` does, appending complete lines to `out`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_row_line(
+    out: &mut String,
+    r: &OutputRow,
+    theme: &DiffuseTheme,
+    width: usize,
+    styled_prefixes: bool,
+    mod_side: Option<ModSide>,
+    mod_glyph: Option<ModGlyph>,
+    line_num_width: usize,
+) {
     let text = match mod_side {
         Some(ModSide::Del) => r.old_text(),
         Some(ModSide::Add) => r.new_text(),
@@ -85,6 +98,14 @@ pub(crate) fn render_row_line(
     };
 
     if width == 0 {
+        let pfx = make_prefix(
+            r,
+            mod_side,
+            mod_glyph,
+            styled_prefixes,
+            theme,
+            line_num_width,
+        );
         let mut row_buf = String::with_capacity(text.len() + 64);
         let _ = write_row_segment(
             &mut row_buf,
@@ -123,6 +144,14 @@ pub(crate) fn render_row_line(
     let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
 
     if seg_count == 1 {
+        let pfx = make_prefix(
+            r,
+            mod_side,
+            mod_glyph,
+            styled_prefixes,
+            theme,
+            line_num_width,
+        );
         let mut row_buf = String::with_capacity(text.len() + 64);
         let _ = write_row_segment(
             &mut row_buf,
@@ -157,11 +186,51 @@ pub(crate) fn render_row_line(
         return;
     }
 
+    let (pfx, cont_mid_pfx, cont_bottom_pfx) = if mod_glyph == Some(ModGlyph::Bottom) {
+        (
+            make_prefix(
+                r,
+                mod_side,
+                Some(ModGlyph::Mid),
+                styled_prefixes,
+                theme,
+                line_num_width,
+            ),
+            make_cont_prefix(
+                mod_side,
+                Some(ModGlyph::Mid),
+                styled_prefixes,
+                theme,
+                line_num_width,
+            ),
+            make_cont_prefix(
+                mod_side,
+                Some(ModGlyph::Bottom),
+                styled_prefixes,
+                theme,
+                line_num_width,
+            ),
+        )
+    } else {
+        let p = make_prefix(
+            r,
+            mod_side,
+            mod_glyph,
+            styled_prefixes,
+            theme,
+            line_num_width,
+        );
+        let c = make_cont_prefix(mod_side, mod_glyph, styled_prefixes, theme, line_num_width);
+        (p, c.clone(), c)
+    };
+
     for s_idx in 0..seg_count {
         let (seg_pfx, is_cont) = if s_idx == 0 {
             (&pfx, false)
+        } else if s_idx + 1 == seg_count {
+            (&cont_bottom_pfx, true)
         } else {
-            (&cont_pfx, true)
+            (&cont_mid_pfx, true)
         };
         let seg_start = s_idx * text_cols;
         let seg_end = seg_start + text_cols;

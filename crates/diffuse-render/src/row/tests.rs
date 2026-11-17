@@ -1932,8 +1932,14 @@ fn test_continuation_prefix_with_mod_side() {
     assert_eq!(spans_del[2].text, " ");
 
     let spans_add = continuation_prefix_spans_with_mod_side(Some(ModSide::Add), None, &theme, None);
-    assert_eq!(spans_add.len(), 1);
-    assert_eq!(spans_add[0].text, "       ");
+    assert_eq!(spans_add.len(), 3);
+    assert_eq!(spans_add[0].text, "     ");
+    assert_eq!(spans_add[1].text, "└");
+    assert_eq!(
+        spans_add[1].fg,
+        Some(theme.palette[Cursor::Rest][DiffKind::Mod].gutter.icon.color)
+    );
+    assert_eq!(spans_add[2].text, " ");
 
     let spans_none = continuation_prefix_spans_with_mod_side(None, None, &theme, None);
     assert_eq!(spans_none.len(), 1);
@@ -1945,7 +1951,7 @@ fn test_continuation_prefix_with_mod_side() {
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), None),
-        "       "
+        "     └ "
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(None, None),
@@ -1977,8 +1983,14 @@ fn test_continuation_prefix_with_mod_side() {
         &theme,
         None,
     );
-    assert_eq!(spans_add_bottom.len(), 1);
-    assert_eq!(spans_add_bottom[0].text, "       ");
+    assert_eq!(spans_add_bottom.len(), 3);
+    assert_eq!(spans_add_bottom[0].text, "     ");
+    assert_eq!(spans_add_bottom[1].text, "└");
+    assert_eq!(
+        spans_add_bottom[1].fg,
+        Some(theme.palette[Cursor::Rest][DiffKind::Mod].gutter.icon.color)
+    );
+    assert_eq!(spans_add_bottom[2].text, " ");
 
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Mid)),
@@ -1986,7 +1998,7 @@ fn test_continuation_prefix_with_mod_side() {
     );
     assert_eq!(
         continuation_prefix_plain_with_mod_side(Some(ModSide::Add), Some(ModGlyph::Bottom)),
-        "       "
+        "     └ "
     );
 }
 
@@ -2209,6 +2221,8 @@ fn test_format_line_num_fit_and_truncation_with_ellipsis() {
     assert_eq!(super::gutter::LINE_NUM_SPACES[5], "     ");
     assert_eq!(super::gutter::BOX_PREFIXES[0], "│ ");
     assert_eq!(super::gutter::BOX_PREFIXES[5], "     │ ");
+    assert_eq!(super::gutter::BOX_BOTTOM_PREFIXES[0], "└ ");
+    assert_eq!(super::gutter::BOX_BOTTOM_PREFIXES[5], "     └ ");
 }
 
 #[test]
@@ -2495,6 +2509,26 @@ fn test_dual_gutter_width_and_prefix_formatting() {
     let cont_plain_box =
         continuation_prefix_plain_with_mod_side_and_widths(Some(ModSide::Del), None, 3, 4);
     assert_eq!(cont_plain_box, "        │ ");
+
+    let cont_box_add = continuation_prefix_spans_with_mod_side_and_widths(
+        Some(ModSide::Add),
+        Some(ModGlyph::Bottom),
+        &theme,
+        None,
+        3,
+        4,
+    );
+    assert_eq!(cont_box_add[0].text, "        ");
+    assert_eq!(cont_box_add[1].text, "└");
+    assert_eq!(cont_box_add[2].text, " ");
+
+    let cont_plain_box_add = continuation_prefix_plain_with_mod_side_and_widths(
+        Some(ModSide::Add),
+        Some(ModGlyph::Bottom),
+        3,
+        4,
+    );
+    assert_eq!(cont_plain_box_add, "        └ ");
 }
 
 #[test]

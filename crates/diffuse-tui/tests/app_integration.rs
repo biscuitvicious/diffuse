@@ -1879,3 +1879,91 @@ fn test_raw_diff_file_and_hunk_headers_colored() {
         "hunk header @@ must be colored in hunk header purple (213)"
     );
 }
+
+#[test]
+fn test_tui_expanded_mod_row_continuation_box_glyphs() {
+    let long_line_old = "old_val_prefix_".repeat(8);
+    let long_line_new = "new_val_prefix_".repeat(8);
+    let diff = format!(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line_old}\n+{long_line_new}\n"
+    );
+    let output = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        output,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    )
+    .with_expand_mods(Some(true));
+
+    assert!(!state.expanded_mods.is_empty());
+
+    // Render at width 60 so that ~120 chars wraps into multiple visual lines
+    let (w, h) = (60, 24);
+    let buf = state.render_to_buffer(w, h);
+    let mut screen_lines = Vec::new();
+    for y in 0..h {
+        let mut line = String::new();
+        for x in 0..w {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        screen_lines.push(line);
+    }
+
+    let mod_lines: Vec<&String> = screen_lines[4..10].iter().collect();
+
+    assert_eq!(
+        mod_lines.len(),
+        6,
+        "expected 6 visual segments (3 del + 3 add): {mod_lines:#?}"
+    );
+
+    // Del half:
+    // Segment 0: ┌-
+    assert!(mod_lines[0].contains("┌-"), "del line 0 must have ┌-");
+    assert!(!mod_lines[0].contains("└"), "del line 0 must not have └");
+    // Continuation lines: │
+    assert!(
+        mod_lines[1].contains("│"),
+        "del continuation line 1 must have │"
+    );
+    assert!(
+        !mod_lines[1].contains("┌"),
+        "del continuation line 1 must not have ┌"
+    );
+    assert!(
+        mod_lines[2].contains("│"),
+        "del continuation line 2 must have │"
+    );
+    assert!(
+        !mod_lines[2].contains("└"),
+        "del continuation line 2 must not have └"
+    );
+
+    // Add half:
+    // First segment of wrapped add row must NOT terminate with └+, must have │+
+    assert!(
+        mod_lines[3].contains("│+"),
+        "add segment 0 must continue box with │+"
+    );
+    assert!(
+        !mod_lines[3].contains("└+"),
+        "add segment 0 must NOT terminate box with └+"
+    );
+
+    // Intermediate continuation segment must have │
+    assert!(
+        mod_lines[4].contains("│"),
+        "intermediate add segment must have │"
+    );
+    assert!(
+        !mod_lines[4].contains("└"),
+        "intermediate add segment must not have └"
+    );
+
+    // Final segment must terminate box with └
+    assert!(
+        mod_lines[5].contains("└"),
+        "final add segment must terminate box with └"
+    );
+}

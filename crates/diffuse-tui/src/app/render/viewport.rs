@@ -578,11 +578,18 @@ impl AppState {
                                 let is_selected =
                                     idx == self.row_idx && self.vis_line == div_segs + s_idx;
                                 let mut prefix = if s_idx == 0 {
+                                    let seg_mod_glyph = if seg_count > 1
+                                        && mod_glyph == Some(diffuse_core::ModGlyph::Bottom)
+                                    {
+                                        Some(diffuse_core::ModGlyph::Mid)
+                                    } else {
+                                        mod_glyph
+                                    };
                                     styled_prefix_spans_with_widths(
                                         r.kind,
                                         r.mov_side,
                                         mod_side,
-                                        mod_glyph,
+                                        seg_mod_glyph,
                                         r.group,
                                         r.new_line,
                                         r.old_line,
@@ -594,9 +601,17 @@ impl AppState {
                                         new_line_w,
                                     )
                                 } else {
+                                    let is_last_seg = s_idx + 1 == seg_count;
+                                    let seg_mod_glyph = match mod_glyph {
+                                        Some(diffuse_core::ModGlyph::Bottom) if is_last_seg => {
+                                            Some(diffuse_core::ModGlyph::Bottom)
+                                        }
+                                        Some(_) => Some(diffuse_core::ModGlyph::Mid),
+                                        None => None,
+                                    };
                                     continuation_prefix_spans_with_mod_side_and_widths(
                                         mod_side,
-                                        mod_glyph,
+                                        seg_mod_glyph,
                                         &self.theme,
                                         None,
                                         old_line_w,

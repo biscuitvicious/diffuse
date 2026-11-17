@@ -279,6 +279,28 @@ pub const BOX_PREFIXES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
     "                │ ",
 ];
 
+/// Static continuation box bottom prefixes matching `line_num_width` spaces
+/// followed by `"└ "`.
+pub const BOX_BOTTOM_PREFIXES: [&str; MAX_LINE_NUM_WIDTH + 1] = [
+    "└ ",
+    " └ ",
+    "  └ ",
+    "   └ ",
+    "    └ ",
+    "     └ ",
+    "      └ ",
+    "       └ ",
+    "        └ ",
+    "         └ ",
+    "          └ ",
+    "           └ ",
+    "            └ ",
+    "             └ ",
+    "              └ ",
+    "               └ ",
+    "                └ ",
+];
+
 /// Format variable-width line numbers into a stack buffer without heap
 /// allocation.
 ///
@@ -1100,12 +1122,8 @@ pub fn continuation_prefix_spans_with_width(
 }
 
 #[inline]
-fn mod_row_extends_box(mod_side: Option<ModSide>, mod_glyph: Option<ModGlyph>) -> bool {
-    mod_side.is_some_and(|side| {
-        !mod_glyph
-            .unwrap_or_else(|| ModGlyph::for_side(side))
-            .is_bottom()
-    })
+fn mod_row_extends_box(mod_side: Option<ModSide>) -> bool {
+    mod_side.is_some()
 }
 
 /// Continuation prefix spans taking `ModSide`, `ModGlyph`, and `line_num_width`
@@ -1137,30 +1155,37 @@ pub fn continuation_prefix_spans_with_mod_side_and_widths(
     old_line_width: usize,
     new_line_width: usize,
 ) -> Vec<StyledSpan> {
+    let effective_glyph = mod_glyph.or_else(|| mod_side.map(ModGlyph::for_side));
+    let glyph_str = if effective_glyph == Some(ModGlyph::Bottom) {
+        "└"
+    } else {
+        "│"
+    };
+
     if old_line_width == 0 {
-        if mod_row_extends_box(mod_side, mod_glyph) {
+        if mod_row_extends_box(mod_side) {
             let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
             if new_line_width == 0 {
                 return vec![
-                    r#mod.icon.span("│", bg),
+                    r#mod.icon.span(glyph_str, bg),
                     StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
                 ];
             }
             return vec![
                 StyledSpan::styled(static_spaces(new_line_width), Some(Color::Fixed(242)), bg),
-                r#mod.icon.span("│", bg),
+                r#mod.icon.span(glyph_str, bg),
                 StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
             ];
         }
         return continuation_prefix_spans_with_width(bg, new_line_width);
     }
 
-    if mod_row_extends_box(mod_side, mod_glyph) {
+    if mod_row_extends_box(mod_side) {
         let r#mod = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
         let pad_len = old_line_width + 1 + new_line_width;
         vec![
             StyledSpan::styled(static_spaces(pad_len), Some(Color::Fixed(242)), bg),
-            r#mod.icon.span("│", bg),
+            r#mod.icon.span(glyph_str, bg),
             StyledSpan::styled(" ", Some(Color::Fixed(242)), bg),
         ]
     } else {
@@ -1195,10 +1220,15 @@ pub fn continuation_prefix_plain_with_mod_side_and_width(
     mod_glyph: Option<ModGlyph>,
     line_num_width: usize,
 ) -> &'static str {
-    let extends_box = mod_row_extends_box(mod_side, mod_glyph);
+    let extends_box = mod_row_extends_box(mod_side);
     let idx = line_num_width.min(MAX_LINE_NUM_WIDTH);
     if extends_box {
-        BOX_PREFIXES[idx]
+        let effective_glyph = mod_glyph.or_else(|| mod_side.map(ModGlyph::for_side));
+        if effective_glyph == Some(ModGlyph::Bottom) {
+            BOX_BOTTOM_PREFIXES[idx]
+        } else {
+            BOX_PREFIXES[idx]
+        }
     } else {
         GUTTER_SPACES[idx]
     }
@@ -1220,9 +1250,15 @@ pub fn continuation_prefix_plain_with_mod_side_and_widths(
         )
         .to_string();
     }
-    if mod_row_extends_box(mod_side, mod_glyph) {
+    if mod_row_extends_box(mod_side) {
         let pad_len = old_line_width + 1 + new_line_width;
-        format!("{}│ ", static_spaces(pad_len))
+        let effective_glyph = mod_glyph.or_else(|| mod_side.map(ModGlyph::for_side));
+        let glyph_str = if effective_glyph == Some(ModGlyph::Bottom) {
+            "└"
+        } else {
+            "│"
+        };
+        format!("{}{glyph_str} ", static_spaces(pad_len))
     } else {
         static_spaces(dual_gutter_width(old_line_width, new_line_width)).to_string()
     }

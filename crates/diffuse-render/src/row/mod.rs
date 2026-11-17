@@ -11,9 +11,9 @@ pub mod text;
 mod tests;
 
 pub use gutter::{
-    BOX_PREFIXES, DEFAULT_PAGER_LINE_NUM_WIDTH, ELLIPSIS, GUTTER_SPACES, LINE_NUM_SPACES,
-    MAX_LINE_NUM_BUF_LEN, MAX_LINE_NUM_WIDTH, MIN_SIDE_BY_SIDE_PANE_CHARS, STATIC_SPACES,
-    SplitPaneLayout, continuation_prefix_plain_with_mod_side,
+    BOX_BOTTOM_PREFIXES, BOX_PREFIXES, DEFAULT_PAGER_LINE_NUM_WIDTH, ELLIPSIS, GUTTER_SPACES,
+    LINE_NUM_SPACES, MAX_LINE_NUM_BUF_LEN, MAX_LINE_NUM_WIDTH, MIN_SIDE_BY_SIDE_PANE_CHARS,
+    STATIC_SPACES, SplitPaneLayout, continuation_prefix_plain_with_mod_side,
     continuation_prefix_plain_with_mod_side_and_width,
     continuation_prefix_plain_with_mod_side_and_widths, continuation_prefix_spans,
     continuation_prefix_spans_with_mod_side, continuation_prefix_spans_with_mod_side_and_width,

@@ -883,19 +883,103 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
         "continuation vertical bar │ must use mod icon color"
     );
 
-    // Add half segment 0: starts with "    1└+"
+    // Add half segment 0: starts with "    1│+" because the row wraps and does
+    // not terminate here
     let plain_add0 = strip_ansi(diff_lines[2]);
     let prefix_add0: String = plain_add0.chars().take(7).collect();
-    assert_eq!(prefix_add0, "    1└+");
+    assert_eq!(prefix_add0, "    1│+");
 
-    // Add half segment 1 (continuation): terminates box, starts with standard "
-    // "
+    // Add half segment 1 (continuation): terminates box, starts with "     └ "
     let plain_add1 = strip_ansi(diff_lines[3]);
     let prefix_add1: String = plain_add1.chars().take(7).collect();
     assert_eq!(
-        prefix_add1, "       ",
-        "wrapped add continuation line closes box and uses 7 spaces"
+        prefix_add1, "     └ ",
+        "wrapped add continuation line closes box and uses '└ '"
     );
+    assert!(
+        diff_lines[3].contains(&mod_icon_color.fg_code()),
+        "continuation bottom corner └ must use mod icon color"
+    );
+}
+
+#[test]
+fn test_render_file_diff_expanded_mod_multi_segment_continuation_box_glyphs() {
+    // Both old and new lines are ~180 chars, wrapping into 3 segments each at width
+    // 80
+    let long_line_old = "old_val_prefix_".repeat(12);
+    let long_line_new = "new_val_prefix_".repeat(12);
+    let diff = format!(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line_old}\n+{long_line_new}\n"
+    );
+    let new_content = Some(
+        [("a.txt".to_string(), format!("{long_line_new}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let old_content = Some(
+        [("a.txt".to_string(), format!("{long_line_old}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        &diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+
+    let width = 80;
+    let theme = DiffuseTheme::dark();
+    let rendered =
+        render_file_diff_with_options(&out.files[0], None, &theme, true, width, Some(true), None);
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    let diff_lines: Vec<&str> = lines
+        .into_iter()
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── 1/1"))
+        .collect();
+
+    // 3 del segments + 3 add segments = 6 total diff lines
+    assert_eq!(
+        diff_lines.len(),
+        6,
+        "expected 6 segments for 3-segment del + 3-segment add: {diff_lines:#?}"
+    );
+
+    // Del segment 0: starts with "    1┌-"
+    let pfx = |s: &str| -> String { strip_ansi(s).chars().take(7).collect() };
+    assert_eq!(pfx(diff_lines[0]), "    1┌-");
+
+    // Del segment 1 (continuation): starts with "     │ "
+    assert_eq!(pfx(diff_lines[1]), "     │ ");
+
+    // Del segment 2 (continuation of del row, still mid cluster): starts with "
+    // │ "
+    assert_eq!(pfx(diff_lines[2]), "     │ ");
+
+    // Add segment 0: starts with "    1│+"
+    assert_eq!(pfx(diff_lines[3]), "    1│+");
+
+    // Add segment 1 (intermediate continuation): starts with "     │ "
+    assert_eq!(pfx(diff_lines[4]), "     │ ");
+
+    // Add segment 2 (final continuation): starts with "     └ "
+    assert_eq!(pfx(diff_lines[5]), "     └ ");
+
+    // Unstyled (plain text) leg verification
+    let rendered_plain =
+        render_file_diff_with_options(&out.files[0], None, &theme, false, width, Some(true), None);
+    let plain_lines: Vec<&str> = rendered_plain
+        .lines()
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── 1/1"))
+        .collect();
+    let plain_pfx = |s: &str| -> String { strip_ansi(s).chars().take(7).collect() };
+    assert_eq!(plain_pfx(plain_lines[0]), "    1┌-");
+    assert_eq!(plain_pfx(plain_lines[1]), "     │ ");
+    assert_eq!(plain_pfx(plain_lines[2]), "     │ ");
+    assert_eq!(plain_pfx(plain_lines[3]), "    1│+");
+    assert_eq!(plain_pfx(plain_lines[4]), "     │ ");
+    assert_eq!(plain_pfx(plain_lines[5]), "     └ ");
 }
 
 #[test]
