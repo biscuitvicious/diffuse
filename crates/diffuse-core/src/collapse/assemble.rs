@@ -324,6 +324,114 @@ fn matches_unmatched_suffix(
     verify_reflow_evidence(&unmatched_suffix_chars, &cand_chars, false)
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+fn contains_subline_token(haystack: &str, needle: &str) -> bool {
+    let needle = needle.trim();
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return false;
+    }
+    for (start_idx, _) in haystack.match_indices(needle) {
+        let end_idx = start_idx + needle.len();
+        let left_ok = if start_idx == 0 {
+            true
+        } else {
+            let prev_char = haystack[..start_idx].chars().next_back().unwrap();
+            !prev_char.is_alphanumeric() && prev_char != '_'
+        };
+        let right_ok = if end_idx >= haystack.len() {
+            true
+        } else {
+            let next_char = haystack[end_idx..].chars().next().unwrap();
+            !next_char.is_alphanumeric() && next_char != '_'
+        };
+        if left_ok && right_ok {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn extract_significant_tokens(text: &str, spans: &[(usize, usize)], min_len: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut tokens = Vec::new();
+    for &(s, e) in spans {
+        if s >= chars.len() {
+            continue;
+        }
+        let span_str: String = chars[s..e.min(chars.len())].iter().collect();
+        let trimmed = span_str.trim();
+        if trimmed.chars().count() >= min_len && trimmed.chars().any(|c| c.is_alphabetic()) {
+            tokens.push(trimmed.to_string());
+        }
+        for part in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            let part_trim = part.trim();
+            if part_trim.chars().count() >= min_len
+                && part_trim.chars().any(|c| c.is_alphabetic())
+                && part_trim != trimmed
+            {
+                tokens.push(part_trim.to_string());
+            }
+        }
+    }
+    tokens
+}
+
+/// Computes whether candidate content provides information-theoretic evidence
+/// of an interior donor (such as variable inlining / expression relocation),
+/// satisfying transitive co-occurrence or substantial token conservation.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn matches_interior_donor(
+    del_row_text: &str,
+    add_row_text: &str,
+    del_spans: &[(usize, usize)],
+    add_spans: &[(usize, usize)],
+    cand_text: &str,
+) -> bool {
+    let cand_trim = cand_text.trim();
+    if cand_trim.is_empty() {
+        return false;
+    }
+
+    let cand_indent = cand_text.chars().take_while(|c| c.is_whitespace()).count();
+    let del_indent = del_row_text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    if cand_indent.abs_diff(del_indent) > 4 {
+        return false;
+    }
+
+    let struck_tokens = extract_significant_tokens(del_row_text, del_spans, 3);
+    let added_tokens = extract_significant_tokens(add_row_text, add_spans, 4);
+
+    if added_tokens.is_empty() {
+        return false;
+    }
+
+    // Predicate A: Transitive co-occurrence
+    // Candidate line contains both struck token A and added token B (where A != B)
+    for a in &struck_tokens {
+        if contains_subline_token(cand_text, a) {
+            for b in &added_tokens {
+                if a != b && contains_subline_token(cand_text, b) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Predicate B: Substantial information deficit conservation
+    // Candidate line contains a high-entropy added expression B (>= 8 chars)
+    for b in &added_tokens {
+        if b.chars().count() >= 8 && contains_subline_token(cand_text, b) {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn pass_assemble_mods(
     h: &Hunk,
     ctx: &PairingContext,

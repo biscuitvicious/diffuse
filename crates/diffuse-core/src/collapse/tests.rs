@@ -3423,3 +3423,71 @@ fn test_lcs_mod_hunk_15_stepwise() {
         }
     }
 }
+
+#[test]
+fn test_interior_donor_transitive_cooccurrence_and_deficit_conservation() {
+    use super::assemble::matches_interior_donor;
+
+    // 1. Motivating example: variable inlining (Transitive Co-occurrence)
+    // Old: let scrollbar_seek = is_on_scrollbar;
+    // Old M: if scrollbar_seek {
+    // New M: if is_on_scrollbar {
+    let old_m = "                if scrollbar_seek {";
+    let new_m = "                if is_on_scrollbar {";
+    let del_spans = vec![(19, 33)]; // "scrollbar_seek"
+    let add_spans = vec![(19, 34)]; // "is_on_scrollbar"
+
+    let donor_del = "                let scrollbar_seek = is_on_scrollbar;";
+    assert!(
+        matches_interior_donor(old_m, new_m, &del_spans, &add_spans, donor_del),
+        "deleted variable declaration must qualify as an interior donor via transitive co-occurrence"
+    );
+
+    // 2. High-entropy deficit conservation (Predicate B)
+    // Old: render(&opts);
+    // New: render(&MarkdownOptions::default());
+    // Del: ..MarkdownOptions::default()
+    let old_m2 = "    render(&opts);";
+    let new_m2 = "    render(&MarkdownOptions::default());";
+    let del_spans2 = vec![(12, 16)]; // "opts"
+    let add_spans2 = vec![(12, 38)]; // "MarkdownOptions::default()"
+    let donor_del2 = "    ..MarkdownOptions::default()";
+    assert!(
+        matches_interior_donor(old_m2, new_m2, &del_spans2, &add_spans2, donor_del2),
+        "high-entropy expression in candidate deletion must qualify via deficit conservation"
+    );
+
+    // 3. Rejection of unrelated deletion sharing no tokens
+    let unrelated_del = "                let max_scroll = total - vh;";
+    assert!(
+        !matches_interior_donor(old_m, new_m, &del_spans, &add_spans, unrelated_del),
+        "unrelated deletion must be rejected"
+    );
+
+    // 4. Rejection of short / low-entropy variable names (e.g. single-letter 'a' ->
+    //    'b')
+    let old_m3 = "    if a {";
+    let new_m3 = "    if b {";
+    let del_spans3 = vec![(7, 8)];
+    let add_spans3 = vec![(7, 8)];
+    let short_donor = "    let a = b;";
+    assert!(
+        !matches_interior_donor(old_m3, new_m3, &del_spans3, &add_spans3, short_donor),
+        "short trivial identifiers below entropy floor must not form mod groups"
+    );
+
+    // 5. Rejection of candidate in different scope (mismatched indentation)
+    let outer_scope_donor = "let scrollbar_seek = is_on_scrollbar;"; // 0 spaces vs 16 spaces
+    assert!(
+        !matches_interior_donor(old_m, new_m, &del_spans, &add_spans, outer_scope_donor),
+        "candidate in distinct indentation scope must be rejected"
+    );
+
+    // 6. Substring within larger identifier must NOT trigger (word-boundary
+    //    enforcement)
+    let embedded_donor = "                let not_scrollbar_seek_here = is_on_scrollbar_flag;";
+    assert!(
+        !matches_interior_donor(old_m, new_m, &del_spans, &add_spans, embedded_donor),
+        "embedded substrings without word boundary must be rejected"
+    );
+}
