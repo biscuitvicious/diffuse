@@ -24,6 +24,7 @@ pub mod aux;
 pub mod invariants;
 pub mod reflow;
 pub mod residual;
+pub mod slot;
 pub mod walk;
 
 #[cfg(test)]
@@ -42,6 +43,7 @@ pub use invariants::{
 };
 pub use reflow::{ReflowFilter, pass_filter_reflows};
 pub use residual::pass_residual_pairing;
+pub use slot::{AlignedSlotRow, PeerGroupRows, align_and_type_peer_group};
 pub use walk::pass_sort_ordered_walk;
 
 /// Results of the initial pairing pass.
