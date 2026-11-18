@@ -2,7 +2,10 @@
 //! 3).
 
 pub mod dp;
+pub mod factor;
 pub mod pairing;
+
+pub use factor::*;
 
 use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;
