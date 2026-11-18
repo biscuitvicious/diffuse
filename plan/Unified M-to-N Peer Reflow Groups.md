@@ -1,6 +1,6 @@
 # Unified M-to-N Peer Reflow Groups
 
-- [ ] **Phase 1: Symmetric Peer Group Data Model & Wire Contract Extension**
+- [x] **Phase 1: Symmetric Peer Group Data Model & Wire Contract Extension**
 - [ ] **Phase 2: Macro Cluster Factorization & Closed-Boundary Cuts**
 - [ ] **Phase 3: Micro Slot-Alignment DP & Closed-Economy Token Typing**
 - [ ] **Phase 4: Pipeline Integration & Shadow Engine Verification**

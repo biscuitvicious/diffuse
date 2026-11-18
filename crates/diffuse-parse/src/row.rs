@@ -1,5 +1,7 @@
 //! Unified diff row definitions, classifications, coordinates, and span models.
 
+use std::fmt;
+
 use diffuse_algo::require;
 use serde::{Deserialize, Serialize};
 
@@ -102,12 +104,120 @@ impl RowKind {
     }
 }
 
-/// Identifies the expansion/collapse group role of a diff row.
+/// Unique identifier for an irreducible (N -> M) peer reflow group within a
+/// hunk.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GroupId(pub u32);
+
+impl fmt::Display for GroupId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Symmetric group metadata describing an N -> M transition.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PeerGroupMeta {
+    pub id: GroupId,
+    pub old_count: usize, // N
+    pub new_count: usize, // M
+}
+
+impl PeerGroupMeta {
+    #[inline]
+    pub const fn new(id: GroupId, old_count: usize, new_count: usize) -> Self {
+        Self {
+            id,
+            old_count,
+            new_count,
+        }
+    }
+
+    #[inline]
+    pub const fn max_slots(&self) -> usize {
+        if self.old_count > self.new_count {
+            self.old_count
+        } else {
+            self.new_count
+        }
+    }
+
+    #[inline]
+    pub const fn is_pure_del(&self) -> bool {
+        self.old_count > 0 && self.new_count == 0
+    }
+
+    #[inline]
+    pub const fn is_pure_add(&self) -> bool {
+        self.old_count == 0 && self.new_count > 0
+    }
+
+    #[inline]
+    pub const fn is_single_mod(&self) -> bool {
+        self.old_count == 1 && self.new_count == 1
+    }
+
+    #[inline]
+    pub const fn is_compound(&self) -> bool {
+        self.old_count > 1 || self.new_count > 1
+    }
+}
+
+/// Identifies the expansion/collapse/peer group role of a diff row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RowGroup {
     Anchor,
-    Aux { anchor: u32 },
+    Aux {
+        anchor: u32,
+    },
+    /// A row belonging to an (N -> M) peer reflow group.
+    Peer {
+        id: GroupId,
+        slot: usize,
+        n: usize,
+        m: usize,
+    },
+}
+
+impl RowGroup {
+    #[inline]
+    pub fn is_anchor(self) -> bool {
+        matches!(self, RowGroup::Anchor)
+    }
+
+    #[inline]
+    pub fn is_aux(self) -> bool {
+        matches!(self, RowGroup::Aux { .. })
+    }
+
+    #[inline]
+    pub fn is_peer(self) -> bool {
+        matches!(self, RowGroup::Peer { .. })
+    }
+
+    #[inline]
+    pub fn peer_id(self) -> Option<GroupId> {
+        match self {
+            RowGroup::Peer { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn reverse(self) -> Self {
+        match self {
+            RowGroup::Anchor => RowGroup::Anchor,
+            RowGroup::Aux { anchor } => RowGroup::Aux { anchor },
+            RowGroup::Peer { id, slot, n, m } => RowGroup::Peer {
+                id,
+                slot,
+                n: m,
+                m: n,
+            },
+        }
+    }
 }
 
 /// A line deletion: (`line_num`, text, moved).

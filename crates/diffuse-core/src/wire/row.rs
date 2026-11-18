@@ -57,6 +57,7 @@ impl OutputRow {
         });
         std::mem::swap(&mut self.new_line, &mut self.old_line);
         self.runs = self.runs.into_iter().map(OutputRun::reverse).collect();
+        self.group = self.group.map(RowGroup::reverse);
         self
     }
 
@@ -69,6 +70,12 @@ impl OutputRow {
     #[inline]
     pub fn is_aux(&self) -> bool {
         matches!(self.group, Some(RowGroup::Aux { .. }))
+    }
+
+    /// Whether this row belongs to an N -> M peer reflow group.
+    #[inline]
+    pub fn is_peer(&self) -> bool {
+        matches!(self.group, Some(RowGroup::Peer { .. }))
     }
 
     /// Computes the new-side line text projected across this row's runs (Ctx +

@@ -15,7 +15,9 @@ pub use file::{
     DiffFile, FileStatus, hunk_path, is_valid_diff_file, parse_diff_git_paths, unquote_git_path,
 };
 pub use hunk::{Hunk, add_count, del_count, parse_hunk_header};
-pub use row::{AddLine, CtxLine, DelLine, Row, RowGroup, RowKind, RunKind, Spans};
+pub use row::{
+    AddLine, CtxLine, DelLine, GroupId, PeerGroupMeta, Row, RowGroup, RowKind, RunKind, Spans,
+};
 
 #[cfg(test)]
 mod tests;

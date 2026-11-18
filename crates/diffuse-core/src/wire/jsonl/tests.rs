@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{FileStatus, RowGroup, RowKind},
+    parse::{FileStatus, GroupId, PeerGroupMeta, RowGroup, RowKind},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput, TokenColor},
 };
 
@@ -703,6 +703,67 @@ fn test_row_group_wire_serialization() {
     );
     let de_row_none: OutputRow = serde_json::from_str(&json_none).unwrap();
     assert_eq!(de_row_none.group, None);
+
+    // OutputRow with Peer group
+    let peer_group = RowGroup::Peer {
+        id: GroupId(42),
+        slot: 1,
+        n: 2,
+        m: 3,
+    };
+    let peer_json = serde_json::to_string(&peer_group).unwrap();
+    assert_eq!(peer_json, r#"{"role":"peer","id":42,"slot":1,"n":2,"m":3}"#);
+    let de_peer: RowGroup = serde_json::from_str(&peer_json).unwrap();
+    assert_eq!(de_peer, peer_group);
+
+    let row_peer = OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        new_line: Some(289),
+        old_line: Some(294),
+        runs: vec![OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "fn foo()".into(),
+        }],
+        wholesale: false,
+        group: Some(peer_group),
+    };
+    let json_peer = serde_json::to_string(&row_peer).unwrap();
+    assert!(
+        json_peer.contains(r#""group":{"role":"peer","id":42,"slot":1,"n":2,"m":3}"#),
+        "serialized OutputRow must contain peer group info: {json_peer}"
+    );
+    let de_row_peer: OutputRow = serde_json::from_str(&json_peer).unwrap();
+    assert_eq!(de_row_peer.group, Some(peer_group));
+}
+
+#[test]
+fn test_peer_group_meta_invariants() {
+    let meta = PeerGroupMeta {
+        id: GroupId(1),
+        old_count: 2,
+        new_count: 3,
+    };
+    assert_eq!(meta.id, GroupId(1));
+    assert_eq!(meta.old_count, 2);
+    assert_eq!(meta.new_count, 3);
+    assert_eq!(meta.max_slots(), 3);
+    assert!(!meta.is_pure_add());
+    assert!(!meta.is_pure_del());
+    assert!(!meta.is_single_mod());
+    assert!(meta.is_compound());
+
+    let single = PeerGroupMeta::new(GroupId(2), 1, 1);
+    assert!(single.is_single_mod());
+    assert!(!single.is_compound());
+
+    let add = PeerGroupMeta::new(GroupId(3), 0, 1);
+    assert!(add.is_pure_add());
+
+    let del = PeerGroupMeta::new(GroupId(4), 1, 0);
+    assert!(del.is_pure_del());
 }
 
 #[test]
