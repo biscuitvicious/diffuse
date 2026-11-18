@@ -206,6 +206,14 @@ impl RowGroup {
     }
 
     #[inline]
+    pub fn is_multiline(self) -> bool {
+        match self {
+            RowGroup::Anchor | RowGroup::Aux { .. } => true,
+            RowGroup::Peer { n, m, .. } => n > 1 || m > 1,
+        }
+    }
+
+    #[inline]
     pub fn reverse(self) -> Self {
         match self {
             RowGroup::Anchor => RowGroup::Anchor,
@@ -350,6 +358,8 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<RowGroup>,
     },
     AuxAdd {
         anchor: u32,
@@ -358,6 +368,8 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<RowGroup>,
     },
     #[serde(skip_serializing)]
     Sep(String),
@@ -449,6 +461,7 @@ impl Row {
             line,
             spans,
             cached_runs,
+            group: None,
         }
     }
 
@@ -465,6 +478,7 @@ impl Row {
             line,
             spans,
             cached_runs,
+            group: None,
         }
     }
 
@@ -588,7 +602,9 @@ impl Row {
     pub fn group(&self) -> Option<RowGroup> {
         match self {
             Row::Mod { group, .. } => *group,
+            Row::AuxAdd { group: Some(g), .. } => Some(*g),
             Row::AuxAdd { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
+            Row::AuxDel { group: Some(g), .. } => Some(*g),
             Row::AuxDel { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
             _ => None,
         }
@@ -662,6 +678,7 @@ impl Row {
                 line,
                 spans,
                 cached_runs,
+                group,
             } => Row::AuxAdd {
                 anchor,
                 line: AddLine::new(line.num, line.text),
@@ -670,12 +687,14 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
+                group: group.map(RowGroup::reverse),
             },
             Row::AuxAdd {
                 anchor,
                 line,
                 spans,
                 cached_runs,
+                group,
             } => Row::AuxDel {
                 anchor,
                 line: DelLine::new(line.num, line.text),
@@ -684,6 +703,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
+                group: group.map(RowGroup::reverse),
             },
             Row::Sep(s) => Row::Sep(s),
         }

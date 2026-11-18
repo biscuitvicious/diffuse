@@ -110,6 +110,7 @@ pub fn pass_sort_ordered_walk(
                     line: del_line.clone(),
                     spans,
                     cached_runs,
+                    group: Some(RowGroup::Aux { anchor }),
                 },
                 other => other.clone(),
             };
@@ -154,6 +155,7 @@ pub fn pass_sort_ordered_walk(
                         line: del_line.clone(),
                         spans: Spans::default(),
                         cached_runs: vec![(RunKind::Del, del_line.text.clone())],
+                        group: Some(RowGroup::Aux { anchor }),
                     }
                 } else {
                     Row::Del(del_line.clone())
@@ -186,6 +188,7 @@ pub fn pass_sort_ordered_walk(
                         line: add_line.clone(),
                         spans,
                         cached_runs: runs,
+                        group: Some(RowGroup::Aux { anchor }),
                     }
                 } else {
                     Row::Add(add_line.clone())

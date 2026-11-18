@@ -17,6 +17,8 @@ pub struct AlignedSlotRow {
     pub slot_index: usize,
     pub old_line: Option<u32>,
     pub new_line: Option<u32>,
+    pub old_text: Option<String>,
+    pub new_text: Option<String>,
     pub kind: RowKind,
     pub runs: Vec<(RunKind, String)>,
     pub spans: Spans,
@@ -115,6 +117,8 @@ pub fn align_and_type_peer_group(
         let spans = compute_slot_spans(&runs);
         let old_line = old_opt.and_then(Row::old_line);
         let new_line = new_opt.and_then(Row::new_line);
+        let old_text = old_opt.map(|r| r.text().to_string());
+        let new_text = new_opt.map(|r| r.text().to_string());
         let kind = match (old_line, new_line) {
             (Some(_), Some(_)) => RowKind::Mod,
             (Some(_), None) => RowKind::Del,
@@ -126,6 +130,8 @@ pub fn align_and_type_peer_group(
             slot_index: idx,
             old_line,
             new_line,
+            old_text,
+            new_text,
             kind,
             runs,
             spans,

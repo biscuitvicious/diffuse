@@ -188,6 +188,7 @@ fn test_diff_components_reverse_involution() {
         line: AddLine::new(105, "aux text"),
         spans: spans.clone(),
         cached_runs: vec![(crate::merge::RunKind::MovedTgt, "aux text".to_string())],
+        group: None,
     };
     let rev_aux = aux_add.clone().reverse();
     assert_eq!(

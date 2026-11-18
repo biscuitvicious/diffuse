@@ -69,7 +69,13 @@ impl OutputRow {
     /// Whether this row is an auxiliary row within a multiline cluster.
     #[inline]
     pub fn is_aux(&self) -> bool {
-        matches!(self.group, Some(RowGroup::Aux { .. }))
+        match self.group {
+            Some(RowGroup::Aux { .. }) => true,
+            Some(RowGroup::Peer { n, m, .. }) => {
+                (n > 1 || m > 1) && (self.kind == RowKind::Add || self.kind == RowKind::Del)
+            }
+            _ => false,
+        }
     }
 
     /// Whether this row belongs to an N -> M peer reflow group.
@@ -232,6 +238,15 @@ impl From<&OutputRow> for Row {
                         line: del,
                         spans,
                         cached_runs,
+                        group: r.group,
+                    }
+                } else if let Some(RowGroup::Peer { id, .. }) = r.group {
+                    Row::AuxDel {
+                        anchor: id.0,
+                        line: del,
+                        spans,
+                        cached_runs,
+                        group: r.group,
                     }
                 } else {
                     Row::Del(del)
@@ -246,6 +261,15 @@ impl From<&OutputRow> for Row {
                         line: add,
                         spans,
                         cached_runs,
+                        group: r.group,
+                    }
+                } else if let Some(RowGroup::Peer { id, .. }) = r.group {
+                    Row::AuxAdd {
+                        anchor: id.0,
+                        line: add,
+                        spans,
+                        cached_runs,
+                        group: r.group,
                     }
                 } else {
                     Row::Add(add)

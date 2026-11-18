@@ -22,6 +22,7 @@ use crate::{
 pub mod assemble;
 pub mod aux;
 pub mod invariants;
+pub mod peer;
 pub mod reflow;
 pub mod residual;
 pub mod slot;
@@ -41,6 +42,7 @@ pub use invariants::{
     check_context_old_line_monotonicity, check_del_add_topological_order,
     check_no_orphaned_continuation_dels, check_reflow_cluster_confinement,
 };
+pub use peer::{assert_peer_group_invariants, peer_reflow_pipeline};
 pub use reflow::{ReflowFilter, pass_filter_reflows};
 pub use residual::pass_residual_pairing;
 pub use slot::{AlignedSlotRow, PeerGroupRows, align_and_type_peer_group};
@@ -96,6 +98,9 @@ pub fn collapse_hunk_rows(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
+    if std::env::var("DIFFUSE_USE_PEER_REFLOW").as_deref() == Ok("1") {
+        return peer_reflow_pipeline(h, old_content, new_content, profile);
+    }
     let t0 = Instant::now();
     let mut h_norm = pass_shift_hunk(h, profile);
     // Split coincidental context rows (lone `}`, `break;`, blanks) into
