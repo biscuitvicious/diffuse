@@ -2047,10 +2047,10 @@ pub fn pass_assemble_mods(
                             let mut line_runs = vec![(RunKind::Add, add_nxt.text().to_string())];
                             if let Some((donor_is_aux, ref tokens, ref mut b)) =
                                 compound_group_budget
-                                && donor_is_aux {
-                                    line_runs =
-                                        relabel_anchor_add_to_moved_tgt(line_runs, tokens, b);
-                                }
+                                && donor_is_aux
+                            {
+                                line_runs = relabel_anchor_add_to_moved_tgt(line_runs, tokens, b);
+                            }
                             let spans = compute_anchor_mod_spans(&line_runs);
                             add_spans.insert(nxt_i, spans);
                             add_runs.insert(nxt_i, line_runs);
@@ -2650,10 +2650,11 @@ pub fn pass_assemble_mods(
                         let dels = attached_dels.remove(&p.nxt_i).unwrap_or_default();
                         let mut aux_runs = build_aux_runs(&p.aux_chars, &p.donor.add, &dels);
                         if let Some((donor_is_aux, ref tokens, ref mut b)) = compound_group_budget
-                            && donor_is_aux {
-                                aux_runs = relabel_anchor_add_to_moved_tgt(aux_runs, tokens, b);
-                                p.donor = compute_anchor_mod_spans(&aux_runs);
-                            }
+                            && donor_is_aux
+                        {
+                            aux_runs = relabel_anchor_add_to_moved_tgt(aux_runs, tokens, b);
+                            p.donor = compute_anchor_mod_spans(&aux_runs);
+                        }
                         add_runs.insert(p.nxt_i, aux_runs);
                         add_spans.insert(p.nxt_i, p.donor);
                     }

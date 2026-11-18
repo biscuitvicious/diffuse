@@ -1484,10 +1484,11 @@ fn test_compound_mod_group_side_by_side_moved_src_struck() {
     let mut target_idx = None;
     for (idx, item) in state.flat.iter().enumerate() {
         if let Some(r) = state.row_of(item)
-            && r.old_line == Some(294) {
-                target_idx = Some(idx);
-                break;
-            }
+            && r.old_line == Some(294)
+        {
+            target_idx = Some(idx);
+            break;
+        }
     }
     let target_idx = target_idx.expect("must find old line 294 in flat list");
     state.row_idx = target_idx;
