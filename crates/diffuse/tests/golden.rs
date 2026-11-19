@@ -671,6 +671,7 @@ fn assert_diff_invariants(
                     }
                     merged.push((run.kind, run.text.to_string()));
                 }
+                merged.push((RunKind::Ctx, "\n".to_string()));
             }
             for (kind, text) in &merged {
                 {
@@ -735,7 +736,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
             let aux_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| r.is_aux())
+                .filter(|r| r.is_aux() || matches!(r.group, Some(RowGroup::Peer { .. })))
                 .map(|r| {
                     let mut s = r.text();
                     let ot = r.old_text();
@@ -750,14 +751,14 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
             let anchor_dels: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
+                .filter(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Peer { .. })))
                 .map(|r| r.old_text())
                 .filter(|t| !t.is_empty())
                 .collect();
             let anchor_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
+                .filter(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Peer { .. })))
                 .map(|r| r.text())
                 .filter(|t| !t.is_empty())
                 .collect();

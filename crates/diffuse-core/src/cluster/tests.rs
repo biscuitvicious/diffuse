@@ -3972,3 +3972,132 @@ fn dp_verbatim_identity_outbids_fuzzy_close_delimiter() {
     assert!(matches!(sol.transitions[..], [DpOp::Mov, DpOp::Del]));
     verify_projection(&sol, &c).expect("projection invariant holds");
 }
+
+// Chain-consistency scoring: when two old lines are trim-equal to the same
+// new line, the DP must prefer the one that extends into a longer run of
+// consecutive trim-equal pairs (the coherent chain) over a single-pair rival.
+//
+// Scenario (scrollbar-grab-drag dispatch.rs):
+//   - old 314–337: file-header if-block (24 dels).  old 317 is trim-equal to
+//     new 335 but the chain stops there — the following old lines do not match
+//     the following new lines.
+//   - old 339–351: bottom-gap if-block (13 dels).  old 339..=351 form a 13-pair
+//     trim-equal chain with new 335..=347.
+//
+// Without chain-consistency scoring the DP picks old 317 ↔ new 335 (closer
+// to the diagonal, processed first).  The fix adds a chain-length lookahead
+// bonus so the 13-pair chain wins.
+#[test]
+fn test_chain_twin_prefers_longer_verbatim_chain() {
+    let rs = lang_profile("rs");
+
+    // -- old file-header block (old 314..=337, 24 lines) -----------------
+    let old_file_header: &[&str] = &[
+        "                            // Clicking the collapse/expand triangle on a file",
+        "                            // header toggles the file — the click is swallowed",
+        "                            // and does not select the row.",
+        "                            if let Some(item) = self.flat.get(i)",
+        "                                && item.is_file_header()",
+        "                            {",
+        "                                let is_binary = self",
+        "                                    .output",
+        "                                    .files",
+        "                                    .get(item.file_idx)",
+        "                                    .is_some_and(|f| f.is_binary);",
+        "                                if !is_binary {",
+        "                                    let seg_off = target_vis - s;",
+        "                                    let eff_col = seg_off * cw + col;",
+        "                                    let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;",
+        "                                    let hit_indicator =",
+        "                                        eff_col >= c.saturating_sub(1) && eff_col <= c + 1;",
+        "                                    if hit_indicator {",
+        "                                        let fi = item.file_idx;",
+        "                                        self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));",
+        "                                        break;",
+        "                                    }",
+        "                                }",
+        "                            }",
+    ];
+
+    // -- old bottom-gap block (old 339..=351, 13 lines) ------------------
+    let old_bottom_gap: &[&str] = &[
+        "                            if let Some(item) = self.flat.get(i)",
+        "                                && !self.raw_diff",
+        "                                && item.is_bottom_gap_divider()",
+        "                            {",
+        "                                let seg_off = target_vis - s;",
+        "                                let gap = self.hunk_trailing_gap(item.file_idx);",
+        "                                let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);",
+        "                                if wrapped_glyph_hit(&txt, \"▲\", seg_off, col, cw) {",
+        "                                    let last_hi = item.hunk_idx().unwrap_or(0);",
+        "                                    self.expand_hunk_below(item.file_idx, last_hi);",
+        "                                    break;",
+        "                                }",
+        "                            }",
+    ];
+
+    // -- new side: reindented bottom-gap block (new 335..=347, 13 lines) --
+    let new_bottom_gap: &[&str] = &[
+        "                                if let Some(item) = self.flat.get(i)",
+        "                                    && !self.raw_diff",
+        "                                    && item.is_bottom_gap_divider()",
+        "                                {",
+        "                                    let seg_off = target_vis - s;",
+        "                                    let gap = self.hunk_trailing_gap(item.file_idx);",
+        "                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);",
+        "                                    if wrapped_glyph_hit(&txt, \"▲\", seg_off, col, cw) {",
+        "                                        let last_hi = item.hunk_idx().unwrap_or(0);",
+        "                                        self.expand_hunk_below(item.file_idx, last_hi);",
+        "                                        break;",
+        "                                    }",
+        "                                }",
+    ];
+
+    // Build old_rows: file-header dels (314..=337) then bottom-gap dels
+    // (339..=351). The file-header block contains a lone `if let Some(item)`
+    // at old 317 that is trim-equal to new 335 — the single-pair rival.
+    let mut old_rows: Vec<Row> = old_file_header
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| Row::Del(DelLine::new(314 + i as u32, t)))
+        .collect();
+    old_rows.extend(
+        old_bottom_gap
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| Row::Del(DelLine::new(339 + i as u32, t))),
+    );
+
+    // Build new_rows: reindented bottom-gap adds (335..=347).
+    let new_rows: Vec<Row> = new_bottom_gap
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| Row::Add(AddLine::new(335 + i as u32, t)))
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows,
+        new_rows,
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let sol = solve_cluster(&cluster, rs);
+
+    // The correct pairing is old 339 ↔ new 335 (chain head) and
+    // old 340 ↔ new 336 (`&& !self.raw_diff`).
+    // Both must appear, confirming the whole chain was chosen.
+    assert!(
+        pairs_with(&sol, 339, 335),
+        "old 339 (`if let Some(item)` bottom-gap) must pair with new 335;\n{}",
+        pairing_summary(&sol)
+    );
+    assert!(
+        pairs_with(&sol, 340, 336),
+        "`&& !self.raw_diff` (old 340) must pair with new 336;\n{}",
+        pairing_summary(&sol)
+    );
+    verify_projection(&sol, &cluster).expect("projection invariant holds");
+}

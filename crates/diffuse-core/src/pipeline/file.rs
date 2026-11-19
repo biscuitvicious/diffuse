@@ -273,6 +273,7 @@ pub fn process_single_diff_file(
 
     // Mark moves after collapse: creates Row::Mov pairs.
     let main_locked = mark_moves_with_profile(&mut f, profile);
+
     // Snapshot main-locked pairs by line number: absorption rebuilds hunks
     // below, so positions go stale; lines stay stable. Combined with the
     // pre-pass pairs and the absorbed pairs, this is the full move pairing
@@ -291,10 +292,12 @@ pub fn process_single_diff_file(
     let mut seeded = resolve_mov_pairs_by_line(&f, &pre_lines);
     seeded.extend(main_locked);
     let absorption = absorb_mov_tails(&mut f, &seeded, profile, true);
+
     // Ctx breaking emits orphans inline amid the move runs, shredding the
     // del/add runs into single-row micro-clusters. Relocate them to the
     // neighboring run edges (dels up, adds down) to restore contiguity.
     relocate_tail_orphans(&mut f, &absorption.del_orphans, &absorption.add_orphans);
+
     // Collapse touching corresponding move halves into direct Mod/Ctx rows:
     // a target half adjacent to its own source half is not a relocation
     // worth showing as a move.

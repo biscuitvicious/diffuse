@@ -506,3 +506,59 @@ fn test_output_file_untracked_reverse_involution() {
     let rev_rev = rev.reverse();
     assert_eq!(rev_rev, file);
 }
+
+#[test]
+fn test_output_file_moved_character_conservation() {
+    let mut file = OutputFile {
+        path: "src/test.rs".to_string(),
+        status: FileStatus::Modified,
+        new_line_count: 2,
+        old_line_count: 2,
+        counts: FileCounts {
+            mods: 2,
+            ..Default::default()
+        },
+        hunks: vec![OutputHunk {
+            old_start: 1,
+            old_count: 2,
+            new_start: 1,
+            new_count: 2,
+            rows: vec![
+                OutputRow {
+                    kind: RowKind::Mod,
+                    mov_side: None,
+                    new_line: Some(1),
+                    old_line: Some(1),
+                    runs: vec![
+                        make_run(RunKind::Ctx, "foo("),
+                        make_run(RunKind::MovedSrc, "bar"),
+                        make_run(RunKind::Ctx, ")"),
+                    ],
+                    wholesale: false,
+                    group: None,
+                },
+                OutputRow {
+                    kind: RowKind::Mod,
+                    mov_side: None,
+                    new_line: Some(2),
+                    old_line: Some(2),
+                    runs: vec![
+                        make_run(RunKind::Ctx, "baz("),
+                        make_run(RunKind::MovedTgt, "bar"),
+                        make_run(RunKind::Ctx, ")"),
+                    ],
+                    wholesale: false,
+                    group: None,
+                },
+            ],
+        }],
+        ..Default::default()
+    };
+
+    assert!(file.validate_invariants().is_ok());
+
+    // Introduce mismatch: MovedTgt has "qux" instead of "bar"
+    file.hunks[0].rows[1].runs[1] = make_run(RunKind::MovedTgt, "qux");
+    let err = file.validate_invariants().unwrap_err();
+    assert!(err.contains("moved character conservation mismatch"));
+}

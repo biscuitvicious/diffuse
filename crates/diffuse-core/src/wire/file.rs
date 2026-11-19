@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::{MovSide, OutputFence, OutputHunk, OutputNote, OutputRow, OutputRun, format_byte_size};
 use crate::{
     counts::FileCounts,
-    parse::{DiffFile, FileStatus, RowKind},
+    merge::RunKind,
+    parse::{DiffFile, FileStatus, RowGroup, RowKind},
 };
 
 pub const NON_EXISTENT_SYMBOL: &str = "×";
@@ -516,6 +517,41 @@ impl OutputFile {
 
             let ext = self.path.rsplit('.').next().unwrap_or("");
             let profile = diffuse_syntax::registry::lang_profile(ext);
+
+            // Universal closed-economy thermodynamic invariant:
+            // Across the entire file, the multiset of characters in RunKind::MovedSrc
+            // must exactly equal the multiset of characters in RunKind::MovedTgt.
+            // (Note: characters rather than token runs are checked here because `OutputRun`
+            // on the new side is partitioned into syntactic highlight tokens, whereas
+            // `MovedSrc` on the old side is emitted whole).
+            let mut file_moved_src = Vec::new();
+            let mut file_moved_tgt = Vec::new();
+            for h in &self.hunks {
+                for r in &h.rows {
+                    for run in &r.runs {
+                        match run.kind {
+                            RunKind::MovedSrc => file_moved_src
+                                .extend(run.text.chars().filter(|c| !c.is_whitespace())),
+                            RunKind::MovedTgt => file_moved_tgt
+                                .extend(run.text.chars().filter(|c| !c.is_whitespace())),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            file_moved_src.sort_unstable();
+            file_moved_tgt.sort_unstable();
+            let has_legacy_anchor = self.hunks.iter().any(|h| {
+                h.rows
+                    .iter()
+                    .any(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Aux { .. })))
+            });
+            if !has_legacy_anchor && file_moved_src != file_moved_tgt {
+                return Err(format!(
+                    "{}: file-level moved character conservation mismatch (∑ MovedSrc ≢ ∑ MovedTgt):\n  MovedSrc: {:?}\n  MovedTgt: {:?}",
+                    self.path, file_moved_src, file_moved_tgt
+                ));
+            }
 
             for (h_idx, h) in self.hunks.iter().enumerate() {
                 if let Err(e) = h.validate_invariants_with_profile(profile) {

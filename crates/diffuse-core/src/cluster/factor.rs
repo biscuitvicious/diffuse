@@ -66,6 +66,19 @@ pub fn factor_cluster(
         return Vec::new();
     }
 
+    if n == 1 && m == 1 {
+        let u_text = old_rows[0].text();
+        let v_text = new_rows[0].text();
+        let spans = crate::lcs::word_spans(u_text, v_text);
+        if !crate::merge::is_wholesale_replacement_spans(u_text, v_text, &spans) {
+            return vec![FactoredGroup {
+                id: GroupId(0),
+                old_range: 0..1,
+                new_range: 0..1,
+            }];
+        }
+    }
+
     // 1. Precompute delimiter deltas
     let old_deltas: Vec<i32> = old_rows
         .iter()
@@ -79,8 +92,14 @@ pub fn factor_cluster(
     // 2. Identify information edges between old and new rows
     let mut edges = Vec::new();
     for (u, old_row) in old_rows.iter().enumerate() {
+        if old_row.is_moved() {
+            continue;
+        }
         let u_text = old_row.text();
         for (v, new_row) in new_rows.iter().enumerate() {
+            if new_row.is_moved() {
+                continue;
+            }
             let v_text = new_row.text();
             if has_information_edge(u_text, v_text) {
                 edges.push((u, v));
@@ -93,8 +112,56 @@ pub fn factor_cluster(
     let mut u_start = 0;
     let mut v_start = 0;
     let mut group_id = 0u32;
+    let mut has_mod_anchor = false;
 
     while u_start < n || v_start < m {
+        // Pre-pass moved rows are locked relocations and must form isolated pure groups
+        if u_start < n && old_rows[u_start].is_moved() {
+            let mut u_end = u_start + 1;
+            while u_end < n && old_rows[u_end].is_moved() {
+                u_end += 1;
+            }
+            groups.push(FactoredGroup {
+                id: GroupId(group_id),
+                old_range: u_start..u_end,
+                new_range: v_start..v_start,
+            });
+            group_id += 1;
+            u_start = u_end;
+            continue;
+        }
+
+        if v_start < m && new_rows[v_start].is_moved() {
+            let mut v_end = v_start + 1;
+            while v_end < m && new_rows[v_end].is_moved() {
+                v_end += 1;
+            }
+            groups.push(FactoredGroup {
+                id: GroupId(group_id),
+                old_range: u_start..u_start,
+                new_range: v_start..v_end,
+            });
+            group_id += 1;
+            v_start = v_end;
+            continue;
+        }
+
+        if u_start < n
+            && v_start < m
+            && old_rows[u_start].text().trim().is_empty()
+            && new_rows[v_start].text().trim().is_empty()
+        {
+            groups.push(FactoredGroup {
+                id: GroupId(group_id),
+                old_range: u_start..u_start + 1,
+                new_range: v_start..v_start + 1,
+            });
+            group_id += 1;
+            u_start += 1;
+            v_start += 1;
+            continue;
+        }
+
         // Initialize minimal candidate window
         let mut u_end;
         let mut v_end;
@@ -120,29 +187,30 @@ pub fn factor_cluster(
                 .map(|&(u, _)| u)
                 .min();
 
-            if v_target.is_none() && u_target.is_some_and(|v| v > v_start) {
-                // Current addition has no edge and precedes the match for current deletion
+            if has_mod_anchor && v_target.is_none() && u_target.is_some_and(|v| v > v_start) {
+                // Current addition has no edge and precedes the match for current deletion,
+                // and a preceding Mod row already anchors it.
                 u_end = u_start;
                 v_end = v_start + 1;
             } else if u_target.is_none() && v_target.is_some_and(|u| u > u_start) {
                 // Current deletion has no edge and precedes the match for current addition
                 u_end = u_start + 1;
                 v_end = v_start;
+            } else if !has_mod_anchor && v_target.is_none() {
+                // Before any Mod anchor in the cluster, an addition with no edge
+                // cannot precede deletions. Advance pure deletion first (git diff
+                // topological order: dels before adds).
+                u_end = u_start + 1;
+                v_end = v_start;
             } else if u_target.is_some() || v_target.is_some() {
                 u_end = u_start + 1;
                 v_end = v_start + 1;
-            } else if n - u_start == m - v_start {
-                // Symmetrical rewrite without strong token links: pair 1-to-1
-                u_end = u_start + 1;
-                v_end = v_start + 1;
-            } else if n - u_start > m - v_start {
-                // Surplus old lines: advance single deletion
+                has_mod_anchor = true;
+            } else {
+                // Neither current deletion nor current addition has an edge to the other side.
+                // Advance pure deletion first (git diff topological order: dels before adds)
                 u_end = u_start + 1;
                 v_end = v_start;
-            } else {
-                // Surplus new lines: advance single addition
-                u_end = u_start;
-                v_end = v_start + 1;
             }
         }
 
@@ -164,7 +232,7 @@ pub fn factor_cluster(
             }
 
             // Expand across unclosed delimiter depth in new_rows
-            if v_end > v_start && v_end < m {
+            if v_end > v_start && v_end < m && !new_rows[v_end].is_moved() {
                 let depth: i32 = (v_start..v_end).map(|v| new_deltas[v]).sum();
                 if depth > 0 {
                     v_end += 1;
@@ -173,7 +241,7 @@ pub fn factor_cluster(
             }
 
             // Expand across unclosed delimiter depth in old_rows
-            if u_end > u_start && u_end < n {
+            if u_end > u_start && u_end < n && !old_rows[u_end].is_moved() {
                 let depth: i32 = (u_start..u_end).map(|u| old_deltas[u]).sum();
                 if depth > 0 {
                     u_end += 1;
@@ -279,12 +347,34 @@ fn has_information_edge(del_text: &str, add_text: &str) -> bool {
     if d_trim == a_trim {
         return true;
     }
-    // 2. Significant non-keyword word sharing
-    let d_words = significant_words(d_trim);
-    let a_words = significant_words(a_trim);
-    for dw in &d_words {
-        if a_words.iter().any(|aw| aw == dw) {
-            return true;
+    // 2. Significant non-keyword word sharing with non-wholesale context and
+    //    salient ratio
+    let mut d_words = significant_words(d_trim);
+    let mut a_words = significant_words(a_trim);
+    d_words.sort_unstable();
+    d_words.dedup();
+    a_words.sort_unstable();
+    a_words.dedup();
+
+    let common_words: Vec<_> = d_words
+        .iter()
+        .filter(|dw| a_words.iter().any(|aw| aw == *dw))
+        .copied()
+        .collect();
+    if !common_words.is_empty() {
+        let spans = crate::lcs::word_spans(del_text, add_text);
+        if !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans) {
+            let del_salient: usize = d_words.iter().map(|w| w.len()).sum();
+            let add_salient: usize = a_words.iter().map(|w| w.len()).sum();
+            if del_salient > 0 && add_salient > 0 {
+                let matched_salient: usize = common_words.iter().map(|w| w.len()).sum();
+                let min_salient = del_salient.min(add_salient);
+                if matched_salient >= 4 && (matched_salient as f64 / min_salient as f64) >= 0.30 {
+                    return true;
+                }
+            } else {
+                return true;
+            }
         }
     }
     // 3. Multi-character phrase match: if a contiguous phrase of >= 8
@@ -448,5 +538,82 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].old_count(), 1);
         assert_eq!(groups[0].new_count(), 2);
+    }
+
+    #[test]
+    fn test_token_cluster_debug() {
+        let dels = vec![
+            make_del(
+                681,
+                "    let mut result = Vec::with_capacity(tokens.len());",
+            ),
+            make_del(
+                682,
+                "    let mut stack: diffuse_algo::SmallStack<ContainerKind, 8> = diffuse_algo::SmallStack::new();",
+            ),
+            make_del(683, ""),
+            make_del(684, "    for &t in tokens {"),
+            make_del(685, "        match t {"),
+            make_del(686, "            \"`\" => {"),
+            make_del(
+                687,
+                "                if stack.last() == Some(&ContainerKind::Backtick) {",
+            ),
+            make_del(688, "                    let top = stack.pop();"),
+            make_del(689, "                    result.push(top);"),
+            make_del(690, "                } else {"),
+            make_del(
+                691,
+                "                    stack.push(ContainerKind::Backtick);",
+            ),
+            make_del(
+                692,
+                "                    result.push(stack.last().copied());",
+            ),
+            make_del(693, "                }"),
+            make_del(694, "            }"),
+            make_del(695, "            \"\\\"\" => {"),
+            make_del(
+                696,
+                "                if stack.last() == Some(&ContainerKind::DoubleQuote) {",
+            ),
+            make_del(697, "                    let top = stack.pop();"),
+            make_del(698, "                    result.push(top);"),
+            make_del(699, "                } else {"),
+            make_del(
+                700,
+                "                    stack.push(ContainerKind::DoubleQuote);",
+            ),
+            make_del(
+                701,
+                "                    result.push(stack.last().copied());",
+            ),
+            make_del(702, "                }"),
+            make_del(703, "            }"),
+            make_del(704, "            _ => {"),
+            make_del(705, "                result.push(stack.last().copied());"),
+            make_del(706, "            }"),
+            make_del(707, "        }"),
+            make_del(708, "    }"),
+            make_del(709, "    result"),
+        ];
+        let adds = vec![
+            make_add(
+                720,
+                "    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::AsciiDelimiterClassifier)",
+            ),
+            make_add(721, "        .into_iter()"),
+            make_add(
+                722,
+                "        .map(|opt| opt.and_then(ContainerKind::from_id))",
+            ),
+            make_add(723, "        .collect()"),
+        ];
+        let groups = factor_cluster(&dels, &adds, None);
+        assert!(!groups.is_empty());
+        let total_old: usize = groups.iter().map(|g| g.old_count()).sum();
+        let total_new: usize = groups.iter().map(|g| g.new_count()).sum();
+        assert_eq!(total_old, 29);
+        assert_eq!(total_new, 4);
     }
 }

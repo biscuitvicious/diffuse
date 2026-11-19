@@ -116,6 +116,15 @@ impl fmt::Display for GroupId {
     }
 }
 
+impl std::ops::Deref for GroupId {
+    type Target = u32;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Symmetric group metadata describing an N -> M transition.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerGroupMeta {

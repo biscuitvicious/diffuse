@@ -1,12 +1,11 @@
 //! Micro slot-alignment DP and closed-economy token typing for peer reflow
 //! groups.
 
-use diffuse_algo::hirschberg::HirschbergLcs;
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
     cluster::factor::FactoredGroup,
-    lcs::spans::word_spans_and_runs_with_profile,
+    lcs::{spans::word_spans_and_runs_with_profile, tokenize_line},
     merge::RunKind,
     parse::{GroupId, Row, RowGroup, RowKind, Spans},
 };
@@ -20,6 +19,8 @@ pub struct AlignedSlotRow {
     pub old_text: Option<String>,
     pub new_text: Option<String>,
     pub kind: RowKind,
+    pub is_moved_src: bool,
+    pub is_moved_tgt: bool,
     pub runs: Vec<(RunKind, String)>,
     pub spans: Spans,
     pub group: RowGroup,
@@ -34,29 +35,29 @@ pub struct PeerGroupRows {
 
 impl PeerGroupRows {
     /// Validates the closed-economy thermodynamic conservation invariant:
-    /// The number of `MovedSrc` characters emitted on the left pane must
-    /// equal the number of `MovedTgt` characters emitted on the right pane.
-    pub fn assert_character_conservation(&self) {
-        let mut moved_src_chars: Vec<char> = Vec::new();
-        let mut moved_tgt_chars: Vec<char> = Vec::new();
+    /// All token runs marked `MovedSrc` on the left pane must exactly equal
+    /// the token runs marked `MovedTgt` on the right pane in sequence.
+    pub fn assert_token_conservation(&self) {
+        let mut moved_src_tokens: Vec<&str> = Vec::new();
+        let mut moved_tgt_tokens: Vec<&str> = Vec::new();
 
         for slot in &self.slots {
             for (kind, text) in &slot.runs {
                 match kind {
-                    RunKind::MovedSrc => moved_src_chars.extend(text.chars()),
-                    RunKind::MovedTgt => moved_tgt_chars.extend(text.chars()),
+                    RunKind::MovedSrc => moved_src_tokens.push(text.as_str()),
+                    RunKind::MovedTgt => moved_tgt_tokens.push(text.as_str()),
                     _ => {}
                 }
             }
         }
 
-        moved_src_chars.sort_unstable();
-        moved_tgt_chars.sort_unstable();
+        moved_src_tokens.sort_unstable();
+        moved_tgt_tokens.sort_unstable();
 
         assert_eq!(
-            moved_src_chars, moved_tgt_chars,
-            "Peer group {} character conservation mismatch: MovedSrc={:?} vs MovedTgt={:?}",
-            self.group_id, moved_src_chars, moved_tgt_chars
+            moved_src_tokens, moved_tgt_tokens,
+            "Peer group {} token conservation mismatch: MovedSrc={:?} vs MovedTgt={:?}",
+            self.group_id, moved_src_tokens, moved_tgt_tokens
         );
     }
 }
@@ -79,16 +80,22 @@ pub fn align_and_type_peer_group(
         group_new.iter().map(|r| (None, Some(r))).collect()
     } else if m == 0 {
         group_old.iter().map(|r| (Some(r), None)).collect()
-    } else if n == 1 && m == 1 {
-        vec![(Some(&group_old[0]), Some(&group_new[0]))]
     } else {
-        align_slots_micro_dp(group_old, group_new)
+        let raw_pairs = align_slots_micro_dp(group_old, group_new, profile);
+        canonicalize_slot_order(raw_pairs)
     };
 
     let total_slots = aligned_pairs.len();
 
     // 2. Intra-slot word diff and initial runs
     let mut slot_runs: Vec<Vec<(RunKind, String)>> = Vec::with_capacity(total_slots);
+    let is_moved_slot: Vec<bool> = aligned_pairs
+        .iter()
+        .map(|(old_opt, new_opt)| {
+            old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }))
+                || new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }))
+        })
+        .collect();
 
     for (old_opt, new_opt) in &aligned_pairs {
         match (old_opt, new_opt) {
@@ -97,10 +104,18 @@ pub fn align_and_type_peer_group(
                 slot_runs.push(runs);
             }
             (Some(u), None) => {
-                slot_runs.push(vec![(RunKind::Del, u.text().to_string())]);
+                if let Row::MovSrc { cached_runs, .. } = u {
+                    slot_runs.push(cached_runs.clone());
+                } else {
+                    slot_runs.push(vec![(RunKind::Del, u.text().to_string())]);
+                }
             }
             (None, Some(v)) => {
-                slot_runs.push(vec![(RunKind::Add, v.text().to_string())]);
+                if let Row::MovTgt { cached_runs, .. } = v {
+                    slot_runs.push(cached_runs.clone());
+                } else {
+                    slot_runs.push(vec![(RunKind::Add, v.text().to_string())]);
+                }
             }
             (None, None) => unreachable!(),
         }
@@ -108,21 +123,41 @@ pub fn align_and_type_peer_group(
 
     // 3. Cross-slot token relocation (when total_slots > 1)
     if total_slots > 1 {
-        relocate_cross_slot_tokens(&mut slot_runs);
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot);
     }
 
     // 4. Construct final AlignedSlotRow list
     let mut slots = Vec::with_capacity(total_slots);
     for (idx, ((old_opt, new_opt), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate() {
-        let spans = compute_slot_spans(&runs);
+        let spans = if let Some(Row::MovSrc { spans, .. }) = old_opt {
+            spans.clone()
+        } else if let Some(Row::MovTgt { spans, .. }) = new_opt {
+            spans.clone()
+        } else {
+            compute_slot_spans(&runs)
+        };
         let old_line = old_opt.and_then(Row::old_line);
         let new_line = new_opt.and_then(Row::new_line);
         let old_text = old_opt.map(|r| r.text().to_string());
         let new_text = new_opt.map(|r| r.text().to_string());
+        let is_moved_src = old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }));
+        let is_moved_tgt = new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }));
         let kind = match (old_line, new_line) {
             (Some(_), Some(_)) => RowKind::Mod,
-            (Some(_), None) => RowKind::Del,
-            (None, Some(_)) => RowKind::Add,
+            (Some(_), None) => {
+                if is_moved_src {
+                    RowKind::Mov
+                } else {
+                    RowKind::Del
+                }
+            }
+            (None, Some(_)) => {
+                if is_moved_tgt {
+                    RowKind::Mov
+                } else {
+                    RowKind::Add
+                }
+            }
             (None, None) => RowKind::Ctx,
         };
 
@@ -133,6 +168,8 @@ pub fn align_and_type_peer_group(
             old_text,
             new_text,
             kind,
+            is_moved_src,
+            is_moved_tgt,
             runs,
             spans,
             group: RowGroup::Peer {
@@ -150,9 +187,59 @@ pub fn align_and_type_peer_group(
     }
 }
 
+const COMMON_KEYWORDS: &[&str] = &[
+    "let", "mut", "const", "static", "pub", "fn", "for", "in", "if", "else", "match", "return",
+    "true", "false", "impl", "trait", "struct", "enum", "type", "where", "use", "mod", "crate",
+    "self", "super", "async", "await", "while", "loop",
+];
+
+fn is_salient_token(t: &str, profile: Option<&LangProfile>) -> bool {
+    crate::lcs::token_is_alnum(t)
+        && !COMMON_KEYWORDS.contains(&t)
+        && !profile.is_some_and(|p| p.is_keyword(t) || p.is_literal(t))
+}
+
+fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
+    let mut has = false;
+    crate::lcs::for_each_token(text, |t| {
+        if has {
+            return;
+        }
+        if is_salient_token(t, profile) {
+            has = true;
+        }
+    });
+    has
+}
+
+fn canonicalize_slot_order<'a>(
+    pairs: Vec<(Option<&'a Row>, Option<&'a Row>)>,
+) -> Vec<(Option<&'a Row>, Option<&'a Row>)> {
+    let mut out = Vec::with_capacity(pairs.len());
+    let mut pending_dels = Vec::new();
+    let mut pending_adds = Vec::new();
+
+    for pair in pairs {
+        if pair.0.is_some() && pair.1.is_some() {
+            out.append(&mut pending_dels);
+            out.append(&mut pending_adds);
+            out.push(pair);
+        } else if pair.0.is_some() {
+            pending_dels.push(pair);
+        } else if pair.1.is_some() {
+            pending_adds.push(pair);
+        }
+    }
+
+    out.append(&mut pending_dels);
+    out.append(&mut pending_adds);
+    out
+}
+
 fn align_slots_micro_dp<'a>(
     old_rows: &'a [Row],
     new_rows: &'a [Row],
+    profile: Option<&LangProfile>,
 ) -> Vec<(Option<&'a Row>, Option<&'a Row>)> {
     let n = old_rows.len();
     let m = new_rows.len();
@@ -170,21 +257,84 @@ fn align_slots_micro_dp<'a>(
     for i in 1..=n {
         let u_text = old_rows[i - 1].text();
         let u_trim = u_text.trim();
-        let u_chars: Vec<char> = u_trim.chars().collect();
+        let ot: Vec<&str> = tokenize_line(u_text).collect();
         let u_indent = u_text.len() - u_text.trim_start().len();
 
         for j in 1..=m {
             let v_text = new_rows[j - 1].text();
             let v_trim = v_text.trim();
-            let v_chars: Vec<char> = v_trim.chars().collect();
+            let nt: Vec<&str> = tokenize_line(v_text).collect();
             let v_indent = v_text.len() - v_text.trim_start().len();
 
-            let lcs_len = HirschbergLcs::lcs(&u_chars, &v_chars).len() as i32;
+            let common_non_ws_tokens: usize = ot
+                .iter()
+                .filter(|t| !t.trim().is_empty())
+                .filter(|t| nt.iter().any(|n| n == *t))
+                .map(|t| t.chars().count())
+                .sum();
             let indent_diff = (u_indent as i32 - v_indent as i32).abs();
-            let mut match_score = (lcs_len * 10) - (indent_diff * 4);
 
-            if !u_trim.is_empty() && u_trim == v_trim {
-                match_score += 100;
+            let min_tokens = if n == 1 && m == 1 { 0 } else { 3 };
+            let mut match_score = if old_rows[i - 1].is_moved() || new_rows[j - 1].is_moved() {
+                -1000
+            } else if u_trim == v_trim {
+                (common_non_ws_tokens as i32 * 10) + 100 - (indent_diff * 4)
+            } else if common_non_ws_tokens < min_tokens {
+                -1000
+            } else {
+                let score = (common_non_ws_tokens as i32 * 10) - (indent_diff * 4);
+                if n == 1 && m == 1 {
+                    score.max(10)
+                } else if score <= 0 {
+                    -1000
+                } else {
+                    score
+                }
+            };
+
+            if match_score > 0 && u_trim != v_trim {
+                let spans = crate::lcs::word_spans(u_text, v_text);
+                if crate::merge::is_wholesale_replacement_spans(u_text, v_text, &spans) {
+                    match_score = -1000;
+                } else if n > 1 || m > 1 {
+                    let del_has_salient = text_has_salient_token(u_text, profile);
+                    let add_has_salient = text_has_salient_token(v_text, profile);
+                    if del_has_salient && add_has_salient {
+                        let runs = crate::merge::merged_runs_from_texts(u_text, v_text, &spans);
+                        let has_salient_ctx = runs.iter().any(|run| {
+                            run.kind == crate::merge::RunKind::Ctx
+                                && text_has_salient_token(run.text, profile)
+                        });
+                        if !has_salient_ctx {
+                            match_score = -1000;
+                        } else {
+                            let del_salient_chars: usize = ot
+                                .iter()
+                                .filter(|t| is_salient_token(t, profile))
+                                .map(|t| t.chars().count())
+                                .sum();
+                            let add_salient_chars: usize = nt
+                                .iter()
+                                .filter(|t| is_salient_token(t, profile))
+                                .map(|t| t.chars().count())
+                                .sum();
+                            if del_salient_chars > 0 && add_salient_chars > 0 {
+                                let matched_salient_chars: usize = ot
+                                    .iter()
+                                    .filter(|t| is_salient_token(t, profile))
+                                    .filter(|t| nt.iter().any(|n| n == *t))
+                                    .map(|t| t.chars().count())
+                                    .sum();
+                                let min_salient = del_salient_chars.min(add_salient_chars);
+                                if matched_salient_chars < 4
+                                    || (matched_salient_chars as f64 / min_salient as f64) < 0.30
+                                {
+                                    match_score = -1000;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             let from_diag = dp[i - 1][j - 1].0 + match_score;
@@ -247,10 +397,13 @@ fn align_slots_micro_dp<'a>(
     path
 }
 
-fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>]) {
+fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>], is_moved_slot: &[bool]) {
     // Collect potential token candidates from Del runs
     let mut candidates = Vec::new();
-    for runs in slot_runs.iter() {
+    for (slot_idx, runs) in slot_runs.iter().enumerate() {
+        if is_moved_slot.get(slot_idx).copied().unwrap_or(false) {
+            continue;
+        }
         for (kind, text) in runs {
             if *kind == RunKind::Del {
                 let trimmed = text.trim();
@@ -281,8 +434,11 @@ fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>]) {
         // containing token
         let num_slots = slot_runs.len();
         for src in 0..num_slots {
+            if is_moved_slot.get(src).copied().unwrap_or(false) {
+                continue;
+            }
             for tgt in 0..num_slots {
-                if src == tgt {
+                if src == tgt || is_moved_slot.get(tgt).copied().unwrap_or(false) {
                     continue;
                 }
                 while contains_token(&slot_runs[src], RunKind::Del, &token)
@@ -429,7 +585,7 @@ mod tests {
         assert_eq!(s0.kind, RowKind::Mod);
         assert_eq!(s0.old_line, Some(10));
         assert_eq!(s0.new_line, Some(10));
-        result.assert_character_conservation();
+        result.assert_token_conservation();
     }
 
     #[test]
@@ -447,12 +603,11 @@ mod tests {
         ];
 
         let result = align_and_type_peer_group(&group, &dels, &adds, None);
-        eprintln!("SLOTS: {:#?}", result.slots);
         assert_eq!(result.slots.len(), 3);
-        assert_eq!(result.slots[0].kind, RowKind::Mod);
-        assert_eq!(result.slots[1].kind, RowKind::Add);
+        assert_eq!(result.slots[0].kind, RowKind::Add);
+        assert_eq!(result.slots[1].kind, RowKind::Mod);
         assert_eq!(result.slots[2].kind, RowKind::Add);
-        result.assert_character_conservation();
+        result.assert_token_conservation();
     }
 
     #[test]
@@ -479,12 +634,11 @@ mod tests {
         ];
 
         let result = align_and_type_peer_group(&group, &dels, &adds, None);
-        eprintln!("SLOTS: {:#?}", result.slots);
         assert_eq!(result.slots.len(), 3);
         assert_eq!(result.slots[0].kind, RowKind::Mod);
         assert_eq!(result.slots[1].kind, RowKind::Mod);
         assert_eq!(result.slots[2].kind, RowKind::Add);
-        result.assert_character_conservation();
+        result.assert_token_conservation();
     }
 
     #[test]
@@ -499,7 +653,7 @@ mod tests {
         assert_eq!(add_res.slots.len(), 2);
         assert_eq!(add_res.slots[0].kind, RowKind::Add);
         assert_eq!(add_res.slots[1].kind, RowKind::Add);
-        add_res.assert_character_conservation();
+        add_res.assert_token_conservation();
 
         let del_group = FactoredGroup {
             id: GroupId(5),
@@ -511,7 +665,7 @@ mod tests {
         assert_eq!(del_res.slots.len(), 2);
         assert_eq!(del_res.slots[0].kind, RowKind::Del);
         assert_eq!(del_res.slots[1].kind, RowKind::Del);
-        del_res.assert_character_conservation();
+        del_res.assert_token_conservation();
     }
 
     #[test]
@@ -532,7 +686,7 @@ mod tests {
 
         let result = align_and_type_peer_group(&group, &dels, &adds, None);
         assert_eq!(result.slots.len(), 3);
-        result.assert_character_conservation();
+        result.assert_token_conservation();
 
         // Check that "finalize" was relocated from slot 2 (Del) to slot 1 (Mod Add)
         let has_moved_src = result.slots[2]

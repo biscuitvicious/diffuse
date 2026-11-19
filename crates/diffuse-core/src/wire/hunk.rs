@@ -610,6 +610,93 @@ impl OutputHunk {
             }
         }
 
+        // Validate Peer Groups:
+        // 1. Peer group atomicity: all rows with the same GroupId must form an unbroken
+        //    contiguous slice.
+        // 2. Peer group slots: slot indices must be strictly monotonic.
+        // 3. Peer group lines: old_line and new_line must be strictly monotonic.
+        // 4. Closed-economy conservation: sum(MovedSrc chars) == sum(MovedTgt chars).
+        let mut peer_groups: rustc_hash::FxHashMap<u32, Vec<(usize, &OutputRow)>> =
+            rustc_hash::FxHashMap::default();
+        for (i, r) in self.rows.iter().enumerate() {
+            if let Some(RowGroup::Peer { id, .. }) = r.group {
+                peer_groups.entry(*id).or_default().push((i, r));
+            }
+        }
+
+        for (id, members) in peer_groups {
+            for window in members.windows(2) {
+                if window[1].0 != window[0].0 + 1 {
+                    return Err(format!(
+                        "Peer group {id} atomicity violation: interrupted at row indices {} and {}",
+                        window[0].0, window[1].0
+                    ));
+                }
+            }
+
+            let mut last_slot = None;
+            let mut last_old = None;
+            let mut last_new = None;
+            let mut group_moved_src = Vec::new();
+            let mut group_moved_tgt = Vec::new();
+
+            for (_, r) in &members {
+                if let Some(RowGroup::Peer { slot, .. }) = r.group {
+                    if let Some(prev) = last_slot
+                        && slot <= prev
+                    {
+                        return Err(format!(
+                            "Peer group {id} slot non-monotonic: {prev} -> {slot}"
+                        ));
+                    }
+                    last_slot = Some(slot);
+                }
+
+                if let Some(ol) = r.old_line {
+                    if let Some(prev) = last_old
+                        && ol <= prev
+                    {
+                        return Err(format!(
+                            "Peer group {id} old line {ol} <= previous old line {prev}"
+                        ));
+                    }
+                    last_old = Some(ol);
+                }
+
+                if let Some(nl) = r.new_line {
+                    if let Some(prev) = last_new
+                        && nl <= prev
+                    {
+                        return Err(format!(
+                            "Peer group {id} new line {nl} <= previous new line {prev}"
+                        ));
+                    }
+                    last_new = Some(nl);
+                }
+
+                for run in &r.runs {
+                    match run.kind {
+                        RunKind::MovedSrc => {
+                            group_moved_src.extend(run.text.chars().filter(|c| !c.is_whitespace()))
+                        }
+                        RunKind::MovedTgt => {
+                            group_moved_tgt.extend(run.text.chars().filter(|c| !c.is_whitespace()))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            group_moved_src.sort_unstable();
+            group_moved_tgt.sort_unstable();
+            if group_moved_src != group_moved_tgt {
+                return Err(format!(
+                    "Peer group {id} character conservation mismatch: MovedSrc={:?} vs MovedTgt={:?}",
+                    group_moved_src, group_moved_tgt
+                ));
+            }
+        }
+
         Ok(())
     }
 }

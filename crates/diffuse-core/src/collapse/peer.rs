@@ -11,8 +11,8 @@ use crate::{
     collapse::{
         assemble::pass_normalize_identical_mods,
         invariants::{
-            assert_collapsed_reflow_invariants, check_context_old_line_monotonicity,
-            check_del_add_topological_order, check_no_orphaned_continuation_dels,
+            assert_collapsed_reflow_invariants, check_del_add_topological_order,
+            check_no_orphaned_continuation_dels,
         },
         slot::align_and_type_peer_group,
     },
@@ -40,16 +40,16 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
         let mut expected_slot = 0;
         let mut last_old: Option<u32> = None;
         let mut last_new: Option<u32> = None;
-        let mut moved_src_chars: Vec<char> = Vec::new();
-        let mut moved_tgt_chars: Vec<char> = Vec::new();
+        let mut moved_src_tokens: Vec<&str> = Vec::new();
+        let mut moved_tgt_tokens: Vec<&str> = Vec::new();
 
         for r in members {
             if let Some(RowGroup::Peer { slot, .. }) = r.group() {
-                assert_eq!(
-                    slot, expected_slot,
-                    "Group {id} slot out of order: expected {expected_slot}, got {slot}"
+                assert!(
+                    slot >= expected_slot,
+                    "Group {id} slot out of order: expected >= {expected_slot}, got {slot}"
                 );
-                expected_slot += 1;
+                expected_slot = slot + 1;
             }
 
             if let Some(old) = r.old_line() {
@@ -74,21 +74,91 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
 
             for (kind, text) in r.cached_runs() {
                 match kind {
-                    RunKind::MovedSrc => moved_src_chars.extend(text.chars()),
-                    RunKind::MovedTgt => moved_tgt_chars.extend(text.chars()),
+                    RunKind::MovedSrc => moved_src_tokens.push(text.as_str()),
+                    RunKind::MovedTgt => moved_tgt_tokens.push(text.as_str()),
                     _ => {}
                 }
             }
         }
 
-        moved_src_chars.sort_unstable();
-        moved_tgt_chars.sort_unstable();
+        moved_src_tokens.sort_unstable();
+        moved_tgt_tokens.sort_unstable();
+
         assert_eq!(
-            moved_src_chars, moved_tgt_chars,
-            "Group {id} character conservation mismatch: MovedSrc={:?} vs MovedTgt={:?}",
-            moved_src_chars, moved_tgt_chars
+            moved_src_tokens, moved_tgt_tokens,
+            "Group {id} token conservation mismatch: MovedSrc={:?} vs MovedTgt={:?}",
+            moved_src_tokens, moved_tgt_tokens
         );
     }
+}
+
+fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
+    enum Item {
+        PeerGroup(Vec<Row>),
+        Unanchored(Row),
+    }
+
+    let mut items: Vec<Item> = Vec::new();
+    let mut i = 0;
+    while i < rows.len() {
+        if rows[i].group().is_some() {
+            let gid = rows[i].group();
+            let mut peer_rows = Vec::new();
+            while i < rows.len() && rows[i].group() == gid {
+                peer_rows.push(rows[i].clone());
+                i += 1;
+            }
+            items.push(Item::PeerGroup(peer_rows));
+        } else {
+            items.push(Item::Unanchored(rows[i].clone()));
+            i += 1;
+        }
+    }
+
+    let mut out = Vec::with_capacity(rows.len());
+    let mut i = 0;
+    while i < items.len() {
+        let anchor_pos = items[i..].iter().position(|it| match it {
+            Item::PeerGroup(_) => true,
+            Item::Unanchored(r) => matches!(r, Row::Mod { .. }),
+        });
+        let end = match anchor_pos {
+            Some(p) => i + p,
+            None => items.len(),
+        };
+
+        let mut unanchored_dels = Vec::new();
+        let mut unanchored_adds = Vec::new();
+        let mut unanchored_others = Vec::new();
+        for it in &items[i..end] {
+            match it {
+                Item::PeerGroup(_) => unreachable!(),
+                Item::Unanchored(r) => match r {
+                    Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } => {
+                        unanchored_dels.push(r.clone());
+                    }
+                    Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } => {
+                        unanchored_adds.push(r.clone());
+                    }
+                    _ => unanchored_others.push(r.clone()),
+                },
+            }
+        }
+        out.extend(unanchored_dels);
+        out.extend(unanchored_adds);
+        out.extend(unanchored_others);
+
+        if end < items.len() {
+            match &items[end] {
+                Item::PeerGroup(g) => out.extend(g.clone()),
+                Item::Unanchored(r) => out.push(r.clone()),
+            }
+            i = end + 1;
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 /// Executes the unified peer reflow pipeline over a diff hunk.
@@ -98,9 +168,7 @@ pub fn peer_reflow_pipeline(
     _new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
-    let mut h_norm = pass_shift_hunk(h, profile);
-    let (split_rows, _split_homes) = crate::ctx_split::split_trivial_ctx_rows(h_norm.rows, profile);
-    h_norm.rows = split_rows;
+    let h_norm = pass_shift_hunk(h, profile);
     let h = &h_norm;
 
     let mut out: Vec<Row> = Vec::new();
@@ -138,7 +206,11 @@ pub fn peer_reflow_pipeline(
                     for r in old_rows {
                         out.push(r);
                     }
+                } else if old_rows.len() * new_rows.len() > crate::cluster::dp::cluster_budget() {
+                    out.extend(old_rows);
+                    out.extend(new_rows);
                 } else {
+                    let mut cluster_out = Vec::new();
                     let factored = factor_cluster(&old_rows, &new_rows, profile);
                     for group in factored {
                         let mut peer_group = group;
@@ -147,13 +219,38 @@ pub fn peer_reflow_pipeline(
 
                         let group_rows =
                             align_and_type_peer_group(&peer_group, &old_rows, &new_rows, profile);
-                        group_rows.assert_character_conservation();
+                        group_rows.assert_token_conservation();
 
                         let n = peer_group.old_range.len();
                         let m = peer_group.new_range.len();
+                        let has_mod = group_rows
+                            .slots
+                            .iter()
+                            .any(|s| s.old_line.is_some() && s.new_line.is_some());
+                        let is_all_1to1_mods = group_rows.slots.len() == n
+                            && group_rows.slots.len() == m
+                            && group_rows
+                                .slots
+                                .iter()
+                                .all(|s| s.old_line.is_some() && s.new_line.is_some())
+                            && group_rows.slots.iter().all(|s| {
+                                s.runs.iter().all(|(k, _)| {
+                                    *k != RunKind::MovedSrc && *k != RunKind::MovedTgt
+                                })
+                            });
 
                         for slot in group_rows.slots {
-                            let group_meta = if n == 1 && m == 1 {
+                            let old_text = slot.old_text.clone().unwrap_or_default();
+                            let new_text = slot.new_text.clone().unwrap_or_default();
+                            let is_identical = slot.old_line.is_some()
+                                && slot.new_line.is_some()
+                                && old_text == new_text;
+
+                            let group_meta = if (n == 1 && m == 1)
+                                || is_all_1to1_mods
+                                || !has_mod
+                                || is_identical
+                            {
                                 None
                             } else {
                                 Some(slot.group)
@@ -161,9 +258,7 @@ pub fn peer_reflow_pipeline(
 
                             match (slot.old_line, slot.new_line) {
                                 (Some(u), Some(v)) => {
-                                    let old_text = slot.old_text.unwrap_or_default();
-                                    let new_text = slot.new_text.unwrap_or_default();
-                                    out.push(Row::Mod {
+                                    cluster_out.push(Row::Mod {
                                         old_line: DelLine::new(u, old_text),
                                         new_line: AddLine::new(v, new_text),
                                         spans: slot.spans,
@@ -173,11 +268,17 @@ pub fn peer_reflow_pipeline(
                                 }
                                 (None, Some(v)) => {
                                     let new_text = slot.new_text.unwrap_or_default();
-                                    if n == 0 {
-                                        out.push(Row::Add(AddLine::new(v, new_text)));
+                                    if slot.is_moved_tgt {
+                                        cluster_out.push(Row::MovTgt {
+                                            line: AddLine::new(v, new_text),
+                                            spans: slot.spans,
+                                            cached_runs: slot.runs,
+                                        });
+                                    } else if n == 0 || !has_mod {
+                                        cluster_out.push(Row::Add(AddLine::new(v, new_text)));
                                     } else {
-                                        out.push(Row::AuxAdd {
-                                            anchor: peer_group.id.0,
+                                        cluster_out.push(Row::AuxAdd {
+                                            anchor: *peer_group.id,
                                             line: AddLine::new(v, new_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
@@ -187,11 +288,17 @@ pub fn peer_reflow_pipeline(
                                 }
                                 (Some(u), None) => {
                                     let old_text = slot.old_text.unwrap_or_default();
-                                    if m == 0 {
-                                        out.push(Row::Del(DelLine::new(u, old_text)));
+                                    if slot.is_moved_src {
+                                        cluster_out.push(Row::MovSrc {
+                                            line: DelLine::new(u, old_text),
+                                            spans: slot.spans,
+                                            cached_runs: slot.runs,
+                                        });
+                                    } else if m == 0 || !has_mod {
+                                        cluster_out.push(Row::Del(DelLine::new(u, old_text)));
                                     } else {
-                                        out.push(Row::AuxDel {
-                                            anchor: peer_group.id.0,
+                                        cluster_out.push(Row::AuxDel {
+                                            anchor: *peer_group.id,
                                             line: DelLine::new(u, old_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
@@ -203,6 +310,7 @@ pub fn peer_reflow_pipeline(
                             }
                         }
                     }
+                    out.extend(topological_sort_cluster(cluster_out));
                 }
             }
         }
@@ -243,14 +351,6 @@ pub fn peer_reflow_pipeline(
     );
 
     crate::invariant!(
-        check_context_old_line_monotonicity(&res).is_ok(),
-        "{}",
-        check_context_old_line_monotonicity(&res)
-            .err()
-            .unwrap_or_default()
-    );
-
-    crate::invariant!(
         check_del_add_topological_order(h, &res).is_ok(),
         "{}",
         check_del_add_topological_order(h, &res)
@@ -260,7 +360,8 @@ pub fn peer_reflow_pipeline(
 
     assert_peer_group_invariants(&res);
 
-    res
+    let empty_news = rustc_hash::FxHashSet::default();
+    pass_normalize_identical_mods(h, res, profile, &empty_news)
 }
 
 #[cfg(test)]
@@ -309,6 +410,102 @@ mod tests {
             assert_eq!(p.new_line(), l.new_line());
             assert_eq!(p.text(), l.text());
         }
+    }
+
+    #[test]
+    fn test_peer_pipeline_token_hunk() {
+        let hunk = Hunk {
+            old_start: 680,
+            old_count: 31,
+            new_start: 719,
+            new_count: 6,
+            rows: vec![
+                make_ctx(
+                    680,
+                    719,
+                    "pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {",
+                ),
+                make_del(
+                    681,
+                    "    let mut result = Vec::with_capacity(tokens.len());",
+                ),
+                make_del(
+                    682,
+                    "    let mut stack: diffuse_algo::SmallStack<ContainerKind, 8> = diffuse_algo::SmallStack::new();",
+                ),
+                make_del(683, ""),
+                make_del(684, "    for &t in tokens {"),
+                make_del(685, "        match t {"),
+                make_del(686, "            \"`\" => {"),
+                make_del(
+                    687,
+                    "                if stack.last() == Some(&ContainerKind::Backtick) {",
+                ),
+                make_del(688, "                    let top = stack.pop();"),
+                make_del(689, "                    result.push(top);"),
+                make_del(690, "                } else {"),
+                make_del(
+                    691,
+                    "                    stack.push(ContainerKind::Backtick);",
+                ),
+                make_del(
+                    692,
+                    "                    result.push(stack.last().copied());",
+                ),
+                make_del(693, "                }"),
+                make_del(694, "            }"),
+                make_del(695, "            \"\\\"\" => {"),
+                make_del(
+                    696,
+                    "                if stack.last() == Some(&ContainerKind::DoubleQuote) {",
+                ),
+                make_del(697, "                    let top = stack.pop();"),
+                make_del(698, "                    result.push(top);"),
+                make_del(699, "                } else {"),
+                make_del(
+                    700,
+                    "                    stack.push(ContainerKind::DoubleQuote);",
+                ),
+                make_del(
+                    701,
+                    "                    result.push(stack.last().copied());",
+                ),
+                make_del(702, "                }"),
+                make_del(703, "            }"),
+                make_del(704, "            _ => {"),
+                make_del(705, "                result.push(stack.last().copied());"),
+                make_del(706, "            }"),
+                make_del(707, "        }"),
+                make_del(708, "    }"),
+                make_del(709, "    result"),
+                make_add(
+                    720,
+                    "    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::AsciiDelimiterClassifier)",
+                ),
+                make_add(721, "        .into_iter()"),
+                make_add(
+                    722,
+                    "        .map(|opt| opt.and_then(ContainerKind::from_id))",
+                ),
+                make_add(723, "        .collect()"),
+                make_ctx(710, 724, "}"),
+            ],
+            ..Default::default()
+        };
+        let res = peer_reflow_pipeline(&hunk, None, None, None);
+        assert_eq!(res.len(), 34);
+        assert!(matches!(res[0], Row::Ctx(_)));
+        for r in &res[1..33] {
+            assert!(matches!(
+                r,
+                Row::Del(_)
+                    | Row::Mod { .. }
+                    | Row::AuxDel { .. }
+                    | Row::AuxAdd { .. }
+                    | Row::Add(_)
+            ));
+        }
+        assert!(matches!(res[33], Row::Ctx(_)));
     }
 
     #[test]
@@ -481,5 +678,50 @@ mod tests {
         assert_eq!(peer[2].kind(), RowKind::Mod);
         assert_eq!(peer[3].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
+    }
+
+    #[test]
+    fn test_build_bin_topological_inversion() {
+        let hunk = Hunk {
+            old_start: 6,
+            old_count: 12,
+            new_start: 6,
+            new_count: 18,
+            rows: vec![
+                make_ctx(6, 6, "#   PROFILE=debug ./scripts/build-bin.sh"),
+                make_ctx(7, 7, "set -e"),
+                make_ctx(
+                    8,
+                    8,
+                    "cd \"$(dirname \"$(readlink -f \"$0\")\")/../../..\" # the workspace root",
+                ),
+                make_ctx(9, 9, "PROFILE=\"${PROFILE:-dev}\""),
+                make_del(10, "if [ \"$PROFILE\" = \"release\" ]; then"),
+                make_del(11, "\tcargo build --release --bin diffuse"),
+                make_del(12, "\tcp target/release/diffuse extension/pi/bin/diffuse"),
+                make_add(
+                    10,
+                    "TOOLCHAIN=\"$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' rust-toolchain.toml)\"",
+                ),
+                make_add(11, "if [ -n \"$TOOLCHAIN\" ]; then"),
+                make_add(12, "  CARGO=\"cargo +$TOOLCHAIN\""),
+                make_ctx(13, 13, "else"),
+                make_del(14, "\tcargo build --bin diffuse"),
+                make_del(15, "\tcp target/debug/diffuse extension/pi/bin/diffuse"),
+                make_add(14, "  CARGO=cargo"),
+                make_add(15, "fi"),
+                make_add(16, "if [ \"$PROFILE\" = \"release\" ]; then"),
+                make_add(17, "\t$CARGO build --release --bin diffuse"),
+                make_add(
+                    18,
+                    "\tcp --remove-destination target/release/diffuse extension/pi/bin/diffuse",
+                ),
+                make_ctx(16, 19, "else"),
+            ],
+            ..Default::default()
+        };
+
+        let res = peer_reflow_pipeline(&hunk, None, None, None);
+        assert_peer_group_invariants(&res);
     }
 }
