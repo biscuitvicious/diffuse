@@ -619,6 +619,26 @@ impl Row {
         }
     }
 
+    #[inline]
+    pub fn set_group(&mut self, new_group: Option<RowGroup>) {
+        match self {
+            Row::Mod { group, .. } => *group = new_group,
+            Row::AuxAdd { group, anchor, .. } => {
+                *group = new_group;
+                if let Some(RowGroup::Peer { id, .. }) = new_group {
+                    *anchor = *id;
+                }
+            }
+            Row::AuxDel { group, anchor, .. } => {
+                *group = new_group;
+                if let Some(RowGroup::Peer { id, .. }) = new_group {
+                    *anchor = *id;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Whether this row is an auxiliary row within a multiline cluster.
     #[inline]
     pub fn is_aux(&self) -> bool {

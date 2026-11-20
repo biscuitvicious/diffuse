@@ -185,8 +185,34 @@ pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
                 cur.below_ctx = cur.below_ctx.saturating_sub(removed as u32);
             }
 
-            // Append `next` rows
-            cur.rows.extend(next.rows.iter().cloned());
+            // Append `next` rows, renumbering its peer-group ids past `cur`'s
+            // maximum so rows from merged hunks never share a group id.
+            // `set_group` keeps each row's aux anchor in sync with its group.
+            let max_id = cur
+                .rows
+                .iter()
+                .filter_map(|r| r.group().and_then(|g| g.peer_id()))
+                .map(|g| *g)
+                .max()
+                .unwrap_or(0);
+
+            if max_id > 0 {
+                let mut next_rows = next.rows.clone();
+                for r in &mut next_rows {
+                    if let Some(crate::parse::RowGroup::Peer { id, slot, n, m }) = r.group() {
+                        let new_group = crate::parse::RowGroup::Peer {
+                            id: crate::parse::GroupId(id.saturating_add(max_id)),
+                            slot,
+                            n,
+                            m,
+                        };
+                        r.set_group(Some(new_group));
+                    }
+                }
+                cur.rows.extend(next_rows);
+            } else {
+                cur.rows.extend(next.rows.iter().cloned());
+            }
             let new_old_end = next.old_start + next.old_count.saturating_sub(1);
             let new_new_end = next.new_start + next.new_count.saturating_sub(1);
             cur.old_count = new_old_end.saturating_sub(cur.old_start) + 1;

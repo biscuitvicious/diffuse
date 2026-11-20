@@ -10,8 +10,6 @@ use crate::{
     parse::{Hunk, Row, RowGroup},
 };
 
-use super::reflow::ReflowFilter;
-
 /// Asserts reflow group invariants on collapsed rows:
 /// 1. Old-side reconstruction: removing novel additions across the group in
 ///    visual order reproduces the surviving old-side text.
@@ -312,33 +310,6 @@ pub(crate) fn assert_collapsed_reflow_invariants(
 
 /// Contract Invariant 1: Reflow Cluster Confinement.
 ///
-/// Standalone del/add pairs synthesized into `reflow_ctx` must come from the
-/// same change cluster in `h`: there must be no intervening `Row::Ctx` in
-/// `h.rows` between the original deletion and addition.
-pub fn check_reflow_cluster_confinement(h: &Hunk, reflow: &ReflowFilter) -> Result<(), String> {
-    for r in &reflow.reflow_ctx {
-        let (Some(d_num), Some(a_num)) = (r.old_line(), r.new_line()) else {
-            continue;
-        };
-        let di = h.rows.iter().position(|row| row.old_line() == Some(d_num));
-        let ai = h.rows.iter().position(|row| row.new_line() == Some(a_num));
-        if let (Some(d_idx), Some(a_idx)) = (di, ai) {
-            let (min_idx, max_idx) = (d_idx.min(a_idx), d_idx.max(a_idx));
-            for i in (min_idx + 1)..max_idx {
-                if matches!(h.rows[i], Row::Ctx(_)) {
-                    return Err(format!(
-                        "Reflow pair (old line {d_num}, new line {a_num}) crosses intervening context line at raw hunk row {i} (old {:?}, new {:?}): {:?}",
-                        h.rows[i].old_line(),
-                        h.rows[i].new_line(),
-                        h.rows[i].text()
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Contract Invariant 2: Syntactic Continuation Continuity.
 ///
 /// A standalone or orphaned deletion sequence in the visual row stream must
@@ -472,7 +443,7 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
             let cluster_adds: FxHashSet<u32> =
                 cluster.new_rows.iter().filter_map(Row::new_line).collect();
 
-            // Find all Mod rows in res that belong to this cluster
+            // Find all Mod or Ctx anchor rows in res that belong to this cluster
             let cluster_mods: Vec<(u32, u32)> = res
                 .iter()
                 .filter_map(|r| match r {
@@ -483,6 +454,12 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                     {
                         Some((old_line.num, new_line.num))
                     }
+                    Row::Ctx(c)
+                        if cluster_dels.contains(&c.old_pos)
+                            && cluster_adds.contains(&c.new_pos) =>
+                    {
+                        Some((c.old_pos, c.new_pos))
+                    }
                     _ => None,
                 })
                 .collect();
@@ -492,7 +469,7 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                     && cluster_dels.contains(&d.num)
                 {
                     // Find the anchor new line for deletion d: the new line of the
-                    // latest Mod row in the cluster with old_line <= d.num.
+                    // latest Mod/Ctx row in the cluster with old_line <= d.num.
                     let d_anchor_new = cluster_mods
                         .iter()
                         .filter(|&&(old_num, _)| old_num <= d.num)
@@ -500,7 +477,10 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                         .max()
                         .unwrap_or(0);
 
-                    for (vj, prev) in res[..vi].iter().enumerate() {
+                    for (vj, prev) in res[..vi].iter().enumerate().rev() {
+                        if matches!(prev, Row::Ctx(_)) {
+                            break;
+                        }
                         if let Some(nl) = prev.new_line()
                             && cluster_adds.contains(&nl)
                             && matches!(prev, Row::Add(_))

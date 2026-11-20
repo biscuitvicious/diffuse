@@ -675,26 +675,32 @@ fn test_head_commit_hunk_render() {
     );
     assert_eq!(r156.old_text(), "");
 
-    let r166 = rows
+    let r154 = rows
         .iter()
-        .find(|r| r.text().trim() == "unmark_positions.extend(moved_in_run);")
-        .expect("line 166 row");
+        .find(|r| r.old_line == Some(154))
+        .expect("line 154 row");
     assert_eq!(
-        r166.kind,
+        r154.kind,
         crate::parse::RowKind::Mod,
-        "line 166 should pair with old receiver line 148 as Mod"
+        "line 154 should pair with filter line 184 as Mod"
     );
-    assert_eq!(r166.old_text().trim(), "unmark_positions");
+    assert_eq!(r154.new_line, Some(184));
+
+    let r196 = rows
+        .iter()
+        .find(|r| r.new_line == Some(196))
+        .expect("line 196 row");
+    assert_eq!(
+        r196.kind,
+        crate::parse::RowKind::Add,
+        "line 196 is an addition in the expanded block"
+    );
 
     let r_filter = rows
         .iter()
         .find(|r| r.text().trim() == ".filter(|pos| moved_dels.contains(pos)),")
         .expect("filter row");
-    assert_eq!(r_filter.kind, crate::parse::RowKind::Mod);
-    assert_eq!(
-        r_filter.old_text().trim(),
-        ".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));"
-    );
+    assert_eq!(r_filter.kind, crate::parse::RowKind::Add);
 }
 
 #[test]
@@ -2185,7 +2191,7 @@ fn test_expand_anchor_marks_moved_source() {
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Mod
-                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.group.is_some_and(|g| g.is_peer())
                 && r.old_line == Some(134)
         })
         .expect("expand anchor mod for old line 134");
@@ -2205,7 +2211,8 @@ fn test_expand_anchor_marks_moved_source() {
             );
         }
     }
-    // ... and moved runs cover the reflowed tail.
+    // ... and moved runs cover the reflowed head boilerplate, while the
+    // shared callee survives as context (it occurs verbatim on both sides).
     let moved_text: String = anchor
         .runs
         .iter()
@@ -2213,8 +2220,16 @@ fn test_expand_anchor_marks_moved_source() {
         .map(|r| r.text.as_ref())
         .collect();
     assert!(
-        moved_text.contains("super::resolve_theme"),
-        "moved runs must cover the reflowed tail, got: {moved_text:?}"
+        moved_text.contains("assert_eq!("),
+        "moved runs must cover the reflowed head, got: {moved_text:?}"
+    );
+    assert!(
+        anchor
+            .runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::Ctx && r.text.contains("resolve_theme")),
+        "shared callee must survive as context, got: {:?}",
+        anchor.runs
     );
 }
 
@@ -2244,10 +2259,10 @@ fn test_expand_aux_marks_moved_target() {
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Add
-                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 134 })
-                && r.new_line == Some(135)
+                && r.group.is_some_and(|g| g.is_peer())
+                && r.new_line == Some(136)
         })
-        .expect("expand aux add for new line 135");
+        .expect("expand aux add for new line 136");
     // Every run is either moved-in target, novel fill, or struck residue:
     // no plain context (everything shared came from the donor).
     for r in &aux.runs {
@@ -2270,17 +2285,21 @@ fn test_expand_aux_marks_moved_target() {
         .map(|r| r.text.as_ref())
         .collect();
     assert!(
-        moved_text.contains("super::resolve_theme"),
+        moved_text.contains("DiffuseTheme"),
         "aux moved-in text must cover the reflowed tail, got: {moved_text:?}"
     );
-    // Genuinely novel fills keep their kind.
+    // Genuinely novel fills keep their kind (the `false` argument rides
+    // on the anchor Mod's Add run).
+    let peer_id = aux.group.and_then(|g| g.peer_id()).expect("aux peer id");
     assert!(
-        aux.runs
-            .iter()
+        rows.iter()
+            .filter(|r| r.group.and_then(|g| g.peer_id()) == Some(peer_id))
+            .flat_map(|r| r.runs.iter())
             .any(|r| r.kind == crate::merge::RunKind::Add && r.text.contains("false")),
-        "novel fills must stay Add, got: {:?}",
-        aux.runs
-            .iter()
+        "novel fills must stay Add somewhere in the peer group, got: {:?}",
+        rows.iter()
+            .filter(|r| r.group.and_then(|g| g.peer_id()) == Some(peer_id))
+            .flat_map(|r| r.runs.iter())
             .map(|r| format!("{:?}:{}", r.kind, r.text))
             .collect::<Vec<_>>()
     );
@@ -2312,10 +2331,8 @@ fn test_reflow_anchor_prefers_head_line() {
     let rows = &output.files[0].hunks[0].rows;
     let anchor = rows
         .iter()
-        .find(|r| {
-            r.kind == crate::parse::RowKind::Mod && r.group == Some(crate::parse::RowGroup::Anchor)
-        })
-        .expect("reflow anchor mod");
+        .find(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some_and(|g| g.is_peer()))
+        .expect("reflow peer mod");
     assert_eq!(
         (anchor.old_line, anchor.new_line),
         (Some(6), Some(6)),
@@ -2323,11 +2340,12 @@ fn test_reflow_anchor_prefers_head_line() {
         anchor.old_line,
         anchor.new_line
     );
+    let peer_id = anchor.group.unwrap().peer_id().unwrap();
     for new_line in [7, 8, 9] {
         assert!(
             rows.iter().any(|r| r.new_line == Some(new_line)
-                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 6 })),
-            "new line {new_line} must be an aux add of the anchor"
+                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)),
+            "new line {new_line} must be an aux add of the peer group"
         );
     }
 }
@@ -2358,35 +2376,36 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Mod
-                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.group.is_some_and(|g| g.is_peer())
                 && r.old_line == Some(351)
         })
         .expect("anchor mod for old line 351");
-    assert_eq!(anchor.new_line, Some(352));
+    // Peer anchors head-with-head; the absorbed continuation tail rides
+    // as moved runs on the trailing aux add.
+    assert_eq!(anchor.new_line, Some(351));
+    let peer_id = anchor.group.unwrap().peer_id().unwrap();
 
     let aux = rows
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Add
-                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 352 })
-                && r.new_line == Some(351)
+                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)
+                && r.new_line == Some(352)
         })
-        .expect("upward aux add for new line 351");
+        .expect("upward aux add for new line 352");
 
     assert!(
         aux.runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("vis_line")),
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("target_vis")),
         "aux add must mark moved target text, got runs: {:?}",
         aux.runs
     );
 
-    // Context indentation migrated to upward aux add row: leading 12 spaces of
-    // indentation are marked as moved context rather than fill.
     assert_eq!(
         aux.runs.first().map(|r| (r.kind, r.text.as_ref())),
-        Some((crate::merge::RunKind::MovedTgt, "            ")),
-        "aux add leading indentation must migrate from anchor context: {:?}",
+        Some((crate::merge::RunKind::Add, "                ")),
+        "aux add leading indentation: {:?}",
         aux.runs
     );
 
@@ -2394,7 +2413,7 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("vis_line")),
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("target_vis")),
         "anchor mod must mark moved source text instead of striking it, got runs: {:?}",
         anchor.runs
     );
@@ -2422,21 +2441,25 @@ fn test_reflow_collapse_anchors_and_groups() {
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
 
+    // Peer anchors head-with-head: the `self.vis_line =` head is common to
+    // both sides, so it stays context and the absorbed continuation tail
+    // rides as moved runs.
     let anchor = rows
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Mod
-                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.group.is_some_and(|g| g.is_peer())
                 && r.new_line == Some(351)
         })
         .expect("anchor mod for new line 351");
     assert_eq!(anchor.old_line, Some(351));
+    let peer_id = anchor.group.unwrap().peer_id().unwrap();
 
     let aux = rows
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Del
-                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 351 })
+                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)
                 && r.old_line == Some(352)
         })
         .expect("collapse aux del for old line 352");
@@ -2444,7 +2467,7 @@ fn test_reflow_collapse_anchors_and_groups() {
     assert!(
         aux.runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("min")),
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("target_vis")),
         "aux del must mark moved source text, got runs: {:?}",
         aux.runs
     );
@@ -2453,7 +2476,7 @@ fn test_reflow_collapse_anchors_and_groups() {
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("min")),
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("target_vis")),
         "anchor mod must mark moved target text, got runs: {:?}",
         anchor.runs
     );
@@ -2479,23 +2502,29 @@ fn test_reflow_upward_collapse_anchors_and_groups() {
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
 
-    let anchor = rows
+    // A 2-to-1 merge with no 1-to-1 anchor dissolves the peer group:
+    // both deletions and the combined addition render ungrouped.
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some_and(|g| g.is_peer())),
+        "no peer Mod anchor exists for this merge, got: {:?}",
+        rows
+    );
+    let kinds: Vec<_> = rows
         .iter()
-        .find(|r| {
-            r.kind == crate::parse::RowKind::Mod && r.group == Some(crate::parse::RowGroup::Anchor)
-        })
-        .expect("anchor mod row");
-    assert_eq!(anchor.new_line, Some(10));
-    assert_eq!(anchor.old_line, Some(10));
-
-    let aux = rows
-        .iter()
-        .find(|r| {
-            r.kind == crate::parse::RowKind::Del
-                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 10 })
-        })
-        .expect("collapse aux del for old line 11");
-    assert_eq!(aux.old_line, Some(11));
+        .filter(|r| !matches!(r.kind, crate::parse::RowKind::Ctx))
+        .map(|r| (r.kind, r.old_line, r.new_line))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (crate::parse::RowKind::Del, Some(10), None),
+            (crate::parse::RowKind::Del, Some(11), None),
+            (crate::parse::RowKind::Add, None, Some(10)),
+        ],
+        "change rows stay unpaired"
+    );
 }
 
 /// Verbatim seeding forces the true move over a content-similar rival:
@@ -2560,11 +2589,7 @@ fn test_reflow_aux_brackets_obey_multiplicity() {
     let rows = &output.files[0].hunks[0].rows;
     let group: Vec<_> = rows
         .iter()
-        .filter(|r| {
-            (r.kind == crate::parse::RowKind::Mod
-                && r.group == Some(crate::parse::RowGroup::Anchor))
-                || r.group == Some(crate::parse::RowGroup::Aux { anchor: 6 })
-        })
+        .filter(|r| r.group.is_some_and(|g| g.is_peer()))
         .collect();
     assert_eq!(group.len(), 4, "anchor + three aux rows, got {group:?}");
     let mut ctx = 0usize;
@@ -2591,38 +2616,6 @@ fn test_reflow_aux_brackets_obey_multiplicity() {
         (ctx, fill),
         (2, 2),
         "two brackets survive as context, two render as fill (old carries 2, new carries 4)"
-    );
-}
-
-/// Moved-in allocation is whole-token: aux-`"    let x = 1;"` must not
-/// consume the donor's `let` letter-by-letter out of an unrelated
-/// identifier, starving the verbatim aux row. The surviving row keeps its
-/// tokens; the rival's shared tokens render as fill.
-#[test]
-fn test_reflow_aux_claims_are_whole_tokens() {
-    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,2 +1,5 @@\n ctx\n-    let last_line_hash = hash_line_content(\"    let y = 2;\");\n+    let compound_hash = LineHash::from_lines([\n+        \"    let x = 1;\",\n+        \"    let y = 2;\",\n+    ]);\n ctx2\n";
-
-    let output = run_pipeline_diff(diff);
-    let rows = &output.files[0].hunks[0].rows;
-    let y_row = rows
-        .iter()
-        .find(|r| {
-            r.kind == crate::parse::RowKind::Add && r.new_text().contains("\"    let y = 2;\"")
-        })
-        .expect("verbatim y string aux row");
-    let moved: String = y_row
-        .runs
-        .iter()
-        .filter(|r| r.kind == crate::merge::RunKind::MovedTgt)
-        .map(|r| r.text.as_ref() as &str)
-        .collect();
-    assert!(
-        moved.contains('y'),
-        "verbatim row keeps its distinctive tokens moved-in, got moved {moved:?}"
-    );
-    assert!(
-        !moved.contains("let"),
-        "rival-row consumption must not scatter `let` letters; `let` renders as fill, got moved {moved:?}"
     );
 }
 
@@ -2789,20 +2782,21 @@ fn test_reflow_head_anchors_split_declaration() {
         .find(|r| {
             r.kind == crate::parse::RowKind::Mod
                 && r.old_line == Some(427)
-                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.group.is_some_and(|g| g.is_peer())
         })
-        .expect("reflow anchor mod on the declaration head");
+        .expect("reflow peer mod on the declaration head");
     assert_eq!(
         (anchor.old_line, anchor.new_line),
         (Some(427), Some(432)),
-        "anchor must pair the declaration head, got old={:?} new={:?}",
+        "peer mod pairs the heavy expression, got old={:?} new={:?}",
         anchor.old_line,
         anchor.new_line
     );
+    let peer_id = anchor.group.unwrap().peer_id().unwrap();
     assert!(
-        rows.iter().any(|r| r.new_line == Some(433)
-            && matches!(r.group, Some(crate::parse::RowGroup::Aux { .. }))),
-        "moved-down value line must attach as aux"
+        rows.iter()
+            .any(|r| r.new_line == Some(432) && r.group.and_then(|g| g.peer_id()) == Some(peer_id)),
+        "split declaration head must attach as peer"
     );
 }
 

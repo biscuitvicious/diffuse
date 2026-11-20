@@ -946,11 +946,9 @@ fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_l
         .filter_map(|&line| {
             rows.iter().position(|r| match r {
                 Row::Del(d) => del_lines && d.num == line,
-                Row::AuxDel { line: l, group, .. } => del_lines && group.is_none() && l.num == line,
+                Row::AuxDel { line: l, .. } => del_lines && l.num == line,
                 Row::Add(a) => !del_lines && a.num == line,
-                Row::AuxAdd { line: l, group, .. } => {
-                    !del_lines && group.is_none() && l.num == line
-                }
+                Row::AuxAdd { line: l, .. } => !del_lines && l.num == line,
                 _ => false,
             })
         })
@@ -982,7 +980,7 @@ fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_l
 fn find_del_row_in(hunk: &crate::parse::Hunk, old_line: u32) -> Option<usize> {
     hunk.rows.iter().position(|r| match r {
         Row::Del(d) => d.num == old_line,
-        Row::AuxDel { line, group, .. } => group.is_none() && line.num == old_line,
+        Row::AuxDel { line, .. } => line.num == old_line,
         _ => false,
     })
 }
@@ -991,7 +989,7 @@ fn find_del_row_in(hunk: &crate::parse::Hunk, old_line: u32) -> Option<usize> {
 fn find_add_row_in(hunk: &crate::parse::Hunk, new_line: u32) -> Option<usize> {
     hunk.rows.iter().position(|r| match r {
         Row::Add(a) => a.num == new_line,
-        Row::AuxAdd { line, group, .. } => group.is_none() && line.num == new_line,
+        Row::AuxAdd { line, .. } => line.num == new_line,
         _ => false,
     })
 }
@@ -1001,7 +999,7 @@ fn find_del_row(f: &DiffFile, old_line: u32) -> Option<(usize, usize)> {
     for (hi, h) in f.hunks.iter().enumerate() {
         if let Some(ri) = h.rows.iter().position(|r| match r {
             Row::Del(d) => d.num == old_line,
-            Row::AuxDel { line, group, .. } => group.is_none() && line.num == old_line,
+            Row::AuxDel { line, .. } => line.num == old_line,
             _ => false,
         }) {
             return Some((hi, ri));
@@ -1015,7 +1013,7 @@ fn find_add_row(f: &DiffFile, new_line: u32) -> Option<(usize, usize)> {
     for (hi, h) in f.hunks.iter().enumerate() {
         if let Some(ri) = h.rows.iter().position(|r| match r {
             Row::Add(a) => a.num == new_line,
-            Row::AuxAdd { line, group, .. } => group.is_none() && line.num == new_line,
+            Row::AuxAdd { line, .. } => line.num == new_line,
             _ => false,
         }) {
             return Some((hi, ri));

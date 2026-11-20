@@ -1460,10 +1460,19 @@ fn test_side_by_side_aux_deletion_gutter_icon() {
         screen.contains("~ "),
         "screen must contain anchor icon '~ ':\n{screen}"
     );
-    // Aux deletion row has "~-" icon
+    // The peer collapse models the comment reflow as Mod rows with moved
+    // runs rather than aux rows: both reflowed lines carry the peer-group
+    // '~' gutter and no aux icon appears.
     assert!(
-        screen.contains("~-"),
-        "screen must contain aux del icon '~-':\n{screen}"
+        !screen.contains("~-"),
+        "screen must not contain aux del icon '~-':\n{screen}"
+    );
+    // The reflowed words render on both sides (struck "five" left,
+    // filled "in_progress, resolved" right; "seven" itself straddles the
+    // pane divider so only its fragments are contiguous).
+    assert!(
+        screen.contains("five") && screen.contains("in_progress"),
+        "screen must show the reflowed runs:\n{screen}"
     );
 }
 

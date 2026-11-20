@@ -1661,15 +1661,26 @@ fn test_expansion_companion_adds_receive_donor_spans() {
 
     let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
     assert_eq!(collapsed.len(), 4);
+    // Peer pairs the donor del with the head add as the group anchor Mod;
+    // the donor tail survives as moved-out runs, not struck text.
     match &collapsed[0] {
-        Row::AuxAdd { line, spans, .. } => {
-            assert_eq!(line.text, "    syntax::{");
+        Row::Mod {
+            old_line,
+            new_line,
+            spans,
+            ..
+        } => {
+            assert_eq!(
+                old_line.text,
+                "    syntax::prelude::{CloseDelimiter, first_ascii_word},"
+            );
+            assert_eq!(new_line.text, "    syntax::{");
             assert!(
-                !spans.add.contains(&(0, line.text.len())),
+                !spans.add.contains(&(0, new_line.text.len())),
                 "Companion prefix addition must not be marked as a wholesale addition"
             );
         }
-        other => panic!("Expected Row::AuxAdd for prefix row, got {:?}", other),
+        other => panic!("Expected anchor Mod for prefix row, got {:?}", other),
     }
 }
 

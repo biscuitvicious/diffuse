@@ -7,6 +7,20 @@ use rustc_hash::FxHashSet;
 
 use super::{arena::token_product_cap, tokenizer::char_len};
 
+/// Affix overlap: both sides are long enough (>= 8 bytes) and one is a
+/// prefix or suffix of the other. Shared by cluster factorization edges
+/// (`factor.rs`), slot-alignment scoring (`slot.rs`), and the span fast
+/// path below so the three call sites cannot diverge.
+#[inline]
+pub fn is_affix_pair(a_trim: &str, b_trim: &str) -> bool {
+    a_trim.len() >= 8
+        && b_trim.len() >= 8
+        && (a_trim.starts_with(b_trim)
+            || b_trim.starts_with(a_trim)
+            || a_trim.ends_with(b_trim)
+            || b_trim.ends_with(a_trim))
+}
+
 pub fn spans_from(text: &str, toks: &[&str], matched: &FxHashSet<usize>) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0usize;
@@ -128,6 +142,65 @@ pub fn word_spans_and_runs_with_profile_and_cap(
     profile: Option<&LangProfile>,
     cap: usize,
 ) -> (WordSpans, Vec<(RunKind, String)>) {
+    if !old_text.is_empty() && old_text == new_text {
+        return (
+            WordSpans::default(),
+            vec![(RunKind::Ctx, old_text.to_string())],
+        );
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && new_text.starts_with(old_text) {
+        let old_char_len = char_len(old_text);
+        let new_char_len = char_len(new_text);
+        let spans = WordSpans {
+            del: Vec::new(),
+            add: vec![(old_char_len, new_char_len)],
+        };
+        let runs = vec![
+            (RunKind::Ctx, old_text.to_string()),
+            (RunKind::Add, new_text[old_text.len()..].to_string()),
+        ];
+        return (spans, runs);
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && old_text.starts_with(new_text) {
+        let new_char_len = char_len(new_text);
+        let old_char_len = char_len(old_text);
+        let spans = WordSpans {
+            del: vec![(new_char_len, old_char_len)],
+            add: Vec::new(),
+        };
+        let runs = vec![
+            (RunKind::Ctx, new_text.to_string()),
+            (RunKind::Del, old_text[new_text.len()..].to_string()),
+        ];
+        return (spans, runs);
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && new_text.ends_with(old_text) {
+        let prefix_len = new_text.len() - old_text.len();
+        let prefix_chars = char_len(&new_text[..prefix_len]);
+        let spans = WordSpans {
+            del: Vec::new(),
+            add: vec![(0, prefix_chars)],
+        };
+        let runs = vec![
+            (RunKind::Add, new_text[..prefix_len].to_string()),
+            (RunKind::Ctx, old_text.to_string()),
+        ];
+        return (spans, runs);
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && old_text.ends_with(new_text) {
+        let prefix_len = old_text.len() - new_text.len();
+        let prefix_chars = char_len(&old_text[..prefix_len]);
+        let spans = WordSpans {
+            del: vec![(0, prefix_chars)],
+            add: Vec::new(),
+        };
+        let runs = vec![
+            (RunKind::Del, old_text[..prefix_len].to_string()),
+            (RunKind::Ctx, new_text.to_string()),
+        ];
+        return (spans, runs);
+    }
+
     let tape = crate::tape::AlignmentTape::from_texts_with_cap(old_text, new_text, profile, cap);
     let res = tape.to_spans();
 

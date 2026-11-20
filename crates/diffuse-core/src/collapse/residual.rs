@@ -106,7 +106,7 @@ pub(crate) fn non_ws_char_similarity(a: &str, b: &str) -> f64 {
 
 /// Checks if a trimmed line text appears verbatim anywhere in the snapshot
 /// content.
-fn has_verbatim_rival(text: &str, content: Option<&[&str]>) -> bool {
+pub(crate) fn has_verbatim_rival(text: &str, content: Option<&[&str]>) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return true;

@@ -22,7 +22,7 @@ pub use raw::{
     raw_lcs_pairs_with_arena_and_weights, raw_lcs_pairs_with_context, raw_lcs_pairs_with_lookahead,
 };
 pub use spans::{
-    WordSpans, spans_from, word_spans, word_spans_and_runs_with_profile,
+    WordSpans, is_affix_pair, spans_from, word_spans, word_spans_and_runs_with_profile,
     word_spans_and_runs_with_profile_and_cap, word_spans_with_profile,
     word_spans_with_profile_and_cap,
 };

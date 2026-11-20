@@ -7,14 +7,14 @@ use diffuse_syntax::profile::LangProfile;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    cluster::factor::factor_cluster,
+    cluster::factor::factor_cluster_with_content,
     collapse::{
-        assemble::pass_normalize_identical_mods,
         invariants::{
-            assert_collapsed_reflow_invariants, check_del_add_topological_order,
-            check_no_orphaned_continuation_dels,
+            assert_collapsed_reflow_invariants, check_context_old_line_monotonicity,
+            check_del_add_topological_order, check_no_orphaned_continuation_dels,
         },
-        slot::align_and_type_peer_group,
+        normalize::pass_normalize_identical_mods,
+        slot::{PeerGroupRows, align_and_type_peer_group_with_content},
     },
     merge::RunKind,
     parse::{AddLine, DelLine, GroupId, Hunk, Row, RowGroup},
@@ -92,6 +92,39 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
     }
 }
 
+/// Number of factored groups above which per-group alignment runs on the
+/// rayon thread pool. Alignment is pure over its inputs and group ids are
+/// assigned positionally, so parallel execution stays order-preserving.
+const PAR_GROUP_THRESHOLD: usize = 16;
+
+/// Fail-safe: every slot's runs must project back to the verbatim slot
+/// texts. Compound slots can mux words across lines (reordered garbage);
+/// never synthesize text — the caller dissolves a failing group to the
+/// original Del/Add rows instead (partial fallback would orphan moved
+/// partners and break conservation).
+fn slots_project_to_text(group_rows: &PeerGroupRows) -> bool {
+    group_rows.slots.iter().all(|s| {
+        let old_proj: String = s
+            .runs
+            .iter()
+            .filter(|(k, _)| !k.is_add_like())
+            .map(|(_, t)| t.as_str())
+            .collect();
+        let new_proj: String = s
+            .runs
+            .iter()
+            .filter(|(k, _)| !k.is_del_like())
+            .map(|(_, t)| t.as_str())
+            .collect();
+        match (&s.old_text, &s.new_text) {
+            (Some(o), Some(n)) => old_proj == *o && new_proj == *n,
+            (Some(o), None) => old_proj == *o,
+            (None, Some(n)) => new_proj == *n,
+            (None, None) => true,
+        }
+    })
+}
+
 fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     enum Item {
         PeerGroup(Vec<Row>),
@@ -101,10 +134,9 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     let mut items: Vec<Item> = Vec::new();
     let mut i = 0;
     while i < rows.len() {
-        if rows[i].group().is_some() {
-            let gid = rows[i].group();
+        if let Some(gid) = rows[i].group().and_then(|g| g.peer_id()) {
             let mut peer_rows = Vec::new();
-            while i < rows.len() && rows[i].group() == gid {
+            while i < rows.len() && rows[i].group().and_then(|g| g.peer_id()) == Some(gid) {
                 peer_rows.push(rows[i].clone());
                 i += 1;
             }
@@ -120,7 +152,9 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     while i < items.len() {
         let anchor_pos = items[i..].iter().position(|it| match it {
             Item::PeerGroup(_) => true,
-            Item::Unanchored(r) => matches!(r, Row::Mod { .. }),
+            Item::Unanchored(r) => {
+                matches!(r, Row::Mod { .. } | Row::MovSrc { .. } | Row::MovTgt { .. })
+            }
         });
         let end = match anchor_pos {
             Some(p) => i + p,
@@ -134,10 +168,10 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
             match it {
                 Item::PeerGroup(_) => unreachable!(),
                 Item::Unanchored(r) => match r {
-                    Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } => {
+                    Row::Del(_) | Row::AuxDel { .. } => {
                         unanchored_dels.push(r.clone());
                     }
-                    Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } => {
+                    Row::Add(_) | Row::AuxAdd { .. } => {
                         unanchored_adds.push(r.clone());
                     }
                     _ => unanchored_others.push(r.clone()),
@@ -164,11 +198,55 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
 /// Executes the unified peer reflow pipeline over a diff hunk.
 pub fn peer_reflow_pipeline(
     h: &Hunk,
-    _old_content: Option<&[&str]>,
-    _new_content: Option<&[&str]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
-    let h_norm = pass_shift_hunk(h, profile);
+    let has_dels = h
+        .rows
+        .iter()
+        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. }));
+    let has_adds = h
+        .rows
+        .iter()
+        .any(|r| matches!(r, Row::Add(_) | Row::MovTgt { .. }));
+
+    let h_split = if has_dels && has_adds {
+        let rows = &h.rows;
+        let first_change = rows
+            .iter()
+            .position(|r| !matches!(r, Row::Ctx(_) | Row::Sep(_)));
+        let last_change = rows
+            .iter()
+            .rposition(|r| !matches!(r, Row::Ctx(_) | Row::Sep(_)));
+        if let (Some(first), Some(last)) = (first_change, last_change) {
+            let mut out = Vec::with_capacity(rows.len());
+            for (i, r) in rows.iter().enumerate() {
+                if i > first && i < last {
+                    match r {
+                        Row::Ctx(c)
+                            if crate::ctx_split::should_split_ctx(&c.text, &c.text, profile) =>
+                        {
+                            out.push(Row::Del(DelLine::new(c.old_pos, c.text.clone())));
+                            out.push(Row::Add(AddLine::new(c.new_pos, c.text.clone())));
+                        }
+                        other => out.push(other.clone()),
+                    }
+                } else {
+                    out.push(r.clone());
+                }
+            }
+            let mut h_s = h.clone();
+            h_s.rows = out;
+            h_s
+        } else {
+            h.clone()
+        }
+    } else {
+        h.clone()
+    };
+
+    let h_norm = pass_shift_hunk(&h_split, profile);
     let h = &h_norm;
 
     let mut out: Vec<Row> = Vec::new();
@@ -211,16 +289,45 @@ pub fn peer_reflow_pipeline(
                     out.extend(new_rows);
                 } else {
                     let mut cluster_out = Vec::new();
-                    let factored = factor_cluster(&old_rows, &new_rows, profile);
-                    for group in factored {
-                        let mut peer_group = group;
-                        peer_group.id = GroupId(group_id_counter);
-                        group_id_counter += 1;
+                    let factored = factor_cluster_with_content(
+                        &old_rows,
+                        &new_rows,
+                        old_content,
+                        new_content,
+                        profile,
+                    );
+                    let process_group =
+                        |idx: usize, mut peer_group: crate::cluster::factor::FactoredGroup| {
+                            peer_group.id = GroupId(group_id_counter.saturating_add(idx as u32));
+                            let mut group_rows = align_and_type_peer_group_with_content(
+                                &peer_group,
+                                &old_rows,
+                                &new_rows,
+                                old_content,
+                                new_content,
+                                profile,
+                            );
+                            group_rows.repair_unmatched_moves();
+                            group_rows.assert_token_conservation();
+                            (peer_group, group_rows)
+                        };
+                    use rayon::prelude::*;
+                    let group_results: Vec<_> = if factored.len() > PAR_GROUP_THRESHOLD {
+                        factored
+                            .into_par_iter()
+                            .enumerate()
+                            .map(|(idx, pg)| process_group(idx, pg))
+                            .collect()
+                    } else {
+                        factored
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, pg)| process_group(idx, pg))
+                            .collect()
+                    };
+                    group_id_counter += group_results.len() as u32;
 
-                        let group_rows =
-                            align_and_type_peer_group(&peer_group, &old_rows, &new_rows, profile);
-                        group_rows.assert_token_conservation();
-
+                    for (peer_group, group_rows) in group_results {
                         let n = peer_group.old_range.len();
                         let m = peer_group.new_range.len();
                         let has_mod = group_rows
@@ -238,19 +345,18 @@ pub fn peer_reflow_pipeline(
                                     *k != RunKind::MovedSrc && *k != RunKind::MovedTgt
                                 })
                             });
+                        if !slots_project_to_text(&group_rows) {
+                            cluster_out
+                                .extend(old_rows[peer_group.old_range.clone()].iter().cloned());
+                            cluster_out
+                                .extend(new_rows[peer_group.new_range.clone()].iter().cloned());
+                            continue;
+                        }
 
                         for slot in group_rows.slots {
                             let old_text = slot.old_text.clone().unwrap_or_default();
                             let new_text = slot.new_text.clone().unwrap_or_default();
-                            let is_identical = slot.old_line.is_some()
-                                && slot.new_line.is_some()
-                                && old_text == new_text;
-
-                            let group_meta = if (n == 1 && m == 1)
-                                || is_all_1to1_mods
-                                || !has_mod
-                                || is_identical
-                            {
+                            let group_meta = if (n == 1 && m == 1) || is_all_1to1_mods || !has_mod {
                                 None
                             } else {
                                 Some(slot.group)
@@ -358,10 +464,23 @@ pub fn peer_reflow_pipeline(
             .unwrap_or_default()
     );
 
+    crate::invariant!(
+        check_context_old_line_monotonicity(&res).is_ok(),
+        "{}",
+        check_context_old_line_monotonicity(&res)
+            .err()
+            .unwrap_or_default()
+    );
+
+    crate::invariant!(
+        res.iter()
+            .all(|r| !matches!(r, Row::Mod { .. }) || !crate::merge::is_wholesale_replacement(r)),
+        "Collapsed rows must never contain wholesale replacement Mod rows"
+    );
+
     assert_peer_group_invariants(&res);
 
-    let empty_news = rustc_hash::FxHashSet::default();
-    pass_normalize_identical_mods(h, res, profile, &empty_news)
+    res
 }
 
 #[cfg(test)]
@@ -493,9 +612,9 @@ mod tests {
             ..Default::default()
         };
         let res = peer_reflow_pipeline(&hunk, None, None, None);
-        assert_eq!(res.len(), 34);
+        assert_eq!(res.len(), 35);
         assert!(matches!(res[0], Row::Ctx(_)));
-        for r in &res[1..33] {
+        for r in &res[1..34] {
             assert!(matches!(
                 r,
                 Row::Del(_)
@@ -505,7 +624,7 @@ mod tests {
                     | Row::Add(_)
             ));
         }
-        assert!(matches!(res[33], Row::Ctx(_)));
+        assert!(matches!(res[34], Row::Ctx(_)));
     }
 
     #[test]
@@ -648,8 +767,8 @@ mod tests {
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
         assert_eq!(peer.len(), 4);
         assert_eq!(peer[0].kind(), RowKind::Ctx);
-        assert_eq!(peer[1].kind(), RowKind::Add);
-        assert_eq!(peer[2].kind(), RowKind::Mod);
+        assert_eq!(peer[1].kind(), RowKind::Mod);
+        assert_eq!(peer[2].kind(), RowKind::Add);
         assert_eq!(peer[3].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
     }
@@ -672,11 +791,15 @@ mod tests {
         };
 
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
-        assert_eq!(peer.len(), 4);
+        // A 2-to-1 merge has no 1-to-1 Mod anchor, so the peer group
+        // dissolves: both deletions and the combined addition render
+        // ungrouped rather than forcing a partial Mod pairing.
+        assert_eq!(peer.len(), 5);
         assert_eq!(peer[0].kind(), RowKind::Ctx);
         assert_eq!(peer[1].kind(), RowKind::Del);
-        assert_eq!(peer[2].kind(), RowKind::Mod);
-        assert_eq!(peer[3].kind(), RowKind::Ctx);
+        assert_eq!(peer[2].kind(), RowKind::Del);
+        assert_eq!(peer[3].kind(), RowKind::Add);
+        assert_eq!(peer[4].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
     }
 
