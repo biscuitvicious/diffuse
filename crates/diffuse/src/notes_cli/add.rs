@@ -1,6 +1,7 @@
 //! Handler for adding and relocating review notes on diff rows.
 
 use std::{
+    collections::HashMap,
     io::{self, IsTerminal, Read},
     path::Path,
     process,
@@ -16,6 +17,61 @@ use super::span::{
     check_span_bounds, missing_file_exit, parse_line_span, provisional_ctx_row, relocate_span,
 };
 use crate::{Args, NotesArgs};
+
+/// A reviewed diff with its hydrated file snapshots, whether loaded from a
+/// git work tree or from an explicit `--diff` file plus snapshot dirs.
+struct FileReview {
+    diff: String,
+    new_content: HashMap<String, String>,
+    old_content: HashMap<String, String>,
+}
+
+/// Load an explicit `--diff` file with its `--old-dir` / `--new-dir`
+/// snapshots for `file_path`. Snapshot files absent from the given dirs stay
+/// absent (exactly like a file missing from a git diff); the raw diff file
+/// itself must read and parse, and a corrupt hunk header is refused with the
+/// input-error status, matching non-interactive diff streaming.
+fn load_file_review(
+    diff_path: &str,
+    file_path: &str,
+    old_dir: Option<&Path>,
+    new_dir: Option<&Path>,
+) -> FileReview {
+    let diff = std::fs::read_to_string(diff_path).unwrap_or_else(|e| {
+        eprintln!("diffuse: cannot load diff file '{diff_path}': {e}");
+        process::exit(1);
+    });
+    // The old-side snapshot is looked up by the diff's old path so renames
+    // resolve; when the diff does not cover the file, fall back to the new
+    // path so the absence surfaces downstream as "not part of the diff".
+    let old_lookup = diffuse::core::parse::parse_diff(&diff)
+        .unwrap_or_else(|e| {
+            eprintln!("diffuse: corrupt diff: {e}");
+            process::exit(2);
+        })
+        .into_iter()
+        .find(|f| f.path == file_path || f.old_path.as_deref() == Some(file_path))
+        .and_then(|f| f.old_path.or(Some(f.path)))
+        .unwrap_or_else(|| file_path.to_string());
+    let mut new_content = HashMap::new();
+    if let Some(dir) = new_dir
+        && let Ok(c) = std::fs::read_to_string(dir.join(file_path))
+    {
+        new_content.insert(file_path.to_string(), c);
+    }
+    let mut old_content = HashMap::new();
+    if let Some(dir) = old_dir
+        && let Ok(c) = std::fs::read_to_string(dir.join(&old_lookup))
+    {
+        old_content.insert(old_lookup.clone(), c.clone());
+        old_content.insert(file_path.to_string(), c);
+    }
+    FileReview {
+        diff,
+        new_content,
+        old_content,
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn handle_add(
@@ -131,7 +187,19 @@ pub fn handle_add(
     //    onto the produced rows. Files outside the reviewed diff fall back to plain
     //    rows read from the working-tree content; the note then displays on the
     //    file banner.
-    let reviewed = if is_inside_work_tree(current_dir) {
+    //
+    //    Review input precedence: an explicit `--diff` file always wins (even
+    //    inside a work tree, mirroring diff-stream routing), hydrated from
+    //    `--old-dir` / `--new-dir` when given; otherwise the git work tree
+    //    provides the reviewed diff; otherwise there is no reviewed diff.
+    let reviewed = if let Some(diff_path) = args.diff.as_deref() {
+        Some(load_file_review(
+            diff_path,
+            &file_path,
+            args.old_dir.as_deref(),
+            args.new_dir.as_deref(),
+        ))
+    } else if is_inside_work_tree(current_dir) {
         Some(
             load_git_repo(
                 current_dir,
@@ -140,6 +208,11 @@ pub fn handle_add(
                 args.staged,
                 ENGINE_CONTEXT,
             )
+            .map(|g| FileReview {
+                diff: g.diff,
+                new_content: g.new_content,
+                old_content: g.old_content,
+            })
             .unwrap_or_else(|e| {
                 eprintln!("diffuse: cannot load diff: {e}");
                 process::exit(1);
@@ -168,14 +241,26 @@ pub fn handle_add(
         (Some(None), _, Some(_)) => {
             // Reviewed file where the requested content side has no
             // snapshot (e.g. a new-side span on a deleted file).
+            if args.diff.is_some() {
+                eprintln!(
+                    "diffuse: no old-side content for '{file_path}': pass --old-dir <DIR> holding the pre-image snapshot (and check the file is covered by --diff)"
+                );
+                process::exit(1);
+            }
             missing_file_exit(&file_path);
         }
         (_, _, _) => {
-            // Not part of the reviewed diff: fall back to the
-            // working-tree content (new side only).
-            match std::fs::read_to_string(current_dir.join(&file_path)) {
-                Ok(c) => (c, true),
-                Err(_) => missing_file_exit(&file_path),
+            // Not part of the reviewed diff: fall back to the snapshot
+            // dirs, then the working-tree content (new side only).
+            let from_snapshot = args
+                .new_dir
+                .as_deref()
+                .and_then(|dir| std::fs::read_to_string(dir.join(&file_path)).ok());
+            match from_snapshot
+                .or_else(|| std::fs::read_to_string(current_dir.join(&file_path)).ok())
+            {
+                Some(c) => (c, true),
+                None => missing_file_exit(&file_path),
             }
         }
     };
@@ -228,7 +313,7 @@ pub fn handle_add(
     // from the produced rows. The provisional note lives only in a
     // scratch database: the persistent database receives the finalized
     // note exclusively.
-    let window: Vec<OutputRow> = if let Some(git_res) =
+    let window: Vec<OutputRow> = if let Some(review) =
         reviewed_content.is_some().then_some(reviewed).flatten()
     {
         let mut prov_db = db.clone();
@@ -240,9 +325,9 @@ pub fn handle_add(
             Some(prov_rev.to_string()),
         );
         let out = run_pipeline_full(
-            &git_res.diff,
-            Some(git_res.new_content),
-            Some(git_res.old_content),
+            &review.diff,
+            Some(review.new_content),
+            Some(review.old_content),
             opts,
         );
 

@@ -2953,3 +2953,113 @@ fn corrupt_hunk_counts_exit_2_with_informative_stderr() {
         "stderr must name the file and both extents, got: {err}"
     );
 }
+
+/// `notes add --diff/--old-dir/--new-dir` outside a repository must anchor
+/// the note against the given patch and snapshots — never against the
+/// working tree. The cwd carries a decoy `foo.rs` the old code would read;
+/// the snapshots carry the real review content.
+#[test]
+fn notes_add_honours_explicit_diff_and_snapshot_dirs_outside_repo() {
+    use diffuse::core::notes::load_notes;
+
+    let tmp = tempfile::tempdir().unwrap();
+    // Decoy working-tree content: must never leak into the created notes.
+    fs::write(tmp.path().join("foo.rs"), "decoy line\n".repeat(5)).unwrap();
+
+    let old_dir = tmp.path().join("old");
+    let new_dir = tmp.path().join("new");
+    fs::create_dir_all(&old_dir).unwrap();
+    fs::create_dir_all(&new_dir).unwrap();
+    fs::write(
+        old_dir.join("foo.rs"),
+        "fn first() {}\nfn second() {}\nfn third() {}\nfn fourth() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        new_dir.join("foo.rs"),
+        "fn first() {}\nfn second() renamed() {}\nfn third() {}\n",
+    )
+    .unwrap();
+
+    let patch = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n\
+@@ -1,4 +1,3 @@\n fn first() {}\n-fn second() {}\n+fn second() renamed() {}\n fn third() {}\n-fn fourth() {}\n";
+    let patch_path = tmp.path().join("change.patch");
+    fs::write(&patch_path, patch).unwrap();
+    let notes_path = tmp.path().join("notes.json");
+
+    let run_add = |coords: &[&str], msg: &str| -> std::process::Output {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+        cmd.current_dir(tmp.path())
+            .arg("--notes-file")
+            .arg(&notes_path)
+            .arg("--repo-key")
+            .arg("test-repo")
+            .arg("--diff")
+            .arg(&patch_path)
+            .arg("--old-dir")
+            .arg(&old_dir)
+            .arg("--new-dir")
+            .arg(&new_dir)
+            .arg("notes")
+            .arg("add")
+            .arg("foo.rs");
+        for coord in coords {
+            cmd.arg(coord);
+        }
+        cmd.arg("-m").arg(msg).output().unwrap()
+    };
+
+    // New-side note on the renamed line.
+    let out = run_add(&["--new", "2"], "Second function renamed");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "new-side add must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Old-side note on the deleted line: impossible without the old snapshot.
+    let out_old = run_add(&["--old", "4"], "Deleted fourth function");
+    assert_eq!(
+        out_old.status.code(),
+        Some(0),
+        "old-side add must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out_old.stderr)
+    );
+
+    let db = load_notes(&notes_path);
+    let notes = &db
+        .get("test-repo")
+        .expect("repo key present")
+        .values()
+        .next()
+        .expect("rev key present")["foo.rs"];
+    assert_eq!(notes.len(), 2);
+
+    let renamed = notes
+        .iter()
+        .find(|n| n.text == "Second function renamed")
+        .expect("new-side note present");
+    assert_eq!(renamed.original_source_rows.len(), 1);
+    assert_eq!(
+        renamed.original_source_rows[0].text(),
+        "fn second() renamed() {}",
+        "new-side note must anchor to the new snapshot, not the cwd decoy"
+    );
+    assert_eq!(renamed.original_source_rows[0].new_line, Some(2));
+    assert!(
+        renamed.content_hash.is_some(),
+        "anchored note must carry a content hash"
+    );
+
+    let deleted = notes
+        .iter()
+        .find(|n| n.text == "Deleted fourth function")
+        .expect("old-side note present");
+    assert_eq!(deleted.original_source_rows.len(), 1);
+    assert_eq!(
+        deleted.original_source_rows[0].text(),
+        "fn fourth() {}",
+        "old-side note must anchor to the old snapshot"
+    );
+    assert_eq!(deleted.original_source_rows[0].old_line, Some(4));
+}
