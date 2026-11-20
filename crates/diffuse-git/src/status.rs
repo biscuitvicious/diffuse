@@ -185,7 +185,8 @@ impl Repository {
                 }
             }
 
-            let mut parsed = diffuse_parse::parse_diff(&synthetic_diff);
+            let mut parsed = diffuse_parse::parse_diff(&synthetic_diff)
+                .expect("synthetic untracked diff is hunk-count exact by construction");
             for f in &mut parsed {
                 f.status = diffuse_parse::FileStatus::Untracked;
                 f.new_bytes = Some(text.len());

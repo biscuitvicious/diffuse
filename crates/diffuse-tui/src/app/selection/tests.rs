@@ -8,7 +8,7 @@ fn sample_output() -> PipelineOutput {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated

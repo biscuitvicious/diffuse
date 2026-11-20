@@ -190,7 +190,8 @@ pub fn load_single_file_diff(
             synthetic_diff.push_str(line);
             synthetic_diff.push('\n');
         }
-        let mut parsed = crate::parse::parse_diff(&synthetic_diff);
+        let mut parsed = crate::parse::parse_diff(&synthetic_diff)
+            .expect("synthetic untracked diff is hunk-count exact by construction");
         let mut f = parsed.pop()?;
         f.status = crate::parse::FileStatus::Untracked;
         f.new_bytes = Some(content.len());

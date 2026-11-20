@@ -23,7 +23,7 @@ fn sample_output() -> PipelineOutput {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -654,7 +654,7 @@ fn test_initial_screen_multi_file_head_diff() {
     let diff = r#"diff --git a/crates/diffuse-core/src/moves/mod.rs b/crates/diffuse-core/src/moves/mod.rs
 --- a/crates/diffuse-core/src/moves/mod.rs
 +++ b/crates/diffuse-core/src/moves/mod.rs
-@@ -140,6 +140,8 @@ pub fn mark_moves(f: &mut DiffFile) {
+@@ -140,4 +140,6 @@ pub fn mark_moves(f: &mut DiffFile) {
              if matches!(r, Row::Del { .. }) {
                  run.push((hi, ri));
              } else {
@@ -665,7 +665,7 @@ fn test_initial_screen_multi_file_head_diff() {
 diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/moves/tests.rs
 --- a/crates/diffuse-core/src/moves/tests.rs
 +++ b/crates/diffuse-core/src/moves/tests.rs
-@@ -1,3 +1,5 @@
+@@ -1,0 +1,2 @@
 +#[test]
 +fn test_new() {}
 "#;

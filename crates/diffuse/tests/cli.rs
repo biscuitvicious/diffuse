@@ -681,15 +681,16 @@ fn test_cli_raw_flag_emits_ansi_not_json() {
 /// `diffuse --raw` on piped diff input emits flat colorized output.
 #[test]
 fn test_cli_raw_flag_with_piped_diff() {
-    let diff = "diff --git a/hello.rs b/hello.rs\n\
-index 0000000..1111111 100644\n\
---- a/hello.rs\n\
-+++ b/hello.rs\n\
-@@ -1,2 +1,2 @@\n\
- fn main() {\n\
--    println!(\"hello\");\n\
-+    println!(\"world\");\n\
- }\n";
+    let diff = r#"diff --git a/hello.rs b/hello.rs
+index 0000000..1111111 100644
+--- a/hello.rs
++++ b/hello.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    println!("hello");
++    println!("world");
+ }
+"#;
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("--raw")
@@ -724,7 +725,7 @@ index 0000000..1111111 100644\n\
         "raw header plus line must be colored in file header yellow (214), got: {stdout}"
     );
     assert!(
-        stdout.contains("\x1b[38;5;213m@@ -1,2 +1,2 @@"),
+        stdout.contains("\x1b[38;5;213m@@ -1,3 +1,3 @@"),
         "raw hunk header must be colored in hunk header purple (213), got: {stdout}"
     );
     assert!(
@@ -734,7 +735,7 @@ index 0000000..1111111 100644\n\
     );
     // Must contain hunk header
     assert!(
-        stdout.contains("@@ -1,2 +1,2 @@"),
+        stdout.contains("@@ -1,3 +1,3 @@"),
         "raw output must contain hunk header, got: {stdout}"
     );
     // Number gutter and change type symbols are styled: walk SGR
@@ -2651,7 +2652,7 @@ fn piped_large_multi_file_diff_into_diffuse_with_pty_stdout_never_panics() {
     let mut diff = String::new();
     for fi in 0..10 {
         diff.push_str(&format!(
-            "diff --git a/file_{fi}.rs b/file_{fi}.rs\n--- a/file_{fi}.rs\n+++ b/file_{fi}.rs\n@@ -1,5 +1,6 @@\n"
+            "diff --git a/file_{fi}.rs b/file_{fi}.rs\n--- a/file_{fi}.rs\n+++ b/file_{fi}.rs\n@@ -1,101 +1,101 @@\n"
         ));
         for li in 0..50 {
             diff.push_str(&format!(" ctx line {li} in file {fi}\n"));
@@ -2915,4 +2916,40 @@ fn git_review_subcommand_json_with_rev_does_not_hang() {
         serde_json::from_slice(&out.stdout).expect("must emit valid JSON");
     assert_eq!(wire["files"].as_array().unwrap().len(), 1);
     assert_eq!(wire["files"][0]["path"], "file.rs");
+}
+
+/// A hunk header claiming more lines than its body carries must be refused
+/// on stderr with the input-error status — never rendered with wrong line
+/// numbers, and never swallowed as an empty success.
+#[test]
+fn corrupt_hunk_counts_exit_2_with_informative_stderr() {
+    let diff = "diff --git a/f.rs b/f.rs\nindex 111..222 100644\n--- a/f.rs\n+++ b/f.rs\n@@ -1,6 +1,6 @@ fn f()\n ctx\n-del\n+add\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--jsonl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "corrupt hunk counts must exit 2 (stdout: {})",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("corrupt diff"),
+        "stderr must report the corrupt diff, got: {err}"
+    );
+    assert!(
+        err.contains("f.rs") && err.contains("claims 6 old / 6 new"),
+        "stderr must name the file and both extents, got: {err}"
+    );
 }

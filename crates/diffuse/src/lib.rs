@@ -58,7 +58,7 @@ pub use diffuse_core::{
     DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
     PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
     notes::{add_note, default_notes_path, load_notes, save_notes},
-    parse::{Hunk, Row, RowKind},
+    parse::{Hunk, HunkCountMismatch, Row, RowKind},
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
@@ -86,7 +86,7 @@ pub mod prelude {
         PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
         merge::RunKind,
         notes::{add_note, default_notes_path, load_notes, save_notes},
-        parse::{Hunk, Row, RowKind},
+        parse::{Hunk, HunkCountMismatch, Row, RowKind},
         pipeline::{run_pipeline, run_pipeline_full},
         wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
     };

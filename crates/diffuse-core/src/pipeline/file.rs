@@ -81,6 +81,18 @@ pub fn process_single_diff_file(
     diff_fallback: Option<Arc<String>>,
     opts: &PipelineOptions,
 ) -> OutputFile {
+    // Invariant: hunk header counts are trusted extents downstream (merging,
+    // anchoring, wire headers), so a materialized `DiffFile` — whether from
+    // the parser or constructed programmatically — must balance exactly.
+    // (Debug-only defense in depth: the parser refuses corrupt input in
+    // every build, and batch entry points re-validate eagerly.)
+    if let Err(mismatch) = crate::parse::check_hunk_counts(&f) {
+        crate::invariant!(
+            false,
+            "DiffFile '{}' carries a corrupt hunk: {mismatch}",
+            f.path
+        );
+    }
     // The reload source must always be populated: collapsing a file releases
     // its rendered rows, and expanding it back re-renders from `raw_source`
     // (sync fallback included). Gating this on lazy stubs would leave
@@ -750,7 +762,10 @@ pub fn render_file_from_source(
             new_content,
             old_content,
         } => {
-            let parsed = crate::parse::parse_diff(diff);
+            // The stored fallback is the exact input validated on first parse,
+            // so a mismatch here signals an internal logic error, not user input.
+            let parsed = crate::parse::parse_diff(diff)
+                .expect("stored raw fallback was validated when first parsed");
             let f = parsed
                 .into_iter()
                 .find(|item| &item.path == path || item.old_path.as_ref() == Some(path))?;

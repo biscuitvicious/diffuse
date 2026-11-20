@@ -1906,7 +1906,7 @@ fn test_linenum_u32_lcs_collapse_walk_stepwise() {
     let patch = include_str!("../../../../tests/golden/linenum-u32/diff.patch");
     let patch_lines: Vec<&str> = patch.lines().collect();
     let file_patch = patch_lines[3948..3977].join("\n");
-    let files = diffuse_parse::parse_diff(&file_patch);
+    let files = diffuse_parse::parse_diff(&file_patch).unwrap();
     let hunk = &files[0].hunks[0];
     let rs = lang_profile("rs");
     let res = collapse_hunk_rows(hunk, None, None, rs);
@@ -2847,7 +2847,7 @@ fn load_scrollbar_grab_drag_dispatch_hunk() -> Hunk {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let patch_path = manifest_dir.join("../../tests/golden/scrollbar-grab-drag/diff.patch");
     let patch = std::fs::read_to_string(&patch_path).expect("patch must exist");
-    let files = crate::parse::parse_diff(&patch);
+    let files = crate::parse::parse_diff(&patch).unwrap();
     let dispatch = files
         .iter()
         .find(|f| f.path.contains("dispatch.rs"))
@@ -3364,7 +3364,7 @@ fn test_lcs_mod_hunk_15_stepwise() {
     let diff = r#"diff --git a/src/lcs/mod.rs b/crates/diffuse-core/src/lcs/mod.rs
 --- a/src/lcs/mod.rs
 +++ b/crates/diffuse-core/src/lcs/mod.rs
-@@ -541,18 +836,42 @@
+@@ -541,15 +836,39 @@
          matched_chars as f64 / char_len(new_text) as f64
      } else {
          0.0
@@ -3413,7 +3413,7 @@ fn test_lcs_mod_hunk_15_stepwise() {
 +    res
  }
 "#;
-    let files = crate::parse::parse_diff(diff);
+    let files = crate::parse::parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     let hunk = &files[0].hunks[0];
     let profile = lang_profile("rs");

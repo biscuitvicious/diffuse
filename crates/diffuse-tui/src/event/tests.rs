@@ -27,7 +27,7 @@ fn state_with_rows() -> AppState {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -562,14 +562,14 @@ fn test_file_finder_live_jump_and_cancel() {
 index 1111111..2222222 100644
 --- a/apple.rs
 +++ b/apple.rs
-@@ -1,2 +1,3 @@
+@@ -1,1 +1,2 @@
  fn apple() {}
 +fn apple_extra() {}
 diff --git a/banana.rs b/banana.rs
 index 3333333..4444444 100644
 --- a/banana.rs
 +++ b/banana.rs
-@@ -1,2 +1,3 @@
+@@ -1,1 +1,2 @@
  fn banana() {}
 +fn banana_extra() {}
 "#;

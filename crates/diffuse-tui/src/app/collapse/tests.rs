@@ -17,7 +17,7 @@ fn test_clicking_file_header_triangle_toggles_collapse() {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,4 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -232,7 +232,7 @@ fn test_collapsing_file_releases_memory_and_expanding_reloads() {
     let diff = r#"diff --git a/file.rs b/file.rs
 --- a/file.rs
 +++ b/file.rs
-@@ -1,2 +1,2 @@
+@@ -1,1 +1,1 @@
 -old line
 +new line
 "#;

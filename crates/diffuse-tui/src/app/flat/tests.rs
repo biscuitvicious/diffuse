@@ -333,12 +333,12 @@ fn test_hunks_with_hidden_gap_has_hunk_header_after_separator() {
 index 1111111..2222222 100644
 --- a/cache.rs
 +++ b/cache.rs
-@@ -1,3 +1,4 @@
+@@ -1,4 +1,4 @@
  fn a() {
  +    let x = 1;
      return 1;
  }
-@@ -85,3 +86,4 @@
+@@ -85,4 +86,4 @@
  fn b() {
  +    let y = 2;
      return 2;
@@ -592,7 +592,7 @@ fn test_palette_rs_commit_hunk_starts_not_interleaved() {
     let diff_str = r#"diff --git a/palette.rs b/palette.rs
 --- a/palette.rs
 +++ b/palette.rs
-@@ -1,3 +1,3 @@
+@@ -1,2 +1,2 @@
 -a
 +b
  c

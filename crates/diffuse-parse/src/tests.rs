@@ -22,7 +22,7 @@ deleted file mode 100644
 index 444..000
 --- a/old.txt
 +++ /dev/null
-@@ -1,3 +0,0 @@
+@@ -1,2 +0,0 @@
 -gone
 -bye
 diff --git a/old_renamed.rs b/new_renamed.rs
@@ -39,7 +39,7 @@ index 555..666 100644
 
 #[test]
 fn parse_diff_multi_file_new_deleted_rename() {
-    let files = parse_diff(DIFF);
+    let files = parse_diff(DIFF).unwrap();
     assert_eq!(files.len(), 4, "expected 4 files");
     let a = &files[0];
     assert_eq!(a.path, "src/a.rs");
@@ -93,7 +93,7 @@ similarity index 100%
 rename from src/old.rs
 rename to src/new.rs
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].status, FileStatus::Renamed);
     assert_eq!(files[0].old_path.as_deref(), Some("src/old.rs"));
@@ -112,7 +112,7 @@ index 1111111..2222222 100644
 --- a/f.rs
 +++ b/f.rs
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "f.rs");
     assert!(files[0].hunks.is_empty());
@@ -123,12 +123,12 @@ fn parse_diff_bare_git_header_is_dropped() {
     // A `diff --git` line without a content section is not a file.
     let diff = "diff --git a/garbage b/garbage
 ";
-    assert!(parse_diff(diff).is_empty());
+    assert!(parse_diff(diff).unwrap().is_empty());
 }
 
 #[test]
 fn test_diff_components_reverse_involution() {
-    let files = parse_diff(DIFF);
+    let files = parse_diff(DIFF).unwrap();
     for f in &files {
         let rev = f.clone().reverse();
         assert_eq!(
@@ -242,7 +242,7 @@ fn test_parse_diff_tab_terminated_paths() {
  # Heading
 +New Line
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "plan/Ratatui Migration.md");
     assert!(!files[0].path.ends_with('\t'));
@@ -263,7 +263,7 @@ diff --git \"a/file\\twith\\ttab\" \"b/file\\twith\\ttab\"
 -old
 +new
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].path, "file with space ");
     assert_eq!(files[1].path, "file\twith\ttab");
@@ -275,7 +275,7 @@ fn test_parse_diff_mode_change_only() {
 old mode 100644
 new mode 100755
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "script.sh");
     assert_eq!(files[0].old_mode.as_deref(), Some("100644"));
@@ -293,7 +293,7 @@ similarity index 100%
 rename from old.sh
 rename to new.sh
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "new.sh");
     assert_eq!(files[0].old_path.as_deref(), Some("old.sh"));
@@ -314,7 +314,7 @@ rename from old.bin
 rename to new.bin
 Binary files a/old.bin and b/new.bin differ
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].path, "logo.png");
     assert!(files[0].is_binary);
@@ -331,7 +331,7 @@ Binary files a/old.bin and b/new.bin differ
 #[test]
 fn test_parse_diff_unmodified_file() {
     let diff = "diff --git a/src/untouched.rs b/src/untouched.rs\nunmodified file mode 100644\n--- a/src/untouched.rs\n+++ b/src/untouched.rs\n";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "src/untouched.rs");
     assert_eq!(files[0].status, FileStatus::Unmodified);
@@ -400,4 +400,86 @@ fn test_file_status_methods_and_string_equality() {
     assert_eq!(FileStatus::default(), FileStatus::Modified);
     assert!("modechanged".parse::<FileStatus>().unwrap() == FileStatus::ModeChanged);
     assert!("invalid".parse::<FileStatus>().is_err());
+}
+
+/// An over-claimed header (6/6 for a 3-row body) must be refused, naming the
+/// file, the hunk position, and both extents — even though the trailing
+/// blank input line would otherwise materialize as an empty context row.
+#[test]
+fn test_over_claimed_hunk_header_is_refused() {
+    let diff = "diff --git a/f.rs b/f.rs\nindex 111..222 100644\n--- a/f.rs\n+++ b/f.rs\n@@ -1,6 +1,6 @@ fn f()\n ctx\n-del\n+add\n";
+    let err = parse_diff(diff).expect_err("over-claimed header must be refused");
+    assert_eq!(err.path, "f.rs");
+    assert_eq!((err.old_start, err.new_start), (1, 1));
+    assert_eq!((err.declared_old, err.declared_new), (6, 6));
+    assert_eq!((err.actual_old, err.actual_new), (3, 3));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("claims 6 old / 6 new") && msg.contains("carries 3 old / 3 new"),
+        "message must name both extents, got: {msg}"
+    );
+    assert!(
+        msg.contains("'f.rs'"),
+        "message must name the file, got: {msg}"
+    );
+}
+
+/// An under-claimed header (1/1 for a body carrying 2/2) must be refused:
+/// the rows overflow the declared extent.
+#[test]
+fn test_under_claimed_hunk_header_is_refused() {
+    let diff = "diff --git a/f.rs b/f.rs\nindex 111..222 100644\n--- a/f.rs\n+++ b/f.rs\n@@ -1,1 +1,1 @@ fn f()\n ctx\n-del\n+add\n";
+    let err = parse_diff(diff).expect_err("under-claimed header must be refused");
+    assert_eq!(err.path, "f.rs");
+    assert_eq!((err.declared_old, err.declared_new), (1, 1));
+    assert_eq!((err.actual_old, err.actual_new), (2, 2));
+}
+
+/// A stripped-whitespace blank line inside an exactly-claimed hunk stays a
+/// tolerated empty context row consuming one line on each side.
+#[test]
+fn test_exact_hunk_with_blank_context_row_is_accepted() {
+    let diff = "diff --git a/f.rs b/f.rs\nindex 111..222 100644\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,3 @@ fn f()\n ctx\n-del\n+add\n\n";
+    let files = parse_diff(diff).expect("exact counts must parse");
+    assert_eq!(files.len(), 1);
+    let rows = &files[0].hunks[0].rows;
+    assert_eq!(
+        rows.len(),
+        4,
+        "blank line must materialize as a context row"
+    );
+    match &rows[3] {
+        Row::Ctx(c) => {
+            assert_eq!((c.old_pos, c.new_pos), (3, 3));
+            assert!(c.text.is_empty(), "blank row carries no text");
+        }
+        other => panic!("blank line must parse as context, got: {other:?}"),
+    }
+}
+
+/// Only the corrupt hunk's file is dropped: files parsed before the corrupt
+/// hunk are still yielded, then parsing stops with the mismatch.
+#[test]
+fn test_first_valid_file_survives_later_corrupt_hunk() {
+    let diff = "diff --git a/good.rs b/good.rs\n--- a/good.rs\n+++ b/good.rs\n@@ -1,1 +1,1 @@\n-one\n+ONE\ndiff --git a/bad.rs b/bad.rs\n--- a/bad.rs\n+++ b/bad.rs\n@@ -1,9 +1,9 @@\n-x\n+y\n";
+    let mut yielded = Vec::new();
+    let err = parse_diff_for_each(diff, |f| yielded.push(f.path.clone()))
+        .expect_err("corrupt second file must be refused");
+    assert_eq!(
+        yielded,
+        vec!["good.rs".to_string()],
+        "valid prefix must yield"
+    );
+    assert_eq!(err.path, "bad.rs");
+    assert_eq!((err.declared_old, err.actual_old), (9, 2));
+}
+
+/// A hunk whose header follows another hunk validates the closed hunk
+/// against its own declaration, not the running counters alone.
+#[test]
+fn test_second_hunk_corruption_is_refused() {
+    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,1 +1,1 @@\n-one\n+ONE\n@@ -2,7 +2,7 @@\n-two\n+TWO\n";
+    let err = parse_diff(diff).expect_err("corrupt second hunk must be refused");
+    assert_eq!((err.old_start, err.new_start), (2, 2));
+    assert_eq!((err.declared_old, err.actual_old), (7, 2));
 }

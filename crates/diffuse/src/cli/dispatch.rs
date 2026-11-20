@@ -6,6 +6,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process,
+    sync::mpsc::Receiver,
 };
 
 use diffuse::{
@@ -23,6 +24,18 @@ use super::{
     theme::{ThemeTarget, init_color_mode, resolve_theme},
 };
 use crate::notes_cli;
+
+/// Surface a refused corrupt diff discovered while streaming.
+///
+/// Mirrors the git-metadata error port handling below: files parsed before
+/// the corrupt hunk still render, then the refusal is reported on stderr and
+/// the process exits with the input-error status.
+fn check_parse_outcome(outcome: Receiver<Result<(), HunkCountMismatch>>) {
+    if let Ok(Err(e)) = outcome.recv() {
+        eprintln!("diffuse: corrupt diff: {e}");
+        process::exit(2);
+    }
+}
 
 /// Decide whether an invocation routes to non-interactive diff stream parsing
 /// (`true`) or to the git review/direct reviewer (`false`).
@@ -375,7 +388,7 @@ fn dispatch_diff_stream(
         .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
         .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
 
-    let consumer = if let Some(path) = diff_opt {
+    let (consumer, parse_outcome) = if let Some(path) = diff_opt {
         let file = fs::File::open(path)?;
         stream_diff_reader(
             io::BufReader::new(file),
@@ -424,6 +437,7 @@ fn dispatch_diff_stream(
             args.line_number_width,
             args.explicit_side_by_side(),
         )?;
+        check_parse_outcome(parse_outcome);
         return Ok(());
     }
 
@@ -438,7 +452,9 @@ fn dispatch_diff_stream(
         show_source,
         stdout_tty,
         colorize,
-    )
+    )?;
+    check_parse_outcome(parse_outcome);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

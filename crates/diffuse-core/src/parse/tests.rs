@@ -22,7 +22,7 @@ deleted file mode 100644
 index 444..000
 --- a/old.txt
 +++ /dev/null
-@@ -1,3 +0,0 @@
+@@ -1,2 +0,0 @@
 -gone
 -bye
 diff --git a/old_renamed.rs b/new_renamed.rs
@@ -39,7 +39,7 @@ index 555..666 100644
 
 #[test]
 fn parse_diff_multi_file_new_deleted_rename() {
-    let files = parse_diff(DIFF);
+    let files = parse_diff(DIFF).unwrap();
     assert_eq!(files.len(), 4, "expected 4 files");
     let a = &files[0];
     assert_eq!(a.path, "src/a.rs");
@@ -93,7 +93,7 @@ similarity index 100%
 rename from src/old.rs
 rename to src/new.rs
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].status, FileStatus::Renamed);
     assert_eq!(files[0].old_path.as_deref(), Some("src/old.rs"));
@@ -112,7 +112,7 @@ index 1111111..2222222 100644
 --- a/f.rs
 +++ b/f.rs
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "f.rs");
     assert!(files[0].hunks.is_empty());
@@ -123,12 +123,12 @@ fn parse_diff_bare_git_header_is_dropped() {
     // A `diff --git` line without a content section is not a file.
     let diff = "diff --git a/garbage b/garbage
 ";
-    assert!(parse_diff(diff).is_empty());
+    assert!(parse_diff(diff).unwrap().is_empty());
 }
 
 #[test]
 fn test_diff_components_reverse_involution() {
-    let files = parse_diff(DIFF);
+    let files = parse_diff(DIFF).unwrap();
     for f in &files {
         let rev = f.clone().reverse();
         assert_eq!(
@@ -217,7 +217,7 @@ fn test_parse_diff_tab_terminated_paths() {
  # Heading
 +New Line
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "plan/Ratatui Migration.md");
     assert!(!files[0].path.ends_with('\t'));
@@ -238,7 +238,7 @@ diff --git \"a/file\\twith\\ttab\" \"b/file\\twith\\ttab\"
 -old
 +new
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].path, "file with space ");
     assert_eq!(files[1].path, "file\twith\ttab");
@@ -250,7 +250,7 @@ fn test_parse_diff_mode_change_only() {
 old mode 100644
 new mode 100755
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "script.sh");
     assert_eq!(files[0].old_mode.as_deref(), Some("100644"));
@@ -268,7 +268,7 @@ similarity index 100%
 rename from old.sh
 rename to new.sh
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "new.sh");
     assert_eq!(files[0].old_path.as_deref(), Some("old.sh"));
@@ -289,7 +289,7 @@ rename from old.bin
 rename to new.bin
 Binary files a/old.bin and b/new.bin differ
 ";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].path, "logo.png");
     assert!(files[0].is_binary);
@@ -306,7 +306,7 @@ Binary files a/old.bin and b/new.bin differ
 #[test]
 fn test_parse_diff_unmodified_file() {
     let diff = "diff --git a/src/untouched.rs b/src/untouched.rs\nunmodified file mode 100644\n--- a/src/untouched.rs\n+++ b/src/untouched.rs\n";
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "src/untouched.rs");
     assert_eq!(files[0].status, FileStatus::Unmodified);

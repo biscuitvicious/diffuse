@@ -125,25 +125,25 @@ fn test_streaming_pipeline_concurrent_reassembly() {
 index 000..111 100644
 --- a/a.rs
 +++ b/a.rs
-@@ -1,2 +1,2 @@
+@@ -1,1 +1,1 @@
 -fn a() {}
 +fn a_mod() {}
 diff --git a/b.rs b/b.rs
 index 222..333 100644
 --- a/b.rs
 +++ b/b.rs
-@@ -1,2 +1,2 @@
+@@ -1,1 +1,1 @@
 -fn b() {}
 +fn b_mod() {}
 diff --git a/c.rs b/c.rs
 index 444..555 100644
 --- a/c.rs
 +++ b/c.rs
-@@ -1,2 +1,2 @@
+@@ -1,1 +1,1 @@
 -fn c() {}
 +fn c_mod() {}
 "#;
-    let files = parse_diff(diff);
+    let files = parse_diff(diff).unwrap();
     let new_content: HashMap<String, String> = [
         ("a.rs".to_string(), "fn a_mod() {}\n".to_string()),
         ("b.rs".to_string(), "fn b_mod() {}\n".to_string()),
@@ -225,8 +225,13 @@ fn test_default_worker_count() {
 fn test_stream_diff_reader_populates_raw_diff_source_and_no_content() {
     let diff = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,1 @@\n-const X: i32 = 1;\n+const X: i32 = 2;\n";
     let cursor = std::io::Cursor::new(diff.as_bytes());
-    let consumer = stream_diff_reader(cursor, PipelineOptions::default(), Some(2), None, None);
+    let (consumer, parse_outcome) =
+        stream_diff_reader(cursor, PipelineOptions::default(), Some(2), None, None);
     let files: Vec<OutputFile> = consumer.collect();
+    parse_outcome
+        .recv()
+        .expect("reader thread must report its terminal parse outcome")
+        .expect("valid test diff must parse");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "x.rs");
     match files[0].raw_source.as_ref() {

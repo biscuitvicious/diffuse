@@ -182,7 +182,7 @@ mod tests {
             std::fs::read_to_string(base.join("files/crates-diffuse-tui-src-app-dispatch.new.rs"))
                 .expect("new snapshot must exist");
 
-        let files = crate::parse::parse_diff(&patch);
+        let files = crate::parse::parse_diff(&patch).unwrap();
         let f = files
             .into_iter()
             .find(|f| f.path.contains("dispatch.rs"))

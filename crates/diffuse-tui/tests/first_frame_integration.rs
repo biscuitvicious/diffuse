@@ -33,7 +33,7 @@ const HEIGHT: u16 = 24;
 const FIRST_FRAME_BUDGET: Duration = Duration::from_millis(250);
 
 fn sample_output() -> PipelineOutput {
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,2 @@\n fn hello() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn hello() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n";
     run_pipeline_full(diff, None, None, PipelineOptions::default())
 }
 

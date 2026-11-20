@@ -1,6 +1,7 @@
 //! Unified diff parser for streaming and batch changesets.
 
 use crate::{
+    error::{HunkCountMismatch, check_hunk},
     file::{
         DiffFile, FileStatus, hunk_path, is_valid_diff_file, parse_diff_git_paths, unquote_git_path,
     },
@@ -16,11 +17,38 @@ pub fn zero_hunk_section(path: &str) -> String {
 
 /// Parse a sequence of diff lines progressively, yielding each `DiffFile`
 /// and its raw unified diff text as soon as it has been completely parsed.
-pub fn parse_diff_lines_with_raw<I, S>(lines: I, mut on_file: impl FnMut(DiffFile, String))
+///
+/// Every hunk is verified at close: a header claiming more or fewer lines
+/// than its body carries is corrupt input, and parsing stops with
+/// [`HunkCountMismatch`] instead of rendering silently wrong line numbers.
+/// Only fully validated files reach `on_file`.
+pub fn parse_diff_lines_with_raw<I, S>(
+    lines: I,
+    mut on_file: impl FnMut(DiffFile, String),
+) -> Result<(), HunkCountMismatch>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    /// Validate the just-closed hunk: row line numbers advance one unit per
+    /// consumed side as rows parse, so at hunk close the running counters
+    /// minus the hunk starts equal the carried extents, which must match the
+    /// declaration — any disagreement means the header lied and parsing stops.
+    fn close_hunk(cur: &DiffFile, oi: u32, ni: u32) -> Result<(), HunkCountMismatch> {
+        if let Some(h) = cur.hunks.last() {
+            check_hunk(
+                &cur.path,
+                h.old_start,
+                h.new_start,
+                h.old_count,
+                h.new_count,
+                oi.saturating_sub(h.old_start),
+                ni.saturating_sub(h.new_start),
+            )?;
+        }
+        Ok(())
+    }
+
     let mut cur: Option<DiffFile> = None;
     let mut cur_raw = String::new();
     let mut oi: u32 = 1;
@@ -29,10 +57,13 @@ where
     for line_ref in lines {
         let line = line_ref.as_ref();
         if let Some(rest) = line.strip_prefix("diff --git ") {
-            if let Some(c) = cur.take()
-                && is_valid_diff_file(&c)
-            {
-                on_file(c, std::mem::take(&mut cur_raw));
+            if let Some(c) = cur.take() {
+                if is_valid_diff_file(&c) {
+                    close_hunk(&c, oi, ni)?;
+                    on_file(c, std::mem::take(&mut cur_raw));
+                } else {
+                    cur_raw.clear();
+                }
             } else {
                 cur_raw.clear();
             }
@@ -151,6 +182,9 @@ where
             if let Some((old_start, old_count, new_start, new_count, section_str)) =
                 parse_hunk_header(line)
             {
+                if let Some(c) = cur.as_ref() {
+                    close_hunk(c, oi, ni)?;
+                }
                 oi = old_start;
                 ni = new_start;
                 if let Some(c) = cur.as_mut() {
@@ -195,25 +229,17 @@ where
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 ni += 1;
-                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
-                raw_hunk.new_count = hunk.new_count;
             } else if let Some(rest) = line.strip_prefix('-') {
                 let row = Row::del(DelLine::new(oi, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
-                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
-                raw_hunk.old_count = hunk.old_count;
             } else if let Some(rest) = line.strip_prefix(' ') {
                 let row = Row::Ctx(CtxLine::new(oi, ni, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
                 ni += 1;
-                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
-                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
-                raw_hunk.old_count = hunk.old_count;
-                raw_hunk.new_count = hunk.new_count;
             } else if line.is_empty()
                 && ni < hunk.new_start + hunk.new_count
                 && oi < hunk.old_start + hunk.old_count
@@ -225,56 +251,78 @@ where
                 raw_hunk.rows.push(row);
                 oi += 1;
                 ni += 1;
-                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
-                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
-                raw_hunk.old_count = hunk.old_count;
-                raw_hunk.new_count = hunk.new_count;
             }
         }
     }
     if let Some(c) = cur.take()
         && is_valid_diff_file(&c)
     {
+        close_hunk(&c, oi, ni)?;
         on_file(c, cur_raw);
     }
+    Ok(())
 }
 
 /// Parse a sequence of diff lines progressively, yielding each `DiffFile`
 /// as soon as it has been completely parsed.
-pub fn parse_diff_lines<I, S>(lines: I, mut on_file: impl FnMut(DiffFile))
+///
+/// Refuses corrupt hunks with [`HunkCountMismatch`]; see
+/// [`parse_diff_lines_with_raw`].
+pub fn parse_diff_lines<I, S>(
+    lines: I,
+    mut on_file: impl FnMut(DiffFile),
+) -> Result<(), HunkCountMismatch>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    parse_diff_lines_with_raw(lines, |f, _raw| on_file(f));
+    parse_diff_lines_with_raw(lines, |f, _raw| on_file(f))
 }
 
 /// Parse a `git diff` progressively from any `io::BufRead` (such as `stdin`),
 /// yielding each `DiffFile` and its raw unified diff text to a callback as soon
 /// as it has been completely parsed.
+///
+/// Refuses corrupt hunks with [`HunkCountMismatch`]; see
+/// [`parse_diff_lines_with_raw`].
 pub fn parse_diff_with_raw_from_reader<R: std::io::BufRead>(
     reader: R,
     on_file: impl FnMut(DiffFile, String),
-) {
-    parse_diff_lines_with_raw(reader.lines().map_while(Result::ok), on_file);
+) -> Result<(), HunkCountMismatch> {
+    parse_diff_lines_with_raw(reader.lines().map_while(Result::ok), on_file)
 }
 
 /// Parse a `git diff` progressively, yielding each `DiffFile` to a callback
 /// as soon as it has been completely parsed.
-pub fn parse_diff_for_each(raw: &str, on_file: impl FnMut(DiffFile)) {
-    parse_diff_lines(raw.split('\n'), on_file);
+///
+/// Refuses corrupt hunks with [`HunkCountMismatch`]; see
+/// [`parse_diff_lines_with_raw`].
+pub fn parse_diff_for_each(
+    raw: &str,
+    on_file: impl FnMut(DiffFile),
+) -> Result<(), HunkCountMismatch> {
+    parse_diff_lines(raw.split('\n'), on_file)
 }
 
 /// Parse a `git diff` progressively from any `io::BufRead` (such as `stdin`),
 /// yielding each `DiffFile` to a callback as soon as it has been completely
 /// parsed.
-pub fn parse_diff_from_reader<R: std::io::BufRead>(reader: R, on_file: impl FnMut(DiffFile)) {
-    parse_diff_lines(reader.lines().map_while(Result::ok), on_file);
+///
+/// Refuses corrupt hunks with [`HunkCountMismatch`]; see
+/// [`parse_diff_lines_with_raw`].
+pub fn parse_diff_from_reader<R: std::io::BufRead>(
+    reader: R,
+    on_file: impl FnMut(DiffFile),
+) -> Result<(), HunkCountMismatch> {
+    parse_diff_lines(reader.lines().map_while(Result::ok), on_file)
 }
 
 /// Parse a `git diff` into files, hunks, and rows.
-pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
+///
+/// Fails with [`HunkCountMismatch`] when any hunk header disagrees with its
+/// rows; see [`parse_diff_lines_with_raw`].
+pub fn parse_diff(raw: &str) -> Result<Vec<DiffFile>, HunkCountMismatch> {
     let mut files: Vec<DiffFile> = Vec::new();
-    parse_diff_for_each(raw, |f| files.push(f));
-    files
+    parse_diff_for_each(raw, |f| files.push(f))?;
+    Ok(files)
 }

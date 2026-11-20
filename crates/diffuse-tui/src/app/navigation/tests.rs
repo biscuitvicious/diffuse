@@ -13,7 +13,7 @@ fn sample_output() -> PipelineOutput {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
       let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -49,7 +49,7 @@ fn test_app_state_scroll_through_all_rows() {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -250,7 +250,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
         lines2.push_str(&format!("file2 line {i}\n"));
     }
     let diff = format!(
-        "diff --git a/file1.rs b/file1.rs\nindex 000..111 100644\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,30 +1,30 @@\n{lines1}diff --git a/file2.rs b/file2.rs\nindex 222..333 100644\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,30 +1,30 @@\n{lines2}"
+        "diff --git a/file1.rs b/file1.rs\nindex 000..111 100644\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,0 +1,0 @@\n{lines1}diff --git a/file2.rs b/file2.rs\nindex 222..333 100644\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,0 +1,0 @@\n{lines2}"
     );
     let new_content = [
         ("file1.rs".to_string(), lines1),
@@ -457,7 +457,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
         lines.push_str(&format!("line {i}\n"));
     }
     let diff = format!(
-        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -1,50 +1,50 @@\n{lines}"
+        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -1,1 +1,1 @@\n{lines}"
     );
     let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
 
@@ -895,7 +895,7 @@ fn test_move_down_up_wrap_around_edges() {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,4 +1025,5 @@ fn test() {
      let x = 1;
 -    // old comment
 +    // new comment
@@ -1472,11 +1472,11 @@ fn test_jump_to_opposing_move_side() {
     let diff = r#"diff --git a/test.rs b/test.rs
 --- a/test.rs
 +++ b/test.rs
-@@ -1,4 +1,3 @@
+@@ -1,3 +1,2 @@
  fn first() {
 -    moved_item();
  }
-@@ -42,3 +41,4 @@
+@@ -42,2 +41,3 @@
  fn second() {
 +    moved_item();
  }

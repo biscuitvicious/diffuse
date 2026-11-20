@@ -10,7 +10,7 @@ use crate::{
 };
 #[test]
 fn test_incremental_file_append_and_streaming_navigation() {
-    let diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_mod() {}\ndiff --git a/file2.rs b/file2.rs\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,2 +1,2 @@\n-fn two() {}\n+fn two_mod() {}\n";
+    let diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,1 +1,1 @@\n-fn one() {}\n+fn one_mod() {}\ndiff --git a/file2.rs b/file2.rs\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,1 +1,1 @@\n-fn two() {}\n+fn two_mod() {}\n";
     let new_content = [
         ("file1.rs".to_string(), "fn one_mod() {}\n".to_string()),
         ("file2.rs".to_string(), "fn two_mod() {}\n".to_string()),
@@ -171,7 +171,7 @@ fn test_reset_for_streaming_reload() {
 
 #[test]
 fn test_reload_files_preserves_cursor_and_screen_position() {
-    let diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_mod() {}\ndiff --git a/file2.rs b/file2.rs\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,2 +1,2 @@\n-fn two() {}\n+fn two_mod() {}\n";
+    let diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,1 +1,1 @@\n-fn one() {}\n+fn one_mod() {}\ndiff --git a/file2.rs b/file2.rs\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,1 +1,1 @@\n-fn two() {}\n+fn two_mod() {}\n";
     let new_content = [
         ("file1.rs".to_string(), "fn one_mod() {}\n".to_string()),
         ("file2.rs".to_string(), "fn two_mod() {}\n".to_string()),
@@ -204,7 +204,7 @@ fn test_reload_files_preserves_cursor_and_screen_position() {
     assert_eq!(snapshot.file_path, "file2.rs");
 
     // Simulate reloading file1.rs only
-    let updated_file1_diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_v2() {}\n";
+    let updated_file1_diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,1 +1,1 @@\n-fn one() {}\n+fn one_v2() {}\n";
     let updated_file1_content = [("file1.rs".to_string(), "fn one_v2() {}\n".to_string())]
         .into_iter()
         .collect();

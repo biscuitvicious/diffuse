@@ -432,7 +432,7 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
             f.diff
         }
     };
-    let files = Arc::new(parse_diff(&diff));
+    let files = Arc::new(parse_diff(&diff).unwrap());
     let num_threads = available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
     let counter = Arc::new(AtomicUsize::new(0));
 

@@ -1831,7 +1831,8 @@ fn run_pipeline_for_generation(fixture: &Fixture, opts: PipelineOptions) -> Pipe
                 std::panic::resume_unwind(payload);
             }
         }
-    });
+    })
+    .expect("golden fixture diff must carry exact hunk counts");
     PipelineOutput {
         files,
         branch: String::new(),
@@ -2167,7 +2168,8 @@ fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
         // (its context rows carry one side's text), so the tape applies
         // cleanly only after the resurface pass — a no-op for
         // default-generated tapes.
-        let mut resurfaced = diffuse::core::parse::parse_diff(&slice);
+        let mut resurfaced = diffuse::core::parse::parse_diff(&slice)
+            .expect("fixture diff slice must carry exact hunk counts");
         let old_refs: Vec<&str> = old_vec.iter().map(String::as_str).collect();
         let new_refs: Vec<&str> = new.split('\n').collect();
         for f in resurfaced.iter_mut() {

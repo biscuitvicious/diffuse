@@ -24,7 +24,7 @@ fn sample_output() -> PipelineOutput {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -80,7 +80,7 @@ fn test_clicking_file_header_triangle_toggles_collapse() {
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
+@@ -1025,3 +1025,4 @@ fn test() {
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
@@ -388,7 +388,7 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
     assert!(sep.is_some());
 
     let frame = state.render_frame(120, 40);
-    assert!(frame.contains("@@ -1025,6 +1025,8 @@"), "raw @@ header");
+    assert!(frame.contains("@@ -1025,3 +1025,4 @@"), "raw @@ header");
     // Raw markers render in kind colors. Asserted on visible text plus
     // live color, not byte adjacency (the optimizer drops redundant
     // repeats, carrying the color forward instead).
@@ -496,7 +496,7 @@ fn test_raw_diff_exact_input_reproduction() {
 #[test]
 fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
     let mut diff = String::from(
-        "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,40 +1,40 @@\n",
+        "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,50 +1,50 @@\n",
     );
     let mut lines = Vec::new();
     for i in 1..=50 {
@@ -584,7 +584,7 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
     let diff = r#"diff --git a/test.rs b/test.rs
 --- a/test.rs
 +++ b/test.rs
-@@ -1,1 +1,1 @@
+@@ -1,0 +1,1 @@
 +6. Segment Rule: Each upper captures the contiguous run of read-only layers directly beneath it.
 "#;
     let new_content = [(
@@ -623,7 +623,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
     let diff = r#"diff --git a/cache.rs b/cache.rs
 --- a/cache.rs
 +++ b/cache.rs
-@@ -80,5 +86,5 @@
+@@ -80,6 +86,6 @@
   context line 80
   context line 81
 -/// LRU cache for path resolution results with modtime validation.
@@ -716,7 +716,7 @@ index 6f6222d..4aa7a1d 100644
  use super::{Intent, Links, ResolutionResult};
 
  // ── Cache Key
-@@ -76,55 +82,104 @@ impl ResolutionFingerprint {
+@@ -76,57 +82,104 @@ impl ResolutionFingerprint {
  }
 
  // ── Resolution Cache ────────────────────────────────────────────────────────
@@ -1209,17 +1209,17 @@ fn test_expand_all_and_reset_context_re_inserts_hunk_dividers() {
 index 111..222 100644
 --- a/cache.rs
 +++ b/cache.rs
-@@ -1,5 +1,5 @@
+@@ -1,3 +1,3 @@
  fn h1() {
 -    let x = 1;
 +    let x = 10;
  }
-@@ -30,5 +30,5 @@
+@@ -30,3 +30,3 @@
  fn h2() {
 -    let y = 2;
 +    let y = 20;
  }
-@@ -60,5 +60,5 @@
+@@ -60,3 +60,3 @@
  fn h3() {
 -    let z = 3;
 +    let z = 30;
@@ -1296,7 +1296,7 @@ fn test_h1_divider_down_arrow_click_expands_top_and_stays_in_view() {
 index 1111111..2222222 100644
 --- a/TODO.md
 +++ b/TODO.md
-@@ -10,4 +10,6 @@
+@@ -10,3 +10,5 @@
  // line 10
 +// line 11 added
 +// line 12 added
@@ -2417,7 +2417,7 @@ fn test_render_ratatui_frame_layout() {
     let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,2 +1,2 @@
+@@ -1,3 +1,3 @@
  fn hello() {
 -    println!("old");
 +    println!("new");
@@ -2487,7 +2487,7 @@ fn test_render_ratatui_frame_modals_overlay() {
     let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,2 +1,2 @@
+@@ -1,3 +1,3 @@
  fn hello() {
 -    println!("old");
 +    println!("new");
@@ -2606,7 +2606,7 @@ fn test_render_ratatui_frame_note_modal_overlay_with_range_selection() {
     let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,5 +1,5 @@
+@@ -1,3 +1,3 @@
 -fn old_one() {}
 -fn old_two() {}
 -fn old_three() {}

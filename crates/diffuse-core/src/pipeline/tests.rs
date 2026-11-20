@@ -162,7 +162,7 @@ index 111..222 100644
 
 #[test]
 fn test_run_pipeline_full_with_old_contents() {
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -250,5 +250,5 @@\n                     origin: Mount::Overlay {\n-                    resolved_layers: unresolved,\n+                    layers: unresolved,\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -250,2 +250,2 @@\n                     origin: Mount::Overlay {\n-                    resolved_layers: unresolved,\n+                    layers: unresolved,\n";
     let mut new_content = HashMap::new();
     new_content.insert(
         "src/lib.rs".to_string(),
@@ -408,7 +408,7 @@ diff --git a/src/merge/mod.rs b/src/merge/mod.rs
 index 1111111..2222222 100644
 --- a/src/merge/mod.rs
 +++ b/src/merge/mod.rs
-@@ -556,8 +556,8 @@
+@@ -556,5 +556,5 @@
          }
              if same_kind && share > 0 {
 -            last.text.push_str(&run.text);
@@ -449,12 +449,12 @@ fn test_moved_line_source_in_source_hunk_and_target_in_target_hunk() {
     let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -10,3 +10,2 @@
+@@ -10,4 +10,3 @@
  fn alpha() {
 -    moved_statement();
      remain_a();
  }
-@@ -50,2 +49,3 @@
+@@ -50,3 +49,4 @@
  fn beta() {
 +    moved_statement();
      remain_b();
@@ -570,7 +570,7 @@ fn test_head_commit_hunk_render() {
     let diff = r#"diff --git a/crates/diffuse-core/src/moves/mod.rs b/crates/diffuse-core/src/moves/mod.rs
 --- a/crates/diffuse-core/src/moves/mod.rs
 +++ b/crates/diffuse-core/src/moves/mod.rs
-@@ -143,18 +147,65 @@ pub fn mark_moves(f: &mut DiffFile) {
+@@ -143,14 +147,61 @@ pub fn mark_moves(f: &mut DiffFile) {
              if matches!(r, Row::Del { .. }) {
                  run.push((hi, ri));
              } else {
@@ -763,7 +763,11 @@ fn test_binary_file_preserves_new_bytes_and_calculates_size() {
 index 0000000..abcdef1 100644
 Binary files differ
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.new_bytes = Some(4096);
     f.old_bytes = Some(2048);
     let opts = PipelineOptions::default();
@@ -783,7 +787,11 @@ fn test_binary_file_falls_back_to_fs_metadata_for_size() {
     fs::write(&file_path, vec![0u8; 8192]).unwrap();
 
     let diff = "diff --git a/image.bin b/image.bin\nBinary files differ\n";
-    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     let opts =
         PipelineOptions::default().with_repo_key(Some(dir.path().to_str().unwrap().to_string()));
     let out = process_single_diff_file(f, None, None, None, &opts);
@@ -801,7 +809,11 @@ new file mode 100644
 +++ b/.gitkeep
 @@ -0,0 +0,0 @@
 "#;
-    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     let opts = PipelineOptions::default();
     let out = process_single_diff_file(f, Some(""), None, None, &opts);
     assert_eq!(out.new_bytes, Some(0));
@@ -820,7 +832,11 @@ deleted file mode 100644
 @@ -1,1 +0,0 @@
 -hello
 "#;
-    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     let opts = PipelineOptions::default();
     let out = process_single_diff_file(f, None, Some("hello\n"), None, &opts);
     assert_eq!(out.new_bytes, None);
@@ -839,7 +855,11 @@ fn test_empty_file_modified_to_content_shows_zero_to_new_size() {
 @@ -0,0 +1,1 @@
 +keep
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.old_bytes = Some(0);
     f.new_bytes = Some(5);
     let opts = PipelineOptions::default();
@@ -854,7 +874,11 @@ fn test_unknown_size_does_not_show_zero_prefix() {
     let diff = r#"diff --git a/binary.dat b/binary.dat
 Binary files differ
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.old_bytes = None; // could not be determined
     f.new_bytes = Some(1024);
     let opts = PipelineOptions::default();
@@ -869,7 +893,11 @@ fn test_modified_unknown_new_size_does_not_show_old_size() {
     let diff = r#"diff --git a/binary.dat b/binary.dat
 Binary files differ
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.old_bytes = Some(1024);
     f.new_bytes = None; // could not be determined
     let opts = PipelineOptions::default();
@@ -884,7 +912,11 @@ fn test_modified_both_sizes_unknown() {
     let diff = r#"diff --git a/binary.dat b/binary.dat
 Binary files differ
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.old_bytes = None;
     f.new_bytes = None;
     let opts = PipelineOptions::default();
@@ -904,7 +936,11 @@ fn test_file_size_not_guessed_by_summing_lines() {
 -old line
 +new line
 "#;
-    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     let opts = PipelineOptions::default();
     // Neither old_content nor new_content provided, and no git repo blob size:
     let out = process_single_diff_file(f, None, None, None, &opts);
@@ -922,6 +958,7 @@ new file mode 100644
 +hello
 "#;
     let f_add = crate::parse::parse_diff(diff_add)
+        .unwrap()
         .into_iter()
         .next()
         .unwrap();
@@ -940,6 +977,7 @@ deleted file mode 100644
 -hello
 "#;
     let f_del = crate::parse::parse_diff(diff_del)
+        .unwrap()
         .into_iter()
         .next()
         .unwrap();
@@ -959,7 +997,11 @@ fn test_formatted_size_identical_renders_single_size() {
 -old content
 +new content!
 "#;
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     // 15110 bytes (14.755 kB) and 15115 bytes (14.760 kB) both format to
     // "14.8kB"
     f.old_bytes = Some(15110);
@@ -975,7 +1017,11 @@ fn test_formatted_size_identical_renders_single_size() {
     assert_eq!(out.display_status(), "15kB +5B");
 
     // Exact equal byte sizes also render single formatted size
-    let mut f_exact = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f_exact = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f_exact.old_bytes = Some(2048);
     f_exact.new_bytes = Some(2048);
     let out_exact = process_single_diff_file(f_exact, None, None, None, &opts);
@@ -996,7 +1042,11 @@ index 1111111..0000000
 -line 3
 "#;
     let old_content = "line 1\nline 2\nline 3\n";
-    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     assert!(is_initially_collapsed(&f));
 
     let lazy_opts = PipelineOptions::default().with_lazy_collapsed(true);
@@ -1039,7 +1089,11 @@ untracked file mode 100644
 +new line 2
 "#;
     let new_content = "new line 1\nnew line 2\n";
-    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     f.status = crate::parse::FileStatus::Untracked;
     assert!(is_initially_collapsed(&f));
 
@@ -1451,14 +1505,14 @@ fn test_markdown_and_doc_comment_table_pipeline() {
     let diff = "diff --git a/test.md b/test.md\n\
                 --- a/test.md\n\
                 +++ b/test.md\n\
-                @@ -1,3 +1,3 @@\n\
+                @@ -1,0 +1,3 @@\n\
                 +| Col A | Col B |\n\
                 +| :--- | :---: |\n\
                 +| val1 | val2 |\n\
                 diff --git a/test.rs b/test.rs\n\
                 --- a/test.rs\n\
                 +++ b/test.rs\n\
-                @@ -1,3 +1,3 @@\n\
+                @@ -1,0 +1,3 @@\n\
                 +/// | Header A | Header B |\n\
                 +/// | :--- | :---: |\n\
                 +/// | Item 1 | Item 2 |\n";
@@ -1683,7 +1737,7 @@ diff --git a/test.md b/test.md
 new file mode 100644
 --- /dev/null
 +++ b/test.md
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,4 @@
 +```mermaid
 +flowchart TD
 +  A --> B
@@ -2171,7 +2225,7 @@ fn test_expand_anchor_marks_moved_source() {
     let diff = r#"diff --git a/crates/diffuse/src/main_tests.rs b/crates/diffuse/src/main_tests.rs
 --- a/crates/diffuse/src/main_tests.rs
 +++ b/crates/diffuse/src/main_tests.rs
-@@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
+@@ -131,5 +131,8 @@ fn test_resolve_theme_prefers_cli_flag() {
      let _guard = ENV_MUTEX.lock().unwrap();
      unsafe { env::remove_var("DIFFUSE_THEME") };
      assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::dark());
@@ -2241,7 +2295,7 @@ fn test_expand_aux_marks_moved_target() {
     let diff = r#"diff --git a/crates/diffuse/src/main_tests.rs b/crates/diffuse/src/main_tests.rs
 --- a/crates/diffuse/src/main_tests.rs
 +++ b/crates/diffuse/src/main_tests.rs
-@@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
+@@ -131,5 +131,8 @@ fn test_resolve_theme_prefers_cli_flag() {
      let _guard = ENV_MUTEX.lock().unwrap();
      unsafe { env::remove_var("DIFFUSE_THEME") };
      assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::dark());
@@ -2314,7 +2368,7 @@ fn test_reflow_anchor_prefers_head_line() {
     let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
 --- a/crates/diffuse-render/src/ansi.rs
 +++ b/crates/diffuse-render/src/ansi.rs
-@@ -4,7 +4,10 @@
+@@ -4,5 +4,8 @@
  //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
  
 -use std::fmt::{self, Write};
@@ -2360,7 +2414,7 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
     let diff = r#"diff --git a/crates/diffuse-tui/src/app/dispatch.rs b/crates/diffuse-tui/src/app/dispatch.rs
 --- a/crates/diffuse-tui/src/app/dispatch.rs
 +++ b/crates/diffuse-tui/src/app/dispatch.rs
-@@ -350,5 +350,6 @@
+@@ -350,3 +350,4 @@
          if in_viewport {
 +            self.vis_line =
 +                (target_vis - s).min(nav_counts[i].saturating_sub(1));
@@ -2429,7 +2483,7 @@ fn test_reflow_collapse_anchors_and_groups() {
     let diff = r#"diff --git a/crates/diffuse-tui/src/app/dispatch.rs b/crates/diffuse-tui/src/app/dispatch.rs
 --- a/crates/diffuse-tui/src/app/dispatch.rs
 +++ b/crates/diffuse-tui/src/app/dispatch.rs
-@@ -350,6 +350,5 @@
+@@ -350,4 +350,3 @@
          if in_viewport {
 -            self.vis_line =
 -                (target_vis - s).min(nav_counts[i].saturating_sub(1));
@@ -2533,7 +2587,7 @@ fn test_reflow_upward_collapse_anchors_and_groups() {
 /// pair must win; the rival stays a pure addition.
 #[test]
 fn test_verbatim_seed_forces_true_move_over_rival() {
-    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,6 @@\n ctx\n-        let prefix = format!(\"{r}@\");\n+            let prefix = format!(\"{repo_name}@\");\n+            let prefix = format!(\"{r}@\");\n ctx2\n";
+    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,4 @@\n ctx\n-        let prefix = format!(\"{r}@\");\n+            let prefix = format!(\"{repo_name}@\");\n+            let prefix = format!(\"{r}@\");\n ctx2\n";
 
     let output = run_pipeline_diff(diff);
     assert_eq!(output.files.len(), 1);
@@ -2573,7 +2627,7 @@ fn test_reflow_aux_brackets_obey_multiplicity() {
     let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
 --- a/crates/diffuse-render/src/ansi.rs
 +++ b/crates/diffuse-render/src/ansi.rs
-@@ -4,7 +4,10 @@
+@@ -4,5 +4,8 @@
  //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
 
 -use std::fmt::{self, Write};
@@ -2629,7 +2683,7 @@ fn test_mod_rows_replay_cleanly() {
     let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
 --- a/crates/diffuse-render/src/ansi.rs
 +++ b/crates/diffuse-render/src/ansi.rs
-@@ -4,7 +4,10 @@
+@@ -4,5 +4,8 @@
  //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
 
 -use std::fmt::{self, Write};
@@ -2694,7 +2748,7 @@ fn test_mod_rows_visible_contiguity() {
     let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
 --- a/crates/diffuse-render/src/ansi.rs
 +++ b/crates/diffuse-render/src/ansi.rs
-@@ -4,7 +4,10 @@
+@@ -4,5 +4,8 @@
  //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
 
 -use std::fmt::{self, Write};
@@ -2805,12 +2859,12 @@ fn test_pipeline_mov_src_and_tgt_carry_matching_runs() {
     let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -10,3 +10,2 @@
+@@ -10,4 +10,3 @@
  fn alpha() {
 -        calculate_total(items);
      remain_a();
  }
-@@ -50,2 +49,3 @@
+@@ -50,3 +49,4 @@
  fn beta() {
 +    calculate_total(items);
      remain_b();
@@ -2860,7 +2914,7 @@ fn test_contiguous_ngram_block_pipeline_integration() {
     let diff = r#"diff --git a/test.rs b/test.rs
 --- a/test.rs
 +++ b/test.rs
-@@ -1,11 +1,7 @@
+@@ -1,12 +1,7 @@
  ctx_before
 -        step_one();
 -        if condition {
@@ -2904,7 +2958,7 @@ fn test_keyword_only_match_across_offset_drift_rejected() {
     let diff = r#"diff --git a/test.rs b/test.rs
 --- a/test.rs
 +++ b/test.rs
-@@ -1,6 +1,7 @@
+@@ -1,5 +1,8 @@
  ctx_before
 -    if handled {
 -        break;
@@ -2935,7 +2989,7 @@ fn test_tier2_residual_declaration_pairing() {
     let diff = r#"diff --git a/src/types.rs b/src/types.rs
 --- a/src/types.rs
 +++ b/src/types.rs
-@@ -20,6 +20,6 @@ ctx_before
+@@ -20,6 +20,5 @@ ctx_before
 -pub enum Side {
 -    Old,
 -    New,
@@ -2963,7 +3017,7 @@ fn test_tier2_residual_rival_in_content_prevents_theft() {
     let diff = r#"diff --git a/src/types.rs b/src/types.rs
 --- a/src/types.rs
 +++ b/src/types.rs
-@@ -20,6 +20,6 @@ ctx_before
+@@ -20,6 +20,5 @@ ctx_before
 -pub enum Side {
 -    Old,
 -    New,
@@ -3351,4 +3405,23 @@ fn test_touching_move_halves_collapse_to_mod() {
         pos_of_new(348) + 1,
         "old 314 must not immediately follow new 348 in row order"
     );
+}
+
+/// A programmatically corrupted `DiffFile` (declared counts disagreeing with
+/// the parsed rows) must trip the pipeline invariant instead of rendering
+/// silently wrong line numbers.
+#[test]
+#[should_panic(expected = "[DBC: INVARIANT FAILED]")]
+fn test_process_single_diff_file_rejects_hunk_count_mismatch() {
+    let diff =
+        "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n";
+    let mut f = crate::parse::parse_diff(diff)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(crate::parse::check_hunk_counts(&f).is_ok());
+    f.hunks[0].old_count = 9;
+    assert!(crate::parse::check_hunk_counts(&f).is_err());
+    process_single_diff_file(f, None, None, None, &PipelineOptions::default());
 }

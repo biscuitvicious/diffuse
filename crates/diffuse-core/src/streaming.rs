@@ -343,6 +343,15 @@ pub fn spawn_streaming_pipeline(
 
 /// Convenience helper to parse a diff and immediately spawn a streaming
 /// pipeline using Arc<String> content maps to avoid allocations.
+///
+/// The input is validated eagerly: a hunk header disagreeing with its rows
+/// is corrupt input, and the pipeline refuses it with an always-firing panic
+/// carrying the precise mismatch rather than rendering wrong line numbers.
+/// That refusal fires in every build (it is an API-misuse guard, not a
+/// debug-only DbC check). Callers holding untrusted input must parse
+/// fallibly first — with [`crate::parse::parse_diff`] or
+/// [`stream_diff_reader`] — and handle [`crate::parse::HunkCountMismatch`]
+/// themselves.
 #[tracing::instrument(level = "trace", skip(diff, new_content, old_content, opts), fields(diff_bytes = diff.len(), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn stream_diff_pipeline_arc(
     diff: Arc<String>,
@@ -353,8 +362,10 @@ pub fn stream_diff_pipeline_arc(
 ) -> StreamingConsumer {
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
 
-    let mut idx = 0;
-    crate::parse::parse_diff_for_each(&diff, |f| {
+    let files = crate::parse::parse_diff(&diff)
+        .unwrap_or_else(|e| panic!("diffuse: refusing corrupt diff input: {e}"));
+
+    for (idx, f) in files.into_iter().enumerate() {
         let new_c = new_content.as_mut().and_then(|nc| nc.remove(&f.path));
         let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
         let old_c = old_content
@@ -367,8 +378,7 @@ pub fn stream_diff_pipeline_arc(
             old_content: old_c,
             diff_fallback: Some(Arc::clone(&diff)),
         });
-        idx += 1;
-    });
+    }
     producer.finish();
 
     consumer
@@ -394,18 +404,29 @@ pub fn stream_diff_pipeline(
 ///
 /// A background reader thread parses files progressively as lines arrive and
 /// pushes each `FileJob` directly to the priority worker queue.
+///
+/// The returned error port carries the terminal parse outcome: when a hunk
+/// header disagrees with its rows the reader stops pushing, closes the
+/// pipeline (files parsed before the corrupt hunk still render), and reports
+/// [`crate::parse::HunkCountMismatch`] here so the caller can surface a
+/// graceful error instead of wrong line numbers. The port always yields
+/// exactly one message once the input is exhausted.
 pub fn stream_diff_reader<R: std::io::BufRead + Send + 'static>(
     reader: R,
     opts: PipelineOptions,
     worker_count: Option<usize>,
     old_dir: Option<PathBuf>,
     new_dir: Option<PathBuf>,
-) -> StreamingConsumer {
+) -> (
+    StreamingConsumer,
+    Receiver<Result<(), crate::parse::HunkCountMismatch>>,
+) {
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
+    let (err_tx, err_rx) = channel();
 
     std::thread::spawn(move || {
         let mut idx = 0;
-        diffuse_parse::parse_diff_with_raw_from_reader(reader, |mut f, raw_diff| {
+        let outcome = diffuse_parse::parse_diff_with_raw_from_reader(reader, |mut f, raw_diff| {
             let new_content = new_dir.as_ref().and_then(|dir| {
                 std::fs::read_to_string(dir.join(&f.path))
                     .ok()
@@ -430,9 +451,10 @@ pub fn stream_diff_reader<R: std::io::BufRead + Send + 'static>(
             idx += 1;
         });
         producer.finish();
+        let _ = err_tx.send(outcome);
     });
 
-    consumer
+    (consumer, err_rx)
 }
 
 /// Spawns a streaming pipeline for pre-parsed `DiffFile` ASTs (e.g. from direct
