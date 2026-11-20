@@ -125,6 +125,25 @@ fn slots_project_to_text(group_rows: &PeerGroupRows) -> bool {
     })
 }
 
+/// Decides the group metadata for slots of a factored peer group. `None`
+/// strips grouping: 1×1 pairs and uniform 1-to-1 Mod runs render as plain
+/// rows, and groups with no strong token link (neither a `Mod` anchor nor a
+/// salient moved-token relationship) dissolve to plain Del/Add rather than
+/// implying a reflow that slot alignment found no evidence for.
+fn peer_group_meta(
+    n: usize,
+    m: usize,
+    has_strong_link: bool,
+    is_all_1to1_mods: bool,
+    group: RowGroup,
+) -> Option<RowGroup> {
+    if (n == 1 && m == 1) || is_all_1to1_mods || !has_strong_link {
+        None
+    } else {
+        Some(group)
+    }
+}
+
 fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     enum Item {
         PeerGroup(Vec<Row>),
@@ -353,14 +372,19 @@ pub fn peer_reflow_pipeline(
                             continue;
                         }
 
+                        let has_salient_link =
+                            crate::collapse::slot::has_salient_moved_link(&group_rows, profile);
+                        let has_strong_link = has_mod || has_salient_link;
                         for slot in group_rows.slots {
                             let old_text = slot.old_text.clone().unwrap_or_default();
                             let new_text = slot.new_text.clone().unwrap_or_default();
-                            let group_meta = if (n == 1 && m == 1) || is_all_1to1_mods || !has_mod {
-                                None
-                            } else {
-                                Some(slot.group)
-                            };
+                            let group_meta = peer_group_meta(
+                                n,
+                                m,
+                                has_strong_link,
+                                is_all_1to1_mods,
+                                slot.group,
+                            );
 
                             match (slot.old_line, slot.new_line) {
                                 (Some(u), Some(v)) => {
@@ -380,7 +404,7 @@ pub fn peer_reflow_pipeline(
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
                                         });
-                                    } else if n == 0 || !has_mod {
+                                    } else if n == 0 || group_meta.is_none() {
                                         cluster_out.push(Row::Add(AddLine::new(v, new_text)));
                                     } else {
                                         cluster_out.push(Row::AuxAdd {
@@ -400,7 +424,7 @@ pub fn peer_reflow_pipeline(
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
                                         });
-                                    } else if m == 0 || !has_mod {
+                                    } else if m == 0 || group_meta.is_none() {
                                         cluster_out.push(Row::Del(DelLine::new(u, old_text)));
                                     } else {
                                         cluster_out.push(Row::AuxDel {
@@ -801,6 +825,130 @@ mod tests {
         assert_eq!(peer[3].kind(), RowKind::Add);
         assert_eq!(peer[4].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
+    }
+
+    #[test]
+    fn test_peer_pipeline_no_mod_salient_link_admitted() {
+        use crate::{
+            cluster::factor::FactoredGroup,
+            collapse::slot::{align_and_type_peer_group, has_salient_moved_link},
+            parse::{AddLine, DelLine, GroupId},
+        };
+
+        let dels = vec![
+            Row::Del(DelLine::new(11, "aaa row bbb")),
+            Row::Del(DelLine::new(12, "ccc row ddd")),
+        ];
+        let adds = vec![
+            Row::Add(AddLine::new(11, "eee row fff")),
+            Row::Add(AddLine::new(12, "ggg row hhh")),
+        ];
+        let group = FactoredGroup {
+            id: GroupId(1),
+            old_range: 0..2,
+            new_range: 0..2,
+        };
+        let mut aligned = align_and_type_peer_group(&group, &dels, &adds, None);
+        aligned.repair_unmatched_moves();
+        aligned.assert_token_conservation();
+        // No pair was admissible, so every slot stays single-sided …
+        assert!(
+            aligned
+                .slots
+                .iter()
+                .all(|s| s.old_line.is_none() || s.new_line.is_none()),
+            "expected no Mod slots, got {:?}",
+            aligned.slots
+        );
+        // … yet the shared identifier survives as a balanced moved link.
+        assert!(has_salient_moved_link(&aligned, None));
+        // The gate therefore keeps grouping instead of dissolving.
+        let meta = peer_group_meta(2, 2, true, false, aligned.slots[0].group);
+        assert_eq!(meta, Some(aligned.slots[0].group));
+    }
+
+    #[test]
+    fn test_peer_group_meta_truth_table() {
+        let group = RowGroup::Peer {
+            id: GroupId(7),
+            slot: 0,
+            n: 2,
+            m: 3,
+        };
+        assert_eq!(peer_group_meta(1, 1, true, false, group), None);
+        assert_eq!(peer_group_meta(2, 2, true, true, group), None);
+        assert_eq!(peer_group_meta(2, 3, false, false, group), None);
+        assert_eq!(peer_group_meta(2, 3, true, false, group), Some(group));
+    }
+
+    #[test]
+    fn test_peer_pipeline_no_mod_delimiter_only_stripped() {
+        let hunk = Hunk {
+            old_start: 10,
+            old_count: 4,
+            new_start: 10,
+            new_count: 4,
+            rows: vec![
+                make_ctx(10, 10, "fn setup() {"),
+                make_del(11, "aaa;bbb"),
+                make_del(12, "ccc;ddd"),
+                make_add(11, "eee;fff"),
+                make_add(12, "ggg;hhh"),
+                make_ctx(13, 13, "}"),
+            ],
+            ..Default::default()
+        };
+
+        let res = peer_reflow_pipeline(&hunk, None, None, None);
+        assert_eq!(res.len(), 6);
+        assert!(matches!(res[0], Row::Ctx(_)));
+        assert!(matches!(res[5], Row::Ctx(_)));
+        for r in &res[1..5] {
+            assert!(
+                matches!(r, Row::Del(_) | Row::Add(_)),
+                "expected plain row, got {:?}",
+                r
+            );
+            assert_eq!(r.group(), None);
+        }
+        assert_peer_group_invariants(&res);
+    }
+
+    #[test]
+    fn test_peer_pipeline_single_pair_rival_stays_plain() {
+        // A verbatim rival elsewhere in the old snapshot blocks Mod pairing,
+        // and the shared identifier still relocates — but a lone pair is not
+        // a group: it must dissolve to plain Del/Add, never to anchor-less
+        // Aux rows (legacy reflow invariants reject orphan aux rows, and the
+        // peer pipeline emits no Anchor rows at all).
+        let hunk = Hunk {
+            old_start: 10,
+            old_count: 3,
+            new_start: 10,
+            new_count: 3,
+            rows: vec![
+                make_ctx(10, 10, "fn setup() {"),
+                make_del(11, "pub enum Alpha {"),
+                make_add(11, "pub struct Alpha {"),
+                make_ctx(12, 12, "}"),
+            ],
+            ..Default::default()
+        };
+        let old_content = [
+            "fn setup() {",
+            "pub struct Alpha {",
+            "pub enum Alpha {",
+            "}",
+        ];
+        let new_content = ["fn setup() {", "pub struct Alpha {", "}"];
+
+        let res = peer_reflow_pipeline(&hunk, Some(&old_content), Some(&new_content), None);
+        assert_eq!(res.len(), 4);
+        assert!(matches!(res[1], Row::Del(_)), "got {:?}", res[1]);
+        assert!(matches!(res[2], Row::Add(_)), "got {:?}", res[2]);
+        assert_eq!(res[1].group(), None);
+        assert_eq!(res[2].group(), None);
+        assert_peer_group_invariants(&res);
     }
 
     #[test]

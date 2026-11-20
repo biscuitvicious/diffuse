@@ -712,6 +712,21 @@ fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
     has
 }
 
+/// Whether a peer group without any paired `Mod` slot still establishes a
+/// strong cross-slot relationship: at least one balanced
+/// `MovedSrc`/`MovedTgt` run carries a salient identifier token. Call after
+/// [`PeerGroupRows::repair_unmatched_moves`], so any surviving moved run is
+/// balanced by construction; the salient filter rejects delimiter-only
+/// relocations (`};`, `(`, …) that share no identifier content.
+pub(crate) fn has_salient_moved_link(
+    group_rows: &PeerGroupRows,
+    profile: Option<&LangProfile>,
+) -> bool {
+    group_rows.slots.iter().flat_map(|s| &s.runs).any(|(k, t)| {
+        matches!(k, RunKind::MovedSrc | RunKind::MovedTgt) && text_has_salient_token(t, profile)
+    })
+}
+
 fn canonicalize_slot_order<'a>(
     pairs: Vec<(Option<&'a Row>, Option<&'a Row>)>,
 ) -> Vec<(Option<&'a Row>, Option<&'a Row>)> {
@@ -1421,5 +1436,57 @@ mod tests {
             .any(|(k, s)| *k == RunKind::MovedTgt && s.contains("finalize"));
         assert!(has_moved_src, "Expected MovedSrc in slot 2");
         assert!(has_moved_tgt, "Expected MovedTgt in slot 1");
+    }
+
+    fn link_slot(runs: Vec<(RunKind, String)>) -> AlignedSlotRow {
+        AlignedSlotRow {
+            slot_index: 0,
+            old_line: Some(1),
+            new_line: None,
+            old_text: Some("x".to_string()),
+            new_text: None,
+            kind: RowKind::Del,
+            is_moved_src: false,
+            is_moved_tgt: false,
+            runs,
+            spans: Spans::default(),
+            group: RowGroup::Peer {
+                id: GroupId(1),
+                slot: 0,
+                n: 1,
+                m: 1,
+            },
+        }
+    }
+
+    fn link_rows(runs_list: Vec<Vec<(RunKind, String)>>) -> PeerGroupRows {
+        PeerGroupRows {
+            group_id: GroupId(1),
+            slots: runs_list.into_iter().map(link_slot).collect(),
+        }
+    }
+
+    #[test]
+    fn test_has_salient_moved_link_no_moves() {
+        let rows = link_rows(vec![vec![(RunKind::Del, "aaa".to_string())]]);
+        assert!(!has_salient_moved_link(&rows, None));
+    }
+
+    #[test]
+    fn test_has_salient_moved_link_delimiter_only() {
+        let rows = link_rows(vec![vec![(RunKind::MovedSrc, ";".to_string())]]);
+        assert!(!has_salient_moved_link(&rows, None));
+    }
+
+    #[test]
+    fn test_has_salient_moved_link_salient() {
+        let rows = link_rows(vec![vec![(RunKind::MovedSrc, "row".to_string())]]);
+        assert!(has_salient_moved_link(&rows, None));
+    }
+
+    #[test]
+    fn test_has_salient_moved_link_keyword_excluded() {
+        let rows = link_rows(vec![vec![(RunKind::MovedSrc, "let".to_string())]]);
+        assert!(!has_salient_moved_link(&rows, None));
     }
 }
