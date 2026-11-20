@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{MovSide, OutputRun, runs_new_text, runs_old_text};
 use crate::{
     merge::RunKind,
-    parse::{AddLine, CtxLine, DelLine, Row, RowGroup, RowKind, Spans},
+    parse::{AddLine, CtxLine, DelLine, PeerGroup, Row, RowKind, Spans},
 };
 
 /// Optional trailing metadata flags on a serialized compact row tuple.
@@ -23,7 +23,7 @@ pub struct RowFlags {
     #[serde(default, skip_serializing_if = "Not::not")]
     pub wholesale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<RowGroup>,
+    pub group: Option<PeerGroup>,
 }
 
 impl RowFlags {
@@ -45,7 +45,7 @@ pub struct OutputRow {
     pub old_line: Option<u32>,
     pub runs: Vec<OutputRun>,
     pub wholesale: bool,
-    pub group: Option<RowGroup>,
+    pub group: Option<PeerGroup>,
 }
 
 impl OutputRow {
@@ -57,7 +57,7 @@ impl OutputRow {
         });
         std::mem::swap(&mut self.new_line, &mut self.old_line);
         self.runs = self.runs.into_iter().map(OutputRun::reverse).collect();
-        self.group = self.group.map(RowGroup::reverse);
+        self.group = self.group.map(PeerGroup::reverse);
         self
     }
 
@@ -69,7 +69,7 @@ impl OutputRow {
     /// Whether this row belongs to an N -> M peer reflow group.
     #[inline]
     pub fn is_peer(&self) -> bool {
-        matches!(self.group, Some(RowGroup::Peer { .. }))
+        self.group.is_some()
     }
 
     /// Computes the new-side line text projected across this row's runs (Ctx +

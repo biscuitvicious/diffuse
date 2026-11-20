@@ -187,7 +187,7 @@ fn test_diff_components_reverse_involution() {
         line: AddLine::new(105, "grouped text"),
         spans: spans.clone(),
         cached_runs: vec![(RunKind::MovedTgt, "grouped text".to_string())],
-        group: Some(RowGroup::Peer {
+        group: Some(PeerGroup {
             id: GroupId(3),
             slot: 1,
             n: 2,
@@ -197,7 +197,7 @@ fn test_diff_components_reverse_involution() {
     let rev_grouped = grouped_add.clone().reverse();
     assert_eq!(
         rev_grouped.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             id: GroupId(3),
             slot: 1,
             n: 3,
@@ -213,7 +213,7 @@ fn test_diff_components_reverse_involution() {
         new_line: AddLine::new(42, "new line text"),
         spans: spans.clone(),
         cached_runs: Vec::new(),
-        group: Some(RowGroup::Peer {
+        group: Some(PeerGroup {
             id: GroupId(3),
             slot: 1,
             n: 2,
@@ -223,7 +223,7 @@ fn test_diff_components_reverse_involution() {
     let rev_grouped_mod = grouped_mod.clone().reverse();
     assert_eq!(
         rev_grouped_mod.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             id: GroupId(3),
             slot: 1,
             n: 3,
@@ -231,6 +231,18 @@ fn test_diff_components_reverse_involution() {
         })
     );
     assert_eq!(rev_grouped_mod.reverse(), grouped_mod);
+}
+
+#[test]
+fn peer_group_wire_shape_has_no_role_tag() {
+    let group = PeerGroup {
+        id: GroupId(1),
+        slot: 2,
+        n: 5,
+        m: 6,
+    };
+    let json = serde_json::to_string(&group).unwrap();
+    assert_eq!(json, r#"{"id":1,"slot":2,"n":5,"m":6}"#);
 }
 
 #[test]

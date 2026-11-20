@@ -578,11 +578,11 @@ fn assert_diff_invariants(
             let mut i = 0;
             while i < oh.rows.len() {
                 let r = &oh.rows[i];
-                if let Some(gid) = r.group.and_then(|g| g.peer_id()) {
+                if let Some(gid) = r.group.map(|g| g.id) {
                     let mut group = vec![r.clone()];
                     let mut j = i + 1;
                     while j < oh.rows.len() {
-                        if oh.rows[j].group.and_then(|g| g.peer_id()) == Some(gid) {
+                        if oh.rows[j].group.map(|g| g.id) == Some(gid) {
                             group.push(oh.rows[j].clone());
                             j += 1;
                             continue;

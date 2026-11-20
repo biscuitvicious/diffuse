@@ -7,7 +7,7 @@ use crate::{
     cluster::factor::FactoredGroup,
     lcs::{spans::word_spans_and_runs_with_profile, tokenize_line},
     merge::RunKind,
-    parse::{GroupId, Row, RowGroup, RowKind, Spans},
+    parse::{GroupId, PeerGroup, Row, RowKind, Spans},
 };
 
 /// An aligned slot within a peer reflow group.
@@ -23,7 +23,7 @@ pub struct AlignedSlotRow {
     pub is_moved_tgt: bool,
     pub runs: Vec<(RunKind, String)>,
     pub spans: Spans,
-    pub group: RowGroup,
+    pub group: PeerGroup,
 }
 
 /// Result of aligning and typing tokens for a factored peer reflow group.
@@ -162,7 +162,7 @@ pub fn align_and_type_peer_group_with_content(
                 is_moved_tgt: false,
                 runs: vec![(RunKind::Ctx, u.text().to_string())],
                 spans: Spans::default(),
-                group: RowGroup::Peer {
+                group: PeerGroup {
                     id: group.id,
                     slot: 0,
                     n: 1,
@@ -194,7 +194,7 @@ pub fn align_and_type_peer_group_with_content(
                     is_moved_tgt: false,
                     runs,
                     spans,
-                    group: RowGroup::Peer {
+                    group: PeerGroup {
                         id: group.id,
                         slot: 0,
                         n: 1,
@@ -326,7 +326,7 @@ pub fn align_and_type_peer_group_with_content(
             is_moved_tgt,
             runs,
             spans,
-            group: RowGroup::Peer {
+            group: PeerGroup {
                 id: group.id,
                 slot: idx,
                 n,
@@ -477,7 +477,7 @@ fn align_expansion_1_to_m(
         is_moved_tgt: false,
         spans: compute_slot_spans(&slot_0_runs),
         runs: slot_0_runs,
-        group: RowGroup::Peer {
+        group: PeerGroup {
             id: group.id,
             slot: 0,
             n: 1,
@@ -499,7 +499,7 @@ fn align_expansion_1_to_m(
             is_moved_tgt: false,
             spans,
             runs,
-            group: RowGroup::Peer {
+            group: PeerGroup {
                 id: group.id,
                 slot: k,
                 n: 1,
@@ -650,7 +650,7 @@ fn align_collapse_n_to_1(
         is_moved_tgt: false,
         spans: compute_slot_spans(&slot_0_runs),
         runs: slot_0_runs,
-        group: RowGroup::Peer {
+        group: PeerGroup {
             id: group.id,
             slot: 0,
             n,
@@ -672,7 +672,7 @@ fn align_collapse_n_to_1(
             is_moved_tgt: false,
             spans,
             runs,
-            group: RowGroup::Peer {
+            group: PeerGroup {
                 id: group.id,
                 slot: k,
                 n,
@@ -1450,7 +1450,7 @@ mod tests {
             is_moved_tgt: false,
             runs,
             spans: Spans::default(),
-            group: RowGroup::Peer {
+            group: PeerGroup {
                 id: GroupId(1),
                 slot: 0,
                 n: 1,

@@ -3,7 +3,7 @@ use crate::{
     ansi::ColorExt,
     core::{
         merge::RunKind,
-        parse::{GroupId, RowGroup, RowKind, Spans},
+        parse::{GroupId, PeerGroup, RowKind, Spans},
         wire::{ModGlyph, ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
@@ -12,8 +12,8 @@ use crate::{
 use diffuse_syntax::color::TokenColor;
 
 /// Compound peer group fixture: grouped rows render the reflow `~` markers.
-fn peer_group() -> RowGroup {
-    RowGroup::Peer {
+fn peer_group() -> PeerGroup {
+    PeerGroup {
         id: GroupId(7),
         slot: 0,
         n: 2,
@@ -27,7 +27,7 @@ fn peer_group() -> RowGroup {
 fn emitted_prefix(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],

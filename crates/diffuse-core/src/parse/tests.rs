@@ -187,7 +187,7 @@ fn test_diff_components_reverse_involution() {
         line: AddLine::new(105, "grouped text"),
         spans: spans.clone(),
         cached_runs: vec![(crate::merge::RunKind::MovedTgt, "grouped text".to_string())],
-        group: Some(crate::parse::RowGroup::Peer {
+        group: Some(crate::parse::PeerGroup {
             id: crate::parse::GroupId(3),
             slot: 1,
             n: 2,
@@ -197,7 +197,7 @@ fn test_diff_components_reverse_involution() {
     let rev_grouped = grouped_add.clone().reverse();
     assert_eq!(
         rev_grouped.group(),
-        Some(crate::parse::RowGroup::Peer {
+        Some(crate::parse::PeerGroup {
             id: crate::parse::GroupId(3),
             slot: 1,
             n: 3,

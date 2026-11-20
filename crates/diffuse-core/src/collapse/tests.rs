@@ -296,7 +296,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(c[0].new_line(), Some(912));
     assert!(matches!(
         c[0].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 3,
             m: 1,
@@ -308,7 +308,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(c[1].old_line(), Some(757));
     assert!(matches!(
         c[1].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 3,
             m: 1,
@@ -320,7 +320,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(c[2].old_line(), Some(758));
     assert!(matches!(
         c[2].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 2,
             n: 3,
             m: 1,
@@ -366,7 +366,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(m2.new_line(), Some(903));
     assert!(matches!(
         m2.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 3,
             m: 1,
@@ -378,7 +378,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(c2[1].old_line(), Some(746));
     assert!(matches!(
         c2[1].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 3,
             m: 1,
@@ -390,7 +390,7 @@ fn reflow_pairing_first_del() {
     assert_eq!(c2[2].old_line(), Some(747));
     assert!(matches!(
         c2[2].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 2,
             n: 3,
             m: 1,
@@ -494,7 +494,7 @@ fn del_only_run_folds_into_one_mod() {
     assert_eq!(c[0].new_line(), Some(903));
     assert!(matches!(
         c[0].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 3,
             m: 1,
@@ -505,7 +505,7 @@ fn del_only_run_folds_into_one_mod() {
     assert_eq!(c[1].old_line(), Some(746));
     assert!(matches!(
         c[1].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 3,
             m: 1,
@@ -516,7 +516,7 @@ fn del_only_run_folds_into_one_mod() {
     assert_eq!(c[2].old_line(), Some(747));
     assert!(matches!(
         c[2].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 2,
             n: 3,
             m: 1,
@@ -1820,7 +1820,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
     assert_eq!(c[0].new_line(), Some(515));
     assert!(matches!(
         c[0].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 4,
             m: 1,
@@ -1832,7 +1832,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
     assert_eq!(c[1].old_line(), Some(513));
     assert!(matches!(
         c[1].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 4,
             m: 1,
@@ -1844,7 +1844,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
     assert_eq!(c[2].old_line(), Some(514));
     assert!(matches!(
         c[2].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 2,
             n: 4,
             m: 1,
@@ -1856,7 +1856,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
     assert_eq!(c[3].old_line(), Some(515));
     assert!(matches!(
         c[3].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 3,
             n: 4,
             m: 1,
@@ -1977,7 +1977,7 @@ fn test_parallel_assemble_mods_multi_row_parity() {
 
 #[test]
 fn test_expansion_group_seed_and_tail_tagging() {
-    use crate::parse::RowGroup;
+    use crate::parse::PeerGroup;
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -2009,20 +2009,20 @@ fn test_expansion_group_seed_and_tail_tagging() {
     assert!(
         matches!(
             c[0].group(),
-            Some(RowGroup::Peer {
+            Some(PeerGroup {
                 slot: 0,
                 n: 1,
                 m: 7,
                 ..
             })
         ),
-        "Expansion seed row must have RowGroup::Peer slot 0"
+        "Expansion seed row must have PeerGroup slot 0"
     );
     for (idx, r) in c[1..].iter().enumerate() {
         assert_eq!(r.kind(), RowKind::Add);
         assert!(
-            matches!(r.group(), Some(RowGroup::Peer { slot, n: 1, m: 7, .. }) if slot == idx + 1),
-            "Expansion tail add row at index {idx} must have RowGroup::Peer with slot {}",
+            matches!(r.group(), Some(PeerGroup { slot, n: 1, m: 7, .. }) if slot == idx + 1),
+            "Expansion tail add row at index {idx} must have PeerGroup with slot {}",
             idx + 1
         );
     }
@@ -2030,7 +2030,7 @@ fn test_expansion_group_seed_and_tail_tagging() {
 
 #[test]
 fn test_grouped_deletion_in_expansion_block_receives_row_group_peer() {
-    use crate::parse::RowGroup;
+    use crate::parse::PeerGroup;
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -2076,7 +2076,7 @@ fn test_grouped_deletion_in_expansion_block_receives_row_group_peer() {
     assert!(
         matches!(
             c[0].group(),
-            Some(RowGroup::Peer {
+            Some(PeerGroup {
                 slot: 0,
                 n: 2,
                 m: 2,
@@ -2094,8 +2094,8 @@ fn test_grouped_deletion_in_expansion_block_receives_row_group_peer() {
     assert_eq!(row_54.kind(), RowKind::Mod);
     assert_eq!(row_54.new_line(), Some(68));
     assert!(
-        matches!(row_54.group(), Some(RowGroup::Peer { n: 2, m: 2, .. })),
-        "Row 54 inside expansion block must have RowGroup::Peer"
+        matches!(row_54.group(), Some(PeerGroup { n: 2, m: 2, .. })),
+        "Row 54 inside expansion block must have PeerGroup"
     );
 }
 
@@ -2254,7 +2254,7 @@ fn test_import_expansion_reaches_terminal_close_delimiter() {
     assert!(
         matches!(
             last_row.group(),
-            Some(crate::parse::RowGroup::Peer { n: 1, m: 12, .. })
+            Some(crate::parse::PeerGroup { n: 1, m: 12, .. })
         ),
         "terminal '}};' row must be in the reflow group with n=1, m=12"
     );
@@ -2329,7 +2329,7 @@ fn test_import_expansion_with_misaligned_brace_indentation() {
     assert!(
         matches!(
             last_row.group(),
-            Some(crate::parse::RowGroup::Peer { n: 1, m: 6, .. })
+            Some(crate::parse::PeerGroup { n: 1, m: 6, .. })
         ),
         "terminal '}};' row with misaligned indent must still be in the reflow group"
     );
@@ -2447,7 +2447,7 @@ fn test_multiline_inter_argument_residue_localized_to_group_tail() {
     assert!(c.iter().any(|r| r.kind() == RowKind::Mod));
     for (expected_slot, r) in c.iter().enumerate() {
         assert!(
-            matches!(r.group(), Some(RowGroup::Peer { slot, n: 1, m: 5, .. }) if slot == expected_slot),
+            matches!(r.group(), Some(PeerGroup { slot, n: 1, m: 5, .. }) if slot == expected_slot),
             "Row {expected_slot} must have slot {expected_slot}, got: {:?}",
             r.group()
         );
@@ -2492,7 +2492,7 @@ fn test_multiline_deleted_identifier_localized_to_group_row() {
 
 #[test]
 fn test_reflow_atomicity_trailing_deletions_do_not_interleave_seed_and_tail_add() {
-    use crate::parse::RowGroup;
+    use crate::parse::PeerGroup;
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -2520,13 +2520,10 @@ fn test_reflow_atomicity_trailing_deletions_do_not_interleave_seed_and_tail_add(
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    let peer_group_rows: Vec<&Row> = c
-        .iter()
-        .filter(|r| matches!(r.group(), Some(RowGroup::Peer { .. })))
-        .collect();
+    let peer_group_rows: Vec<&Row> = c.iter().filter(|r| r.group().is_some()).collect();
     assert_eq!(peer_group_rows.len(), 4, "peer group must contain 4 rows");
     for (expected_slot, r) in peer_group_rows.iter().enumerate() {
-        if let Some(RowGroup::Peer { slot, .. }) = r.group() {
+        if let Some(PeerGroup { slot, .. }) = r.group() {
             assert_eq!(slot, expected_slot);
         }
     }
@@ -3050,7 +3047,7 @@ fn test_peer_single_delimiter_reflow_without_alphanumeric_deletion() {
     let seed_runs = merged_runs(seed);
     assert!(matches!(
         seed.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 1,
             m: 2,
@@ -3076,7 +3073,7 @@ fn test_peer_single_delimiter_reflow_without_alphanumeric_deletion() {
     let tail_runs = merged_runs(tail);
     assert!(matches!(
         tail.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 1,
             m: 2,
@@ -3115,7 +3112,7 @@ fn test_grouped_delimiter_run_with_whitespace_variation() {
     let seed_runs = merged_runs(seed);
     assert!(matches!(
         seed.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 1,
             m: 2,
@@ -3148,7 +3145,7 @@ fn test_grouped_delimiter_run_with_whitespace_variation() {
     let tail_runs = merged_runs(tail);
     assert!(matches!(
         tail.group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 1,
             m: 2,
@@ -3331,7 +3328,7 @@ fn test_collapse_two_to_one_emits_peer_mod_and_grouped_del() {
             );
             assert!(matches!(
                 group,
-                Some(RowGroup::Peer {
+                Some(PeerGroup {
                     slot: 0,
                     n: 2,
                     m: 1,
@@ -3347,7 +3344,7 @@ fn test_collapse_two_to_one_emits_peer_mod_and_grouped_del() {
             assert_eq!(line.text, "    return self.name.clone(); }");
             assert!(matches!(
                 group,
-                Some(RowGroup::Peer {
+                Some(PeerGroup {
                     slot: 1,
                     n: 2,
                     m: 1,
@@ -3461,7 +3458,7 @@ fn test_interior_donor_inlining_mod_group_assembly() {
             );
             assert!(matches!(
                 group,
-                Some(RowGroup::Peer {
+                Some(PeerGroup {
                     slot: 0,
                     n: 2,
                     m: 1,
@@ -3484,7 +3481,7 @@ fn test_interior_donor_inlining_mod_group_assembly() {
             assert_eq!(new_line.text, "                if is_on_scrollbar {");
             assert!(matches!(
                 group,
-                Some(RowGroup::Peer {
+                Some(PeerGroup {
                     slot: 1,
                     n: 2,
                     m: 1,
@@ -3550,7 +3547,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
     assert_eq!(out[0].new_line(), Some(288));
     assert!(matches!(
         out[0].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 0,
             n: 2,
             m: 3,
@@ -3563,7 +3560,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
     assert_eq!(out[1].new_line(), Some(289));
     assert!(matches!(
         out[1].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 1,
             n: 2,
             m: 3,
@@ -3576,7 +3573,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
     assert_eq!(out[2].new_line(), Some(290));
     assert!(matches!(
         out[2].group(),
-        Some(RowGroup::Peer {
+        Some(PeerGroup {
             slot: 2,
             n: 2,
             m: 3,

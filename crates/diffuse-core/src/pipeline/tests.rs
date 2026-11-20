@@ -2244,9 +2244,7 @@ fn test_expand_anchor_marks_moved_source() {
     let anchor = rows
         .iter()
         .find(|r| {
-            r.kind == crate::parse::RowKind::Mod
-                && r.group.is_some_and(|g| g.is_peer())
-                && r.old_line == Some(134)
+            r.kind == crate::parse::RowKind::Mod && r.group.is_some() && r.old_line == Some(134)
         })
         .expect("expand anchor mod for old line 134");
     let kinds: Vec<crate::merge::RunKind> = anchor.runs.iter().map(|r| r.kind).collect();
@@ -2312,9 +2310,7 @@ fn test_expand_aux_marks_moved_target() {
     let aux = rows
         .iter()
         .find(|r| {
-            r.kind == crate::parse::RowKind::Add
-                && r.group.is_some_and(|g| g.is_peer())
-                && r.new_line == Some(136)
+            r.kind == crate::parse::RowKind::Add && r.group.is_some() && r.new_line == Some(136)
         })
         .expect("expand aux add for new line 136");
     // Every run is either moved-in target, novel fill, or struck residue:
@@ -2344,15 +2340,15 @@ fn test_expand_aux_marks_moved_target() {
     );
     // Genuinely novel fills keep their kind (the `false` argument rides
     // on the anchor Mod's Add run).
-    let peer_id = aux.group.and_then(|g| g.peer_id()).expect("aux peer id");
+    let peer_id = aux.group.map(|g| g.id).expect("aux peer id");
     assert!(
         rows.iter()
-            .filter(|r| r.group.and_then(|g| g.peer_id()) == Some(peer_id))
+            .filter(|r| r.group.map(|g| g.id) == Some(peer_id))
             .flat_map(|r| r.runs.iter())
             .any(|r| r.kind == crate::merge::RunKind::Add && r.text.contains("false")),
         "novel fills must stay Add somewhere in the peer group, got: {:?}",
         rows.iter()
-            .filter(|r| r.group.and_then(|g| g.peer_id()) == Some(peer_id))
+            .filter(|r| r.group.map(|g| g.id) == Some(peer_id))
             .flat_map(|r| r.runs.iter())
             .map(|r| format!("{:?}:{}", r.kind, r.text))
             .collect::<Vec<_>>()
@@ -2385,7 +2381,7 @@ fn test_reflow_anchor_prefers_head_line() {
     let rows = &output.files[0].hunks[0].rows;
     let anchor = rows
         .iter()
-        .find(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some_and(|g| g.is_peer()))
+        .find(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some())
         .expect("reflow peer mod");
     assert_eq!(
         (anchor.old_line, anchor.new_line),
@@ -2394,11 +2390,11 @@ fn test_reflow_anchor_prefers_head_line() {
         anchor.old_line,
         anchor.new_line
     );
-    let peer_id = anchor.group.unwrap().peer_id().unwrap();
+    let peer_id = anchor.group.unwrap().id;
     for new_line in [7, 8, 9] {
         assert!(
-            rows.iter().any(|r| r.new_line == Some(new_line)
-                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)),
+            rows.iter()
+                .any(|r| r.new_line == Some(new_line) && r.group.map(|g| g.id) == Some(peer_id)),
             "new line {new_line} must be an aux add of the peer group"
         );
     }
@@ -2429,21 +2425,19 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
     let anchor = rows
         .iter()
         .find(|r| {
-            r.kind == crate::parse::RowKind::Mod
-                && r.group.is_some_and(|g| g.is_peer())
-                && r.old_line == Some(351)
+            r.kind == crate::parse::RowKind::Mod && r.group.is_some() && r.old_line == Some(351)
         })
         .expect("anchor mod for old line 351");
     // Peer anchors head-with-head; the absorbed continuation tail rides
     // as moved runs on the trailing aux add.
     assert_eq!(anchor.new_line, Some(351));
-    let peer_id = anchor.group.unwrap().peer_id().unwrap();
+    let peer_id = anchor.group.unwrap().id;
 
     let aux = rows
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Add
-                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)
+                && r.group.map(|g| g.id) == Some(peer_id)
                 && r.new_line == Some(352)
         })
         .expect("upward aux add for new line 352");
@@ -2501,19 +2495,17 @@ fn test_reflow_collapse_anchors_and_groups() {
     let anchor = rows
         .iter()
         .find(|r| {
-            r.kind == crate::parse::RowKind::Mod
-                && r.group.is_some_and(|g| g.is_peer())
-                && r.new_line == Some(351)
+            r.kind == crate::parse::RowKind::Mod && r.group.is_some() && r.new_line == Some(351)
         })
         .expect("anchor mod for new line 351");
     assert_eq!(anchor.old_line, Some(351));
-    let peer_id = anchor.group.unwrap().peer_id().unwrap();
+    let peer_id = anchor.group.unwrap().id;
 
     let aux = rows
         .iter()
         .find(|r| {
             r.kind == crate::parse::RowKind::Del
-                && r.group.and_then(|g| g.peer_id()) == Some(peer_id)
+                && r.group.map(|g| g.id) == Some(peer_id)
                 && r.old_line == Some(352)
         })
         .expect("collapse aux del for old line 352");
@@ -2561,7 +2553,7 @@ fn test_reflow_upward_collapse_anchors_and_groups() {
     assert!(
         !rows
             .iter()
-            .any(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some_and(|g| g.is_peer())),
+            .any(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some()),
         "no peer Mod anchor exists for this merge, got: {:?}",
         rows
     );
@@ -2641,11 +2633,12 @@ fn test_reflow_aux_brackets_obey_multiplicity() {
 
     let output = run_pipeline_diff(diff);
     let rows = &output.files[0].hunks[0].rows;
-    let group: Vec<_> = rows
-        .iter()
-        .filter(|r| r.group.is_some_and(|g| g.is_peer()))
-        .collect();
-    assert_eq!(group.len(), 4, "anchor + three aux rows, got {group:?}");
+    let group: Vec<_> = rows.iter().filter(|r| r.group.is_some()).collect();
+    assert_eq!(
+        group.len(),
+        4,
+        "one mod plus three grouped rows, got {group:?}"
+    );
     let mut ctx = 0usize;
     let mut fill = 0usize;
     for row in &group {
@@ -2801,12 +2794,12 @@ fn test_mod_rows_visible_contiguity() {
     assert!(mods > 0, "hunk must contain a Mod row");
 }
 
-/// A split statement keeps its head anchor: old `let heading = ...` pairs
+/// A split statement keeps its head pairing: old `let heading = ...` pairs
 /// with the unfinished `let heading =` head (new-432, context indent) and
-/// the moved-down value lines attach as aux — never the reverse (anchor on
-/// the content-heavy tail with the head as fragment).
+/// the moved-down value lines join the same peer group — never the reverse
+/// (pairing on the content-heavy tail with the head as fragment).
 #[test]
-fn test_reflow_head_anchors_split_declaration() {
+fn test_reflow_head_pairs_split_declaration() {
     let diff = r#"diff --git a/src/syntax/mod.rs b/src/syntax/mod.rs
 --- a/src/syntax/mod.rs
 +++ b/src/syntax/mod.rs
@@ -2834,9 +2827,7 @@ fn test_reflow_head_anchors_split_declaration() {
     let anchor = rows
         .iter()
         .find(|r| {
-            r.kind == crate::parse::RowKind::Mod
-                && r.old_line == Some(427)
-                && r.group.is_some_and(|g| g.is_peer())
+            r.kind == crate::parse::RowKind::Mod && r.old_line == Some(427) && r.group.is_some()
         })
         .expect("reflow peer mod on the declaration head");
     assert_eq!(
@@ -2846,10 +2837,10 @@ fn test_reflow_head_anchors_split_declaration() {
         anchor.old_line,
         anchor.new_line
     );
-    let peer_id = anchor.group.unwrap().peer_id().unwrap();
+    let peer_id = anchor.group.unwrap().id;
     assert!(
         rows.iter()
-            .any(|r| r.new_line == Some(432) && r.group.and_then(|g| g.peer_id()) == Some(peer_id)),
+            .any(|r| r.new_line == Some(432) && r.group.map(|g| g.id) == Some(peer_id)),
         "split declaration head must attach as peer"
     );
 }

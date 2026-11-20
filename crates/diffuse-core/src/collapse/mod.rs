@@ -18,7 +18,7 @@ pub mod slot;
 mod tests;
 
 #[cfg(test)]
-pub(crate) use crate::parse::RowGroup;
+pub(crate) use crate::parse::PeerGroup;
 pub use invariants::{
     check_context_old_line_monotonicity, check_del_add_topological_order,
     check_no_orphaned_continuation_dels,

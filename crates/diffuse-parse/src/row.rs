@@ -172,53 +172,37 @@ impl PeerGroupMeta {
     }
 }
 
-/// Identifies the peer reflow group a diff row belongs to.
+/// The peer reflow group a diff row belongs to.
 ///
-/// A row carries `Some(Peer)` when slot alignment placed it in an (N -> M)
+/// A row carries `Some(group)` when slot alignment placed it in an (N -> M)
 /// peer group with a strong token link (a paired `Mod` slot or a salient
 /// moved-token relationship); otherwise it carries `None` and renders as a
 /// standalone row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
-#[serde(tag = "role", rename_all = "lowercase")]
-pub enum RowGroup {
-    /// A row belonging to an (N -> M) peer reflow group.
-    Peer {
-        id: GroupId,
-        slot: usize,
-        n: usize,
-        m: usize,
-    },
+pub struct PeerGroup {
+    /// Unique identifier of the irreducible (N -> M) group within a hunk.
+    pub id: GroupId,
+    /// Slot index of this row within the group alignment.
+    pub slot: usize,
+    /// Old-side row count (N).
+    pub n: usize,
+    /// New-side row count (M).
+    pub m: usize,
 }
 
-impl RowGroup {
+impl PeerGroup {
     #[inline]
-    pub fn is_peer(self) -> bool {
-        matches!(self, RowGroup::Peer { .. })
-    }
-
-    #[inline]
-    pub fn peer_id(self) -> Option<GroupId> {
-        match self {
-            RowGroup::Peer { id, .. } => Some(id),
-        }
-    }
-
-    #[inline]
-    pub fn is_multiline(self) -> bool {
-        match self {
-            RowGroup::Peer { n, m, .. } => n > 1 || m > 1,
-        }
+    pub const fn is_multiline(self) -> bool {
+        self.n > 1 || self.m > 1
     }
 
     #[inline]
     pub fn reverse(self) -> Self {
-        match self {
-            RowGroup::Peer { id, slot, n, m } => RowGroup::Peer {
-                id,
-                slot,
-                n: m,
-                m: n,
-            },
+        Self {
+            id: self.id,
+            slot: self.slot,
+            n: self.m,
+            m: self.n,
         }
     }
 }
@@ -327,7 +311,7 @@ pub enum Row {
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<RowGroup>,
+        group: Option<PeerGroup>,
     },
     Add {
         line: AddLine,
@@ -336,7 +320,7 @@ pub enum Row {
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<RowGroup>,
+        group: Option<PeerGroup>,
     },
     Mod {
         old_line: DelLine,
@@ -346,7 +330,7 @@ pub enum Row {
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<RowGroup>,
+        group: Option<PeerGroup>,
     },
     MovSrc {
         line: DelLine,
@@ -554,7 +538,7 @@ impl Row {
     /// Peer group membership if slot alignment placed this row in an (N -> M)
     /// peer reflow group.
     #[inline]
-    pub fn group(&self) -> Option<RowGroup> {
+    pub fn group(&self) -> Option<PeerGroup> {
         match self {
             Row::Mod { group, .. } => *group,
             Row::Del { group, .. } => *group,
@@ -564,7 +548,7 @@ impl Row {
     }
 
     #[inline]
-    pub fn set_group(&mut self, new_group: Option<RowGroup>) {
+    pub fn set_group(&mut self, new_group: Option<PeerGroup>) {
         match self {
             Row::Mod { group, .. } => *group = new_group,
             Row::Del { group, .. } => *group = new_group,
@@ -592,7 +576,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                group: group.map(RowGroup::reverse),
+                group: group.map(PeerGroup::reverse),
             },
             Row::Add {
                 line,
@@ -606,7 +590,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                group: group.map(RowGroup::reverse),
+                group: group.map(PeerGroup::reverse),
             },
             Row::Mod {
                 old_line,
@@ -622,7 +606,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                group: group.map(RowGroup::reverse),
+                group: group.map(PeerGroup::reverse),
             },
             Row::MovSrc {
                 line,

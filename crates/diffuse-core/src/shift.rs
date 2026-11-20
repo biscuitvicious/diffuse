@@ -191,16 +191,15 @@ pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
             let max_id = cur
                 .rows
                 .iter()
-                .filter_map(|r| r.group().and_then(|g| g.peer_id()))
-                .map(|g| *g)
+                .filter_map(|r| r.group().map(|g| g.id.0))
                 .max()
                 .unwrap_or(0);
 
             if max_id > 0 {
                 let mut next_rows = next.rows.clone();
                 for r in &mut next_rows {
-                    if let Some(crate::parse::RowGroup::Peer { id, slot, n, m }) = r.group() {
-                        let new_group = crate::parse::RowGroup::Peer {
+                    if let Some(crate::parse::PeerGroup { id, slot, n, m }) = r.group() {
+                        let new_group = crate::parse::PeerGroup {
                             id: crate::parse::GroupId(id.saturating_add(max_id)),
                             slot,
                             n,

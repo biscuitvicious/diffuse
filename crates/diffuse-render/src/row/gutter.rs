@@ -9,7 +9,7 @@ use super::segment::is_common_only_row;
 use crate::{
     ansi::Color,
     core::{
-        parse::{RowGroup, RowKind},
+        parse::{PeerGroup, RowKind},
         wire::{ModGlyph, ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
@@ -156,11 +156,11 @@ pub const fn is_right_active(kind: RowKind, mov_side: Option<MovSide>) -> bool {
 pub const fn split_left_glyph(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Peer { n, m, .. }), RowKind::Mod) if n > 1 || m > 1 => "~ ",
-        (Some(RowGroup::Peer { n, m, .. }), RowKind::Del) if n > 1 || m > 1 => "~-",
+        (Some(g), RowKind::Mod) if g.is_multiline() => "~ ",
+        (Some(g), RowKind::Del) if g.is_multiline() => "~-",
         _ => match kind {
             RowKind::Mod => " ~",
             RowKind::Del => " -",
@@ -179,11 +179,11 @@ pub const fn split_left_glyph(
 pub const fn split_right_glyph(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Peer { n, m, .. }), RowKind::Mod) if n > 1 || m > 1 => "~ ",
-        (Some(RowGroup::Peer { n, m, .. }), RowKind::Add) if n > 1 || m > 1 => "~+",
+        (Some(g), RowKind::Mod) if g.is_multiline() => "~ ",
+        (Some(g), RowKind::Add) if g.is_multiline() => "~+",
         _ => match kind {
             RowKind::Mod => " ~",
             RowKind::Add => " +",
@@ -356,7 +356,7 @@ pub fn format_line_num(
 pub fn prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -382,7 +382,7 @@ pub fn prefix_of_with_mod_side(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -408,7 +408,7 @@ pub fn prefix_of_with_mod_side_and_width(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -436,7 +436,7 @@ pub fn prefix_of_with_mod_side_and_widths(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -459,7 +459,7 @@ pub fn prefix_of_with_mod_side_and_widths(
                 };
             }
             return match group {
-                Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
+                Some(g) if g.is_multiline() => match kind {
                     RowKind::Add => "~+".to_string(),
                     RowKind::Del => "~-".to_string(),
                     RowKind::Mod => "~ ".to_string(),
@@ -499,7 +499,7 @@ pub fn prefix_of_with_mod_side_and_widths(
             };
         }
         return match group {
-            Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
+            Some(g) if g.is_multiline() => match kind {
                 RowKind::Add => {
                     format!("{}~+", format_line_num(new_line, new_line_width, &mut buf))
                 }
@@ -559,7 +559,7 @@ pub fn prefix_of_with_mod_side_and_widths(
         };
     }
     match group {
-        Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
+        Some(g) if g.is_multiline() => match kind {
             RowKind::Add => format!("{blank_old} {new_pad}~+"),
             RowKind::Del => format!("{old_pad} {blank_new}~-"),
             RowKind::Mod => format!("{old_pad} {new_pad}~ "),
@@ -586,7 +586,7 @@ pub fn prefix_of_with_mod_side_and_widths(
 pub fn split_left_prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     old_line: Option<u32>,
     old_line_width: usize,
 ) -> String {
@@ -605,7 +605,7 @@ pub fn split_left_prefix_of(
 pub fn split_right_prefix_of(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     new_line_width: usize,
 ) -> String {
@@ -628,7 +628,7 @@ pub fn styled_prefix_spans_with_width(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -664,7 +664,7 @@ pub fn styled_prefix_spans_with_widths(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -944,7 +944,7 @@ pub fn styled_prefix_spans(
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
     mod_glyph: Option<ModGlyph>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     old_line: Option<u32>,
     runs: &[OutputRun],
@@ -974,7 +974,7 @@ pub fn styled_prefix_spans(
 pub fn styled_split_left_prefix_spans(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     old_line: Option<u32>,
     in_hunk: bool,
     bg: Option<Color>,
@@ -1042,7 +1042,7 @@ pub fn styled_split_left_prefix_spans(
 pub fn styled_split_right_prefix_spans(
     kind: RowKind,
     mov_side: Option<MovSide>,
-    group: Option<RowGroup>,
+    group: Option<PeerGroup>,
     new_line: Option<u32>,
     in_hunk: bool,
     bg: Option<Color>,

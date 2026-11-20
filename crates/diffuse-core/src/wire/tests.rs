@@ -5,11 +5,11 @@ use diffuse_syntax::color::TokenColor;
 use super::*;
 use crate::{
     merge::RunKind,
-    parse::{GroupId, RowGroup, RowKind},
+    parse::{GroupId, PeerGroup, RowKind},
 };
 
-fn peer_group(id: u32, slot: usize, n: usize, m: usize) -> Option<RowGroup> {
-    Some(RowGroup::Peer {
+fn peer_group(id: u32, slot: usize, n: usize, m: usize) -> Option<PeerGroup> {
+    Some(PeerGroup {
         id: GroupId(id),
         slot,
         n,

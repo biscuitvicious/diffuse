@@ -93,21 +93,18 @@ pub fn pass_normalize_identical_mods(
 
 pub(crate) fn repair_peer_group_atomicity(rows: &mut [Row]) {
     use crate::parse::GroupId;
-    let mut max_group_id = 0u32;
-    for r in rows.iter() {
-        if let Some(g) = r.group().and_then(|g| g.peer_id())
-            && *g > max_group_id
-        {
-            max_group_id = *g;
-        }
-    }
+    let mut max_group_id = rows
+        .iter()
+        .filter_map(|r| r.group().map(|g| g.id.0))
+        .max()
+        .unwrap_or(0);
 
     let mut current_group: Option<GroupId> = None;
     let mut seen_groups: rustc_hash::FxHashSet<GroupId> = rustc_hash::FxHashSet::default();
     let mut group_remap: rustc_hash::FxHashMap<GroupId, GroupId> = rustc_hash::FxHashMap::default();
 
     for r in rows.iter_mut() {
-        let gid = r.group().and_then(|g| g.peer_id());
+        let gid = r.group().map(|g| g.id);
         if let Some(mut id) = gid {
             if let Some(mapped) = group_remap.get(&id) {
                 id = *mapped;
@@ -122,14 +119,14 @@ pub(crate) fn repair_peer_group_atomicity(rows: &mut [Row]) {
                 // Group was seen before, but was interrupted! Split into new group!
                 max_group_id += 1;
                 let new_id = GroupId(max_group_id);
-                let orig_id = r.group().and_then(|g| g.peer_id()).unwrap();
+                let orig_id = gid.unwrap();
                 group_remap.insert(orig_id, new_id);
                 seen_groups.insert(new_id);
                 current_group = Some(new_id);
                 id = new_id;
             }
             if let Some(mut g) = r.group()
-                && let crate::parse::RowGroup::Peer {
+                && let crate::parse::PeerGroup {
                     id: ref mut gid, ..
                 } = g
             {
@@ -149,7 +146,7 @@ fn check_peer_token_conservation(rows: &[Row]) -> Result<(), String> {
     let mut group_tgt: rustc_hash::FxHashMap<crate::parse::GroupId, Vec<&str>> =
         rustc_hash::FxHashMap::default();
     for r in rows {
-        if let Some(gid) = r.group().and_then(|g| g.peer_id()) {
+        if let Some(gid) = r.group().map(|g| g.id) {
             for (kind, text) in r.cached_runs() {
                 match kind {
                     crate::merge::RunKind::MovedSrc => {

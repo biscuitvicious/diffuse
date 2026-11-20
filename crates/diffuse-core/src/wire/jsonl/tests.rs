@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{FileStatus, GroupId, PeerGroupMeta, RowGroup, RowKind},
+    parse::{FileStatus, GroupId, PeerGroup, PeerGroupMeta, RowKind},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput, TokenColor},
 };
 
@@ -628,7 +628,7 @@ fn test_row_group_wire_serialization() {
             text: "add text".into(),
         }],
         wholesale: false,
-        group: Some(RowGroup::Peer {
+        group: Some(PeerGroup {
             id: GroupId(7),
             slot: 2,
             n: 2,
@@ -637,7 +637,7 @@ fn test_row_group_wire_serialization() {
     };
     let json_peer_add = serde_json::to_string(&row_peer_add).unwrap();
     assert!(
-        json_peer_add.contains(r#""group":{"role":"peer","id":7,"slot":2,"n":2,"m":3}"#),
+        json_peer_add.contains(r#""group":{"id":7,"slot":2,"n":2,"m":3}"#),
         "serialized OutputRow must contain peer group info: {json_peer_add}"
     );
     let de_row_peer_add: OutputRow = serde_json::from_str(&json_peer_add).unwrap();
@@ -667,15 +667,15 @@ fn test_row_group_wire_serialization() {
     assert_eq!(de_row_none.group, None);
 
     // OutputRow with Peer group
-    let peer_group = RowGroup::Peer {
+    let peer_group = PeerGroup {
         id: GroupId(42),
         slot: 1,
         n: 2,
         m: 3,
     };
     let peer_json = serde_json::to_string(&peer_group).unwrap();
-    assert_eq!(peer_json, r#"{"role":"peer","id":42,"slot":1,"n":2,"m":3}"#);
-    let de_peer: RowGroup = serde_json::from_str(&peer_json).unwrap();
+    assert_eq!(peer_json, r#"{"id":42,"slot":1,"n":2,"m":3}"#);
+    let de_peer: PeerGroup = serde_json::from_str(&peer_json).unwrap();
     assert_eq!(de_peer, peer_group);
 
     let row_peer = OutputRow {
@@ -694,7 +694,7 @@ fn test_row_group_wire_serialization() {
     };
     let json_peer = serde_json::to_string(&row_peer).unwrap();
     assert!(
-        json_peer.contains(r#""group":{"role":"peer","id":42,"slot":1,"n":2,"m":3}"#),
+        json_peer.contains(r#""group":{"id":42,"slot":1,"n":2,"m":3}"#),
         "serialized OutputRow must contain peer group info: {json_peer}"
     );
     let de_row_peer: OutputRow = serde_json::from_str(&json_peer).unwrap();

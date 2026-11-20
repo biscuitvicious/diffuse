@@ -103,7 +103,7 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 
 ## 12. Row grouping, peer scope and reflow invariants
 
-The legacy anchor/auxiliary grouping model (`RowGroup::Anchor`, `RowGroup::Aux`, `Row::AuxAdd` / `Row::AuxDel`) was removed in favor of the peer reflow engine: grouped rows are `Row::Del` / `Row::Add` members of an (N -> M) `RowGroup::Peer` group sharing a `GroupId`. Group formation is governed by the peer atomicity, slot-monotonicity, and character-conservation invariants enforced in `wire/hunk.rs`, on top of the Dyck container-balancing baseline (`has_trailing_delimiter_expansion` in `diffuse-algo::dyck`). The anchor/aux scope-ambiguity analysis below is retained as historical context for those invariants.
+The legacy anchor/auxiliary grouping model (`RowGroup::Anchor`, `RowGroup::Aux`, `Row::AuxAdd` / `Row::AuxDel`) was removed in favor of the peer reflow engine: grouped rows are `Row::Del` / `Row::Add` members of an (N -> M) `PeerGroup` group sharing a `GroupId`. Group formation is governed by the peer atomicity, slot-monotonicity, and character-conservation invariants enforced in `wire/hunk.rs`, on top of the Dyck container-balancing baseline (`has_trailing_delimiter_expansion` in `diffuse-algo::dyck`). The anchor/aux scope-ambiguity analysis below is retained as historical context for those invariants.
 
 ### Motivating Example: Spurious Group Absorption under Ambient Delimiters
 
@@ -130,4 +130,4 @@ In `crates/diffuse-tui/src/app/dispatch.rs` (harvested in golden corpus `scrollb
 
 - [ ] **Information Conservation (The Non-Zero Reflow Invariant)**: Enforce token conservation between peer group members.
   - *Problem*: The mathematical purpose of a peer group is token conservation: explaining where struck characters relocated (`MovedSrc` $\to$ `MovedTgt`). In the motivating change, all struck characters (`-(n)`) were consumed in-place on the seeding row itself (`+{ n, row, col }`). Slicing candidate lines against the seed yielded 0 moved tokens and explained 0% of the struck content; they shared zero mutual information with the seed.
-  - *Solution*: Require candidate peer lines to demonstrate non-zero token conservation (or unmatched prefix/suffix evidence) against the group's struck content before admission into the `RowGroup::Peer` group. If slicing candidate lines produces 0 moved tokens and 0 common content with the group's delta, reject peer grouping and preserve the lines as standalone `Row::Del` / `Row::Add` / `Row::Mov` rows.
+  - *Solution*: Require candidate peer lines to demonstrate non-zero token conservation (or unmatched prefix/suffix evidence) against the group's struck content before admission into the `PeerGroup` group. If slicing candidate lines produces 0 moved tokens and 0 common content with the group's delta, reject peer grouping and preserve the lines as standalone `Row::Del` / `Row::Add` / `Row::Mov` rows.

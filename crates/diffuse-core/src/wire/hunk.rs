@@ -11,7 +11,7 @@ use super::OutputRow;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{Hunk, RowGroup, RowKind},
+    parse::{GroupId, Hunk, PeerGroup, RowKind},
 };
 
 /// Identifies which side of a moved line an [`OutputRow`] represents.
@@ -334,11 +334,11 @@ impl OutputHunk {
         // 2. Peer group slots: slot indices must be strictly monotonic.
         // 3. Peer group lines: old_line and new_line must be strictly monotonic.
         // 4. Closed-economy conservation: sum(MovedSrc chars) == sum(MovedTgt chars).
-        let mut peer_groups: rustc_hash::FxHashMap<u32, Vec<(usize, &OutputRow)>> =
+        let mut peer_groups: rustc_hash::FxHashMap<GroupId, Vec<(usize, &OutputRow)>> =
             rustc_hash::FxHashMap::default();
         for (i, r) in self.rows.iter().enumerate() {
-            if let Some(RowGroup::Peer { id, .. }) = r.group {
-                peer_groups.entry(*id).or_default().push((i, r));
+            if let Some(PeerGroup { id, .. }) = r.group {
+                peer_groups.entry(id).or_default().push((i, r));
             }
         }
         for (id, members) in peer_groups {
@@ -358,7 +358,7 @@ impl OutputHunk {
             let mut group_moved_tgt = Vec::new();
 
             for (_, r) in &members {
-                if let Some(RowGroup::Peer { slot, .. }) = r.group {
+                if let Some(PeerGroup { slot, .. }) = r.group {
                     if let Some(prev) = last_slot
                         && slot <= prev
                     {

@@ -18,7 +18,7 @@ pub use file::{
 };
 pub use hunk::{Hunk, add_count, del_count, parse_hunk_header};
 pub use row::{
-    AddLine, CtxLine, DelLine, GroupId, PeerGroupMeta, Row, RowGroup, RowKind, RunKind, Spans,
+    AddLine, CtxLine, DelLine, GroupId, PeerGroup, PeerGroupMeta, Row, RowKind, RunKind, Spans,
 };
 
 #[cfg(test)]

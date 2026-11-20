@@ -16,7 +16,7 @@ use crate::{
         slot::{PeerGroupRows, align_and_type_peer_group_with_content},
     },
     merge::RunKind,
-    parse::{AddLine, DelLine, GroupId, Hunk, Row, RowGroup},
+    parse::{AddLine, DelLine, GroupId, Hunk, PeerGroup, Row},
     shift::pass_shift_hunk,
 };
 
@@ -30,7 +30,7 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
     let mut group_slots: FxHashMap<GroupId, Vec<&Row>> = FxHashMap::default();
 
     for r in rows {
-        if let Some(RowGroup::Peer { id, .. }) = r.group() {
+        if let Some(PeerGroup { id, .. }) = r.group() {
             group_slots.entry(id).or_default().push(r);
         }
     }
@@ -43,7 +43,7 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
         let mut moved_tgt_tokens: Vec<&str> = Vec::new();
 
         for r in members {
-            if let Some(RowGroup::Peer { slot, .. }) = r.group() {
+            if let Some(PeerGroup { slot, .. }) = r.group() {
                 assert!(
                     slot >= expected_slot,
                     "Group {id} slot out of order: expected >= {expected_slot}, got {slot}"
@@ -134,8 +134,8 @@ fn peer_group_meta(
     m: usize,
     has_strong_link: bool,
     is_all_1to1_mods: bool,
-    group: RowGroup,
-) -> Option<RowGroup> {
+    group: PeerGroup,
+) -> Option<PeerGroup> {
     if (n == 1 && m == 1) || is_all_1to1_mods || !has_strong_link {
         None
     } else {
@@ -152,9 +152,9 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     let mut items: Vec<Item> = Vec::new();
     let mut i = 0;
     while i < rows.len() {
-        if let Some(gid) = rows[i].group().and_then(|g| g.peer_id()) {
+        if let Some(gid) = rows[i].group().map(|g| g.id) {
             let mut peer_rows = Vec::new();
-            while i < rows.len() && rows[i].group().and_then(|g| g.peer_id()) == Some(gid) {
+            while i < rows.len() && rows[i].group().map(|g| g.id) == Some(gid) {
                 peer_rows.push(rows[i].clone());
                 i += 1;
             }
@@ -726,7 +726,7 @@ mod tests {
         // Check peer group metadata
         assert!(matches!(
             peer[1].group(),
-            Some(RowGroup::Peer {
+            Some(PeerGroup {
                 n: 2,
                 m: 3,
                 slot: 0,
@@ -735,7 +735,7 @@ mod tests {
         ));
         assert!(matches!(
             peer[2].group(),
-            Some(RowGroup::Peer {
+            Some(PeerGroup {
                 n: 2,
                 m: 3,
                 slot: 1,
@@ -744,7 +744,7 @@ mod tests {
         ));
         assert!(matches!(
             peer[3].group(),
-            Some(RowGroup::Peer {
+            Some(PeerGroup {
                 n: 2,
                 m: 3,
                 slot: 2,
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_peer_group_meta_truth_table() {
-        let group = RowGroup::Peer {
+        let group = PeerGroup {
             id: GroupId(7),
             slot: 0,
             n: 2,
