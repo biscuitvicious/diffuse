@@ -14,12 +14,16 @@ pub fn verify_projection(sol: &DpSolution, cluster: &ChangeCluster) -> Result<()
         sol.rows
             .iter()
             .filter_map(|r| match r {
-                Row::Del(d) | Row::MovSrc { line: d, .. } | Row::AuxDel { line: d, .. }
+                Row::Del { line: d, .. }
+                | Row::MovSrc { line: d, .. }
+                | Row::Del { line: d, .. }
                     if old_side =>
                 {
                     Some(d.text.clone())
                 }
-                Row::Add(a) | Row::MovTgt { line: a, .. } | Row::AuxAdd { line: a, .. }
+                Row::Add { line: a, .. }
+                | Row::MovTgt { line: a, .. }
+                | Row::Add { line: a, .. }
                     if !old_side =>
                 {
                     Some(a.text.clone())

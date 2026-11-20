@@ -616,8 +616,12 @@ fn test_diff_text_structure_and_context() {
     assert!(
         matches!(&h.rows[1], diffuse_parse::Row::Ctx(c) if c.old_pos == 2 && c.new_pos == 2 && c.text == "c2")
     );
-    assert!(matches!(&h.rows[2], diffuse_parse::Row::Del(d) if d.num == 3 && d.text == "old_mid"));
-    assert!(matches!(&h.rows[3], diffuse_parse::Row::Add(a) if a.num == 3 && a.text == "new_mid"));
+    assert!(
+        matches!(&h.rows[2], diffuse_parse::Row::Del { line: d, .. } if d.num == 3 && d.text == "old_mid")
+    );
+    assert!(
+        matches!(&h.rows[3], diffuse_parse::Row::Add { line: a, .. } if a.num == 3 && a.text == "new_mid")
+    );
     assert!(
         matches!(&h.rows[4], diffuse_parse::Row::Ctx(c) if c.old_pos == 4 && c.new_pos == 4 && c.text == "c3")
     );

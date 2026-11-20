@@ -653,7 +653,7 @@ impl AppState {
                                     let seg_end = seg_start + diff_text_cols;
                                     let row = row_segment_spans(
                                         &row_text,
-                                        r.is_aux(),
+                                        r.is_peer(),
                                         r.kind,
                                         r.mov_side,
                                         mod_side,

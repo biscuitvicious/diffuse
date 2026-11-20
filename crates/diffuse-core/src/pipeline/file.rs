@@ -387,7 +387,7 @@ pub fn process_single_diff_file(
         let mut del_rows = Vec::with_capacity(old_lines.len());
         for (i, line) in old_lines.iter().enumerate() {
             let pos = (i + 1) as u32;
-            del_rows.push(crate::parse::Row::Del(crate::parse::DelLine::new(
+            del_rows.push(crate::parse::Row::del(crate::parse::DelLine::new(
                 pos, *line,
             )));
         }
@@ -562,7 +562,7 @@ pub fn process_single_diff_file(
             let hunk_has_dels = h
                 .rows
                 .iter()
-                .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. }));
+                .any(|r| matches!(r, Row::Del { .. } | Row::MovSrc { .. }));
             let hunk_has_adds = crate::visible::hunk_has_adds(h);
             let is_pure_context = !hunk_has_adds && !hunk_has_dels;
             let side = if hunk_has_adds || is_pure_context {

@@ -66,15 +66,14 @@ When a row exhibits special relocation or grouping characteristics, an optional 
 {
   "movSide": "src" | "tgt",
   "wholesale": true,
-  "group": { "role": "anchor" } | { "role": "aux", "anchor": 141 }
+  "group": { "role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3 }
 }
 ```
 
 - **`movSide`**: `"src"` indicates the row represents the origin site of a relocated block; `"tgt"` indicates the destination site.
 - **`wholesale`**: `true` indicates a modification block where the pre-image and post-image differ so completely that intra-line subword alignment is bypassed in favor of discrete deletion and addition blocks.
-- **`group`**: Identifies asymmetric multi-line expansion rows:
-  - `{"role": "anchor"}`: The primary anchor row of the paired group.
-  - `{"role": "aux", "anchor": <u32>}`: Auxiliary addition rows associated with the given anchor coordinate.
+- **`group`**: Identifies rows belonging to an (N \u2192 M) peer reflow group:
+  - `{"role": "peer", "id": <u32>, "slot": <usize>, "n": <usize>, "m": <usize>}`: `id` is the group identity shared by all member rows, `slot` is the member's position within the group, and `n` / `m` are the old-side / new-side row cardinalities.
 
 ### 3.3 Concrete Row Examples
 
@@ -98,9 +97,9 @@ When a row exhibits special relocation or grouping characteristics, an optional 
    ```json
    ["mov", null, 88, [["+pub fn helper() {}", "fun"]], {"movSide": "tgt"}]
    ```
-6. **Group Auxiliary Row**:
+6. **Grouped Peer Row**:
    ```json
-   ["add", null, 142, ["+    additional_field: true,"], {"group": {"role": "aux", "anchor": 141}}]
+   ["add", null, 142, ["+    additional_field: true,"], {"group": {"role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3}}]
    ```
 
 ---

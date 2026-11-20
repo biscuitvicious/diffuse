@@ -191,14 +191,14 @@ where
                 None => continue,
             };
             if let Some(rest) = line.strip_prefix('+') {
-                let row = Row::Add(AddLine::new(ni, rest));
+                let row = Row::add(AddLine::new(ni, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 ni += 1;
                 hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
                 raw_hunk.new_count = hunk.new_count;
             } else if let Some(rest) = line.strip_prefix('-') {
-                let row = Row::Del(DelLine::new(oi, rest));
+                let row = Row::del(DelLine::new(oi, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;

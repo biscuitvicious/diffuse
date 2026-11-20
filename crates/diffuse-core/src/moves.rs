@@ -264,7 +264,12 @@ where
 
     for (hi, h) in f.hunks.iter().enumerate() {
         for (ri, r) in h.rows.iter().enumerate() {
-            if let Row::Add(add_line) = r {
+            if let Row::Add {
+                line: add_line,
+                group: None,
+                ..
+            } = r
+            {
                 let k = key(&add_line.text);
                 if !k.is_empty() && is_salient_move_line(&add_line.text, profile) {
                     matcher.add_target(k, (hi, ri));
@@ -283,7 +288,12 @@ where
     for (hi, h) in f.hunks.iter().enumerate() {
         let mut run = Vec::new();
         for (ri, r) in h.rows.iter().enumerate() {
-            if let Row::Del(del_line) = r {
+            if let Row::Del {
+                line: del_line,
+                group: None,
+                ..
+            } = r
+            {
                 let k = key(&del_line.text);
                 if !k.is_empty() && is_salient_move_line(&del_line.text, profile) {
                     matcher.add_source(k, (hi, ri));
@@ -330,8 +340,8 @@ where
         &candidate_sources,
         &grid,
         &grid,
-        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Del(_)),
-        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Add(_)),
+        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Del { group: None, .. }),
+        |pos| matches!(&f.hunks[pos.0].rows[pos.1], Row::Add { group: None, .. }),
         runs.clone(),
         is_trivial_line,
         full_can_match,
@@ -389,11 +399,11 @@ where
         let (hi, ri) = m.source_pos;
         let (ah, ar) = m.target_pos;
         let del_line = match &f.hunks[hi].rows[ri] {
-            Row::Del(d) => d.clone(),
+            Row::Del { line: d, .. } => d.clone(),
             _ => continue,
         };
         let add_line = match &f.hunks[ah].rows[ar] {
-            Row::Add(a) => a.clone(),
+            Row::Add { line: a, .. } => a.clone(),
             _ => continue,
         };
         let (spans, cached_runs) = if del_line.text != add_line.text {
@@ -611,7 +621,7 @@ pub fn absorb_mov_tails(
             match actions.remove(&(hi, ri)) {
                 None => rebuilt.push(row),
                 Some(TailAction::ClaimSrc { add_text }) => match row {
-                    Row::Del(del) => {
+                    Row::Del { line: del, .. } => {
                         let (spans, cached_runs) = if del.text != add_text {
                             word_spans_and_runs_with_profile(&del.text, &add_text, profile)
                         } else {
@@ -627,7 +637,7 @@ pub fn absorb_mov_tails(
                     other => rebuilt.push(other),
                 },
                 Some(TailAction::ClaimTgt { del_text }) => match row {
-                    Row::Add(add) => {
+                    Row::Add { line: add, .. } => {
                         let (spans, cached_runs) = if del_text != add.text {
                             word_spans_and_runs_with_profile(&del_text, &add.text, profile)
                         } else {
@@ -659,7 +669,7 @@ pub fn absorb_mov_tails(
                             spans,
                             cached_runs,
                         });
-                        rebuilt.push(Row::Add(AddLine::new(orphan_num, text)));
+                        rebuilt.push(Row::add(AddLine::new(orphan_num, text)));
                     }
                     other => rebuilt.push(other),
                 },
@@ -680,7 +690,7 @@ pub fn absorb_mov_tails(
                             spans,
                             cached_runs,
                         });
-                        rebuilt.push(Row::Del(DelLine::new(orphan_num, text)));
+                        rebuilt.push(Row::del(DelLine::new(orphan_num, text)));
                     }
                     other => rebuilt.push(other),
                 },
@@ -762,7 +772,7 @@ pub fn relocate_tail_orphans(f: &mut DiffFile, del_orphans: &[u32], add_orphans:
 
 /// Relocates one del-orphan unit: the seed orphan plus file-adjacent
 /// pre-existing `Del` leftovers chained to it move as one file-ordered
-/// block to directly after the seed's preceding old line. The anchor
+/// block to directly after the seed's preceding old line. The target
 /// line itself never joins (it stays put as the merge target), nor do
 /// already-moved lines.
 fn relocate_del_unit(
@@ -774,22 +784,22 @@ fn relocate_del_unit(
     let Some((hi, _ri)) = find_del_row(f, seed) else {
         return;
     };
-    // Anchor: the row carrying the seed's preceding old line, whatever
+    // Target: the row carrying the seed's preceding old line, whatever
     // kind it is. Without that neighbor row in this hunk there is no
     // line-contiguity target, so the unit stays in place.
     let Some(want) = seed.checked_sub(1) else {
         return;
     };
-    let Some(anchor_pos) = f.hunks[hi]
+    let Some(target_pos) = f.hunks[hi]
         .rows
         .iter()
         .position(|r| r.old_line() == Some(want))
     else {
         return;
     };
-    let anchor = anchor_pos + 1;
+    let target = target_pos + 1;
     // Expand the unit along file-adjacent Del leftovers; the walk stops
-    // at the anchor line itself (it stays put as the merge target) and
+    // at the target line itself (it stays put as the merge target) and
     // at any cluster boundary. Chain membership needs no positional
     // bound: only lines adjacent through same-kind leftovers can join,
     // so the unit is always one file-contiguous run.
@@ -817,7 +827,7 @@ fn relocate_del_unit(
             unit.push(next);
         }
     }
-    // Never cross a file boundary or a paired Mod row to reach the anchor.
+    // Never cross a file boundary or a paired Mod row to reach the target.
     let member_pos: Vec<usize> = unit
         .iter()
         .filter_map(|&l| find_del_row_in(&f.hunks[hi], l))
@@ -825,10 +835,10 @@ fn relocate_del_unit(
     if member_pos.len() != unit.len() {
         return;
     }
-    let lo = member_pos.iter().copied().fold(anchor_pos, usize::min);
-    let top = member_pos.iter().copied().fold(anchor_pos, usize::max);
-    // Only rows strictly between the anchor row and the unit can be
-    // crossed; the anchor row itself (any kind) is the target.
+    let lo = member_pos.iter().copied().fold(target_pos, usize::min);
+    let top = member_pos.iter().copied().fold(target_pos, usize::max);
+    // Only rows strictly between the target row and the unit can be
+    // crossed; the target row itself (any kind) is the landing site.
     if lo < top
         && f.hunks[hi].rows[lo + 1..top]
             .iter()
@@ -840,7 +850,7 @@ fn relocate_del_unit(
         placed.insert(*line);
         moved.insert(*line);
     }
-    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, anchor, true);
+    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, target, true);
 }
 
 /// Mirror image of [`relocate_del_unit`]: the add unit moves down to just
@@ -861,7 +871,7 @@ fn relocate_add_unit(
     // Unit: the seed plus file-adjacent smaller `Add` leftovers, chaining
     // across the non-add rows (the MovSrc halves of the same broken Ctx
     // run). Larger lines never join: the first greater line below is the
-    // anchor, and absorbing it would drag the unit past its own target.
+    // target, and absorbing it would drag the unit past its own landing site.
     let mut unit: Vec<u32> = vec![seed];
     let mut k = 0;
     while k < unit.len() {
@@ -899,27 +909,27 @@ fn relocate_add_unit(
         return;
     };
     let len = f.hunks[hi].rows.len();
-    let mut anchor = None;
+    let mut target = None;
     let mut j = bottom;
     while j + 1 < len {
         j += 1;
         match &f.hunks[hi].rows[j] {
             Row::Mod { .. } | Row::Sep(_) => break,
             row if row.new_line().is_some_and(|n| n > max_line) => {
-                anchor = Some(j);
+                target = Some(j);
                 break;
             }
             _ => {}
         }
     }
-    let Some(anchor) = anchor else {
+    let Some(target) = target else {
         return;
     };
     for line in &unit {
         placed.insert(*line);
         moved.insert(*line);
     }
-    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, anchor, false);
+    move_unit_within_hunk(&mut f.hunks[hi].rows, &unit, target, false);
 }
 
 /// Whether any `Ctx`/`Mod`/`Sep` row sits strictly between `a` and `b`.
@@ -932,23 +942,21 @@ fn rows_between_are_boundary(rows: &[Row], a: usize, b: usize) -> bool {
     })
 }
 
-/// Moves a file-ordered unit of same-kind leftover rows to `anchor`, the
+/// Moves a file-ordered unit of same-kind leftover rows to `target`, the
 /// index the unit's first row must end up at (pre-removal coordinates).
 /// `del_lines` selects which row kinds the unit's line numbers refer to —
 /// old lines for dels, new lines for adds — since the two number spaces
-/// overlap. Moves happen within one hunk, so removals above the anchor
+/// overlap. Moves happen within one hunk, so removals above the target
 /// shift it down by one each; removals below it never move it. Members
-/// always sit below the anchor under the placement rules above, so the
+/// always sit below the target under the placement rules above, so the
 /// shift count is zero in practice; the arithmetic stays general.
-fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_lines: bool) {
+fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], target: usize, del_lines: bool) {
     let mut idx: Vec<usize> = unit
         .iter()
         .filter_map(|&line| {
             rows.iter().position(|r| match r {
-                Row::Del(d) => del_lines && d.num == line,
-                Row::AuxDel { line: l, .. } => del_lines && l.num == line,
-                Row::Add(a) => !del_lines && a.num == line,
-                Row::AuxAdd { line: l, .. } => !del_lines && l.num == line,
+                Row::Del { line: d, .. } => del_lines && d.num == line,
+                Row::Add { line: a, .. } => !del_lines && a.num == line,
                 _ => false,
             })
         })
@@ -957,20 +965,18 @@ fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_l
         return;
     }
     // Remove descending so earlier indices stay valid; removals below the
-    // anchor never shift it, removals above it shift it down by one each.
+    // target never shift it, removals above it shift it down by one each.
     idx.sort_unstable_by(|a, b| b.cmp(a));
     let mut removed: Vec<(usize, Row)> = Vec::with_capacity(idx.len());
     for i in idx {
         removed.push((i, rows.remove(i)));
     }
-    let shift = removed.iter().filter(|(i, _)| *i < anchor).count();
-    let at = (anchor - shift).min(rows.len());
+    let shift = removed.iter().filter(|(i, _)| *i < target).count();
+    let at = (target - shift).min(rows.len());
     // Re-emit the unit file-ordered (all members are same-kind rows).
     removed.sort_by_key(|(_, r)| match r {
-        Row::Del(d) => d.num,
-        Row::AuxDel { line, .. } => line.num,
-        Row::Add(a) => a.num,
-        Row::AuxAdd { line, .. } => line.num,
+        Row::Del { line, .. } => line.num,
+        Row::Add { line, .. } => line.num,
         _ => unreachable!("unit members are always same-kind leftover rows"),
     });
     rows.splice(at..at, removed.into_iter().map(|(_, r)| r));
@@ -979,8 +985,7 @@ fn move_unit_within_hunk(rows: &mut Vec<Row>, unit: &[u32], anchor: usize, del_l
 /// Position within one hunk of the `Del` row carrying `old_line`.
 fn find_del_row_in(hunk: &crate::parse::Hunk, old_line: u32) -> Option<usize> {
     hunk.rows.iter().position(|r| match r {
-        Row::Del(d) => d.num == old_line,
-        Row::AuxDel { line, .. } => line.num == old_line,
+        Row::Del { line, .. } => line.num == old_line,
         _ => false,
     })
 }
@@ -988,8 +993,7 @@ fn find_del_row_in(hunk: &crate::parse::Hunk, old_line: u32) -> Option<usize> {
 /// Position within one hunk of the `Add` row carrying `new_line`.
 fn find_add_row_in(hunk: &crate::parse::Hunk, new_line: u32) -> Option<usize> {
     hunk.rows.iter().position(|r| match r {
-        Row::Add(a) => a.num == new_line,
-        Row::AuxAdd { line, .. } => line.num == new_line,
+        Row::Add { line, .. } => line.num == new_line,
         _ => false,
     })
 }
@@ -998,8 +1002,7 @@ fn find_add_row_in(hunk: &crate::parse::Hunk, new_line: u32) -> Option<usize> {
 fn find_del_row(f: &DiffFile, old_line: u32) -> Option<(usize, usize)> {
     for (hi, h) in f.hunks.iter().enumerate() {
         if let Some(ri) = h.rows.iter().position(|r| match r {
-            Row::Del(d) => d.num == old_line,
-            Row::AuxDel { line, .. } => line.num == old_line,
+            Row::Del { line, .. } => line.num == old_line,
             _ => false,
         }) {
             return Some((hi, ri));
@@ -1012,8 +1015,7 @@ fn find_del_row(f: &DiffFile, old_line: u32) -> Option<(usize, usize)> {
 fn find_add_row(f: &DiffFile, new_line: u32) -> Option<(usize, usize)> {
     for (hi, h) in f.hunks.iter().enumerate() {
         if let Some(ri) = h.rows.iter().position(|r| match r {
-            Row::Add(a) => a.num == new_line,
-            Row::AuxAdd { line, .. } => line.num == new_line,
+            Row::Add { line, .. } => line.num == new_line,
             _ => false,
         }) {
             return Some((hi, ri));
@@ -1103,10 +1105,10 @@ fn absorb_run_tail(
         };
         let o_row = &f.hunks[hi].rows[o_idx];
         let n_row = &f.hunks[ah].rows[n_idx];
-        let o_take =
-            matches!(o_row, Row::Del(_)) || (allow_ctx_break && matches!(o_row, Row::Ctx(_)));
-        let n_take =
-            matches!(n_row, Row::Add(_)) || (allow_ctx_break && matches!(n_row, Row::Ctx(_)));
+        let o_take = matches!(o_row, Row::Del { group: None, .. })
+            || (allow_ctx_break && matches!(o_row, Row::Ctx(_)));
+        let n_take = matches!(n_row, Row::Add { group: None, .. })
+            || (allow_ctx_break && matches!(n_row, Row::Ctx(_)));
         if !o_take || !n_take {
             break;
         }
@@ -1117,7 +1119,7 @@ fn absorb_run_tail(
             break;
         }
         let o_action = match o_row {
-            Row::Del(_) => TailAction::ClaimSrc {
+            Row::Del { .. } => TailAction::ClaimSrc {
                 add_text: n_row.text().to_owned(),
             },
             Row::Ctx(_) => TailAction::BreakSrc {
@@ -1126,7 +1128,7 @@ fn absorb_run_tail(
             _ => break,
         };
         let n_action = match n_row {
-            Row::Add(_) => TailAction::ClaimTgt {
+            Row::Add { .. } => TailAction::ClaimTgt {
                 del_text: o_row.text().to_owned(),
             },
             Row::Ctx(_) => TailAction::BreakTgt {

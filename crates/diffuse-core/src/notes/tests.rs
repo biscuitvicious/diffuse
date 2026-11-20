@@ -853,7 +853,12 @@ fn test_row_hash_is_complete_and_unambiguous() {
     m.wholesale = true;
     assert_ne!(h(std::slice::from_ref(&m)), h0, "wholesale");
     let mut m = base.clone();
-    m.group = Some(crate::parse::RowGroup::Anchor);
+    m.group = Some(crate::parse::RowGroup::Peer {
+        id: crate::parse::GroupId(9),
+        slot: 0,
+        n: 2,
+        m: 2,
+    });
     assert_ne!(h(std::slice::from_ref(&m)), h0, "group");
     let mut m = base.clone();
     m.runs[1].kind = RunKind::Ctx;

@@ -59,7 +59,7 @@ pub fn is_pure_deletion_mod(spans: &Spans, text: &str) -> bool {
 pub fn write_row_segment<W: Write>(
     out: &mut W,
     text: &str,
-    is_aux_row: bool,
+    is_peer_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
@@ -77,7 +77,7 @@ pub fn write_row_segment<W: Write>(
 ) -> fmt::Result {
     let row = row_segment_spans(
         text,
-        is_aux_row,
+        is_peer_row,
         kind,
         mov_side,
         mod_side,
@@ -155,7 +155,7 @@ pub fn write_row_segment<W: Write>(
 #[allow(clippy::too_many_arguments)]
 pub fn render_row_segment(
     text: &str,
-    is_aux_row: bool,
+    is_peer_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     runs: &[OutputRun],
@@ -174,7 +174,7 @@ pub fn render_row_segment(
     let _ = write_row_segment(
         &mut out,
         text,
-        is_aux_row,
+        is_peer_row,
         kind,
         mov_side,
         None,
@@ -196,7 +196,7 @@ pub fn render_row_segment(
 #[allow(clippy::too_many_arguments)]
 pub fn render_row_segment_with_mod_side(
     text: &str,
-    is_aux_row: bool,
+    is_peer_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
@@ -216,7 +216,7 @@ pub fn render_row_segment_with_mod_side(
     let _ = write_row_segment(
         &mut out,
         text,
-        is_aux_row,
+        is_peer_row,
         kind,
         mov_side,
         mod_side,
@@ -256,7 +256,7 @@ pub struct RowSegmentLine {
 #[allow(clippy::too_many_arguments)]
 pub fn row_segment_spans(
     text: &str,
-    is_aux_row: bool,
+    is_peer_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
@@ -331,7 +331,7 @@ pub fn row_segment_spans(
 
     let has_subwords =
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
-    let is_expansion_add = kind == RowKind::Add && is_aux_row;
+    let is_expansion_add = kind == RowKind::Add && is_peer_row;
 
     let filtered_runs: Vec<OutputRun>;
     let runs: &[OutputRun] = match (mov_side, mod_side) {
@@ -403,7 +403,7 @@ pub fn row_segment_spans(
         let body = if is_full_row {
             text.to_string()
         } else {
-            let disp = display_text(text, is_aux_row, kind, runs, col_offset, word_diff);
+            let disp = display_text(text, is_peer_row, kind, runs, col_offset, word_diff);
             slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start))
         };
         // Deletion rows render as plain filled text: no strikethrough (the
@@ -426,7 +426,7 @@ pub fn row_segment_spans(
         let body = if is_full_row {
             text.to_string()
         } else {
-            let disp = display_text(text, is_aux_row, kind, runs, col_offset, word_diff);
+            let disp = display_text(text, is_peer_row, kind, runs, col_offset, word_diff);
             slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start))
         };
         spans.push(StyledSpan::styled(body, None, line_bg));
@@ -600,7 +600,7 @@ fn build_blank_pane_spans(
 #[allow(clippy::too_many_arguments)]
 fn build_pane_segment_spans(
     text: &str,
-    is_aux: bool,
+    is_peer: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     mod_side: Option<ModSide>,
@@ -620,7 +620,7 @@ fn build_pane_segment_spans(
     let seg_start = seg_idx * cols;
     let seg_end = seg_start + cols;
     let line = row_segment_spans(
-        text, is_aux, kind, mov_side, mod_side, runs, seg_start, seg_end, prefix, selected, band,
+        text, is_peer, kind, mov_side, mod_side, runs, seg_start, seg_end, prefix, selected, band,
         col_offset, word_diff, syntax_on, theme,
     );
     let padded = pad_spans(line.spans, pane_width, line.line_bg);
@@ -668,7 +668,7 @@ pub fn side_by_side_row_segment_spans(
         };
         build_pane_segment_spans(
             &row.old_text(),
-            row.is_aux(),
+            row.is_peer(),
             kind,
             row.mov_side,
             mod_side,
@@ -697,7 +697,7 @@ pub fn side_by_side_row_segment_spans(
         };
         build_pane_segment_spans(
             &row.new_text(),
-            row.is_aux(),
+            row.is_peer(),
             kind,
             row.mov_side,
             mod_side,

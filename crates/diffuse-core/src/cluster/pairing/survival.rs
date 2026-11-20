@@ -113,7 +113,7 @@ pub fn classify_dels<'a>(
     if !h
         .rows
         .iter()
-        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. }))
+        .any(|r| matches!(r, Row::Del { .. } | Row::MovSrc { .. }))
     {
         return DelGuards::default();
     }
@@ -128,7 +128,7 @@ pub fn classify_dels<'a>(
         .rows
         .iter()
         .filter_map(|a| match a {
-            Row::Add(_) | Row::MovTgt { .. } => Some(a.text().trim()),
+            Row::Add { .. } | Row::MovTgt { .. } => Some(a.text().trim()),
             _ => None,
         })
         .collect();
@@ -137,7 +137,7 @@ pub fn classify_dels<'a>(
         h.rows
             .iter()
             .filter_map(|a| match a {
-                Row::Add(_) | Row::MovTgt { .. } => p.extract_property_key(a.text()),
+                Row::Add { .. } | Row::MovTgt { .. } => p.extract_property_key(a.text()),
                 _ => None,
             })
             .collect()
@@ -173,7 +173,7 @@ pub fn classify_dels<'a>(
     let mut has_any_add_tail = false;
     let mut add_tail_fns: FxHashSet<&str> = FxHashSet::default();
     for a in &h.rows {
-        if matches!(a, Row::Add(_) | Row::MovTgt { .. })
+        if matches!(a, Row::Add { .. } | Row::MovTgt { .. })
             && is_tail_before_closing(a.new_line(), false, old_content, new_content, profile)
         {
             has_any_add_tail = true;
@@ -187,7 +187,7 @@ pub fn classify_dels<'a>(
         // Del and moved-source rows carry old line numbers by construction;
         // everything else skips classification entirely.
         let Some(line_num) = (match r {
-            Row::Del(d) | Row::MovSrc { line: d, .. } => Some(d.num),
+            Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => Some(d.num),
             _ => None,
         }) else {
             continue;

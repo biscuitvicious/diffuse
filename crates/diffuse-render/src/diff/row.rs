@@ -110,7 +110,7 @@ pub(crate) fn render_row_line(
         let _ = write_row_segment(
             &mut row_buf,
             &text,
-            r.is_aux(),
+            r.is_peer(),
             r.kind,
             r.mov_side,
             mod_side,
@@ -137,7 +137,7 @@ pub(crate) fn render_row_line(
     let disp = if mod_side.is_some() {
         text.clone()
     } else {
-        display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true)
+        display_text(&text, r.is_peer(), r.kind, &r.runs, 0, true)
     };
     let exp = expand_tabs(&disp, 4);
     let len = display_width(&exp);
@@ -156,7 +156,7 @@ pub(crate) fn render_row_line(
         let _ = write_row_segment(
             &mut row_buf,
             &text,
-            r.is_aux(),
+            r.is_peer(),
             r.kind,
             r.mov_side,
             mod_side,
@@ -238,7 +238,7 @@ pub(crate) fn render_row_line(
         let _ = write_row_segment(
             &mut row_buf,
             &text,
-            r.is_aux(),
+            r.is_peer(),
             r.kind,
             r.mov_side,
             mod_side,

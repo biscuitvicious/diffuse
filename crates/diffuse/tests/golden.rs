@@ -42,7 +42,7 @@ use diffuse::{
         apply::apply_hunk_rows,
         lcs::char_len,
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
-        parse::{Row, RowGroup, RowKind},
+        parse::{Row, RowKind},
         pipeline::{PipelineOptions, process_single_diff_file},
         wire::{MovSide, OutputFile, OutputRow, PipelineOutput},
     },
@@ -573,20 +573,16 @@ fn assert_diff_invariants(
             }
         }
 
-        // Mod group involution and dual reversal verification
+        // Peer group involution and dual reversal verification
         for (hi, oh) in of.hunks.iter().enumerate() {
             let mut i = 0;
             while i < oh.rows.len() {
                 let r = &oh.rows[i];
-                if r.group == Some(RowGroup::Anchor) {
-                    let anchor_nl = r.new_line;
-                    let anchor_ol = r.old_line;
+                if let Some(gid) = r.group.and_then(|g| g.peer_id()) {
                     let mut group = vec![r.clone()];
                     let mut j = i + 1;
                     while j < oh.rows.len() {
-                        if let Some(RowGroup::Aux { anchor }) = oh.rows[j].group
-                            && (Some(anchor) == anchor_nl || Some(anchor) == anchor_ol)
-                        {
+                        if oh.rows[j].group.and_then(|g| g.peer_id()) == Some(gid) {
                             group.push(oh.rows[j].clone());
                             j += 1;
                             continue;
@@ -614,20 +610,20 @@ fn assert_diff_invariants(
                         "[{corpus}] {path} hunk {hi}: group involution failed"
                     );
 
-                    let is_expansion = group.iter().any(|r| r.kind == RowKind::Add && r.is_aux());
-                    let is_collapse = group.iter().any(|r| r.kind == RowKind::Del && r.is_aux());
+                    let is_expansion = group.iter().any(|r| r.kind == RowKind::Add && r.is_peer());
+                    let is_collapse = group.iter().any(|r| r.kind == RowKind::Del && r.is_peer());
                     if is_expansion {
                         assert!(
                             reversed_group
                                 .iter()
-                                .any(|r| r.kind == RowKind::Del && r.is_aux()),
+                                .any(|r| r.kind == RowKind::Del && r.is_peer()),
                             "[{corpus}] {path} hunk {hi}: reversed expansion must be a collapse"
                         );
                     } else if is_collapse {
                         assert!(
                             reversed_group
                                 .iter()
-                                .any(|r| r.kind == RowKind::Add && r.is_aux()),
+                                .any(|r| r.kind == RowKind::Add && r.is_peer()),
                             "[{corpus}] {path} hunk {hi}: reversed collapse must be an expansion"
                         );
                     }
@@ -639,7 +635,7 @@ fn assert_diff_invariants(
             }
         }
         // Moved-in multiplicity per hunk. Whitespace tokens are split
-        // into single spaces: occurrence supply is positional, so an aux
+        // into single spaces: occurrence supply is positional, so a grouped
         // indent may legitimately consume part of a wider struck indent;
         // exact-string token counting would false-fire there.
         // Non-whitespace tokens stay whole (single-char delimiters
@@ -732,11 +728,11 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
         let mut mods = 0usize;
         let mut movs = 0usize;
         for h in &f.hunks {
-            // Aux row texts in this hunk, for the moved-out tripwire below.
-            let aux_texts: Vec<String> = h
+            // Grouped peer row texts in this hunk, for the moved-out tripwire below.
+            let member_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| r.is_aux() || matches!(r.group, Some(RowGroup::Peer { .. })))
+                .filter(|r| r.is_peer())
                 .map(|r| {
                     let mut s = r.text();
                     let ot = r.old_text();
@@ -747,18 +743,18 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                     s
                 })
                 .collect();
-            // Anchor deletion texts in this hunk, for the moved-in mirror.
-            let anchor_dels: Vec<String> = h
+            // Peer group deletion texts in this hunk, for the moved-in mirror.
+            let member_old_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Peer { .. })))
+                .filter(|r| r.is_peer())
                 .map(|r| r.old_text())
                 .filter(|t| !t.is_empty())
                 .collect();
-            let anchor_texts: Vec<String> = h
+            let member_new_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Peer { .. })))
+                .filter(|r| r.is_peer())
                 .map(|r| r.text())
                 .filter(|t| !t.is_empty())
                 .collect();
@@ -868,7 +864,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                 // concatenate to the new line (the old fragments), and
                 // this walk locks it. Moved-out runs are old-side like
                 // struck runs (see `RunKind::is_del_like`).
-                if r.kind == RowKind::Mod || (r.kind == RowKind::Add && r.is_aux()) {
+                if r.is_peer() {
                     let kept: String = r
                         .runs
                         .iter()
@@ -919,7 +915,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                         }
                     }
                     // Tripwire: moved-out text must survive in a same-hunk
-                    // aux row — otherwise the engine hid a genuine deletion
+                    // grouped row — otherwise the engine hid a genuine deletion
                     // behind the moved mark. Token granularity: the moved
                     // ranges come from word alignment, so shared tokens must
                     // survive while edge punctuation (whose occurrence
@@ -931,8 +927,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                             .split(|c: char| !c.is_alphanumeric())
                             .filter(|t| !t.is_empty())
                             .filter(|t| {
-                                !aux_texts.iter().any(|a| a.contains(t))
-                                    && !anchor_texts.iter().any(|a| a.contains(t))
+                                !member_texts.iter().any(|a| a.contains(t))
+                                    && !member_new_texts.iter().any(|a| a.contains(t))
                             })
                             .collect();
                         check!(
@@ -945,15 +941,15 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
                         );
                     }
                     // Mirror: moved-in target tokens must come from a
-                    // same-hunk anchor's old text (expansion) or aux old text (collapse).
+                    // same-hunk member's old text (expansion or collapse).
                     if run.kind == RunKind::MovedTgt && !run.text.is_empty() {
                         let missing: Vec<&str> = run
                             .text
                             .split(|c: char| !c.is_alphanumeric())
                             .filter(|t| !t.is_empty())
                             .filter(|t| {
-                                !anchor_dels.iter().any(|a| a.contains(t))
-                                    && !aux_texts.iter().any(|a| a.contains(t))
+                                !member_old_texts.iter().any(|a| a.contains(t))
+                                    && !member_texts.iter().any(|a| a.contains(t))
                             })
                             .collect();
                         check!(
@@ -2421,7 +2417,7 @@ fn test_scrollbar_grab_drag_dispatch_hunk_2_not_collapsed() {
 }
 
 #[test]
-fn test_scrollbar_grab_drag_dispatch_hunk_1_aux_rows() {
+fn test_scrollbar_grab_drag_dispatch_hunk_1_has_no_groups() {
     if !is_golden_initialized() {
         return;
     }
@@ -2446,7 +2442,7 @@ fn test_scrollbar_grab_drag_dispatch_hunk_1_aux_rows() {
         .expect("line 45");
     assert_eq!(
         r45.group, None,
-        "Row 45 (MouseScrollUp) must not be an anchor group"
+        "Row 45 (MouseScrollUp) must not be in a group"
     );
     let r53 = hunk0
         .rows
@@ -2455,11 +2451,11 @@ fn test_scrollbar_grab_drag_dispatch_hunk_1_aux_rows() {
         .expect("line 53");
     assert_eq!(
         r53.group, None,
-        "Row 53 (MouseScrollDown) must not be an anchor group"
+        "Row 53 (MouseScrollDown) must not be in a group"
     );
     assert!(
         !hunk0.rows.iter().any(|r| r.group.is_some()),
-        "Hunk 0 must not contain any spurious auxiliary groups"
+        "Hunk 0 must not contain any spurious groups"
     );
 }
 

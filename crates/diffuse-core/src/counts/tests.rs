@@ -8,11 +8,11 @@ use crate::{
 };
 
 fn del(num: u32, text: &str) -> Row {
-    Row::Del(DelLine::new(num, text))
+    Row::del(DelLine::new(num, text))
 }
 
 fn add(num: u32, text: &str) -> Row {
-    Row::Add(AddLine::new(num, text))
+    Row::add(AddLine::new(num, text))
 }
 
 fn hunk(rows: Vec<Row>) -> Hunk {

@@ -4,11 +4,11 @@ use super::*;
 use crate::parse::{AddLine, CtxLine, DelLine, FileStatus, Hunk, Row, Spans};
 
 fn del(num: u32, text: &str) -> Row {
-    Row::Del(DelLine::new(num, text))
+    Row::del(DelLine::new(num, text))
 }
 
 fn add(num: u32, text: &str) -> Row {
-    Row::Add(AddLine::new(num, text))
+    Row::add(AddLine::new(num, text))
 }
 
 fn ctx(old_num: u32, new_num: u32, text: &str) -> Row {
@@ -153,7 +153,7 @@ fn block_move_rule_interior_matches_are_not_moves() {
     let del_iter = f.hunks[0]
         .rows
         .iter()
-        .find(|r| matches!(r, Row::Del(d) if d.text.trim() == ".iter()"));
+        .find(|r| matches!(r, Row::Del { line: d, .. } if d.text.trim() == ".iter()"));
     assert!(
         del_iter.is_some() && !del_iter.unwrap().is_moved(),
         "the interior chain del is NOT a move (the run's first del didn't move)"
@@ -161,7 +161,7 @@ fn block_move_rule_interior_matches_are_not_moves() {
     let add_iter = f.hunks[1]
         .rows
         .iter()
-        .find(|r| matches!(r, Row::Add(a) if a.text.trim() == ".iter()"));
+        .find(|r| matches!(r, Row::Add { line: a, .. } if a.text.trim() == ".iter()"));
     assert!(
         add_iter.is_some() && !add_iter.unwrap().is_moved(),
         "the get method's chain add is NOT marked moved"
@@ -750,8 +750,8 @@ fn test_resolve_mov_pairs_by_line_drops_stale_pairs() {
 fn row_sig(r: &Row) -> (String, Option<u32>, Option<u32>) {
     let kind = match r {
         Row::Ctx(_) => "ctx",
-        Row::Del(_) => "del",
-        Row::Add(_) => "add",
+        Row::Del { .. } => "del",
+        Row::Add { .. } => "add",
         Row::MovSrc { .. } => "movsrc",
         Row::MovTgt { .. } => "movtgt",
         _ => "other",

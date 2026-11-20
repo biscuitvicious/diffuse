@@ -113,7 +113,7 @@ impl<'a> ConsumeHunk for AstHunkConsumer<'a> {
                         self.patch.push('\n');
                     }
                     hunk.rows
-                        .push(Row::Del(DelLine::new(old_pos, text_trimmed.to_string())));
+                        .push(Row::del(DelLine::new(old_pos, text_trimmed.to_string())));
                     old_pos += 1;
                 }
                 DiffLineKind::Add => {
@@ -123,7 +123,7 @@ impl<'a> ConsumeHunk for AstHunkConsumer<'a> {
                         self.patch.push('\n');
                     }
                     hunk.rows
-                        .push(Row::Add(AddLine::new(new_pos, text_trimmed.to_string())));
+                        .push(Row::add(AddLine::new(new_pos, text_trimmed.to_string())));
                     new_pos += 1;
                 }
             }

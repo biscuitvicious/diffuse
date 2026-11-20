@@ -1,12 +1,21 @@
 use std::borrow::Cow;
 
-use diffuse_syntax::{color::TokenColor, registry::lang_profile};
+use diffuse_syntax::color::TokenColor;
 
 use super::*;
 use crate::{
     merge::RunKind,
-    parse::{RowGroup, RowKind},
+    parse::{GroupId, RowGroup, RowKind},
 };
+
+fn peer_group(id: u32, slot: usize, n: usize, m: usize) -> Option<RowGroup> {
+    Some(RowGroup::Peer {
+        id: GroupId(id),
+        slot,
+        n,
+        m,
+    })
+}
 
 fn make_run(kind: RunKind, text: &str) -> OutputRun {
     OutputRun {
@@ -267,23 +276,44 @@ fn test_output_hunk_disk_exact_violations() {
 
 #[test]
 fn test_output_hunk_reflow_violations() {
-    // 1. Orphan aux row
-    let hunk_orphan = OutputHunk {
-        rows: vec![OutputRow {
-            kind: RowKind::Add,
-            mov_side: None,
-            new_line: Some(5),
-            old_line: None,
-            runs: vec![make_run(RunKind::Add, "aux")],
-            wholesale: false,
-            group: Some(RowGroup::Aux { anchor: 99 }), // nonexistent anchor 99
-        }],
+    // 1. Peer group atomicity violation: same group interrupted by a row from
+    //    another group.
+    let hunk_split = OutputHunk {
+        rows: vec![
+            OutputRow {
+                kind: RowKind::Del,
+                mov_side: None,
+                new_line: None,
+                old_line: Some(5),
+                runs: vec![make_run(RunKind::Del, "gone")],
+                wholesale: false,
+                group: peer_group(1, 0, 2, 2),
+            },
+            OutputRow {
+                kind: RowKind::Del,
+                mov_side: None,
+                new_line: None,
+                old_line: Some(6),
+                runs: vec![make_run(RunKind::Del, "other")],
+                wholesale: false,
+                group: peer_group(2, 0, 1, 1),
+            },
+            OutputRow {
+                kind: RowKind::Add,
+                mov_side: None,
+                new_line: Some(5),
+                old_line: None,
+                runs: vec![make_run(RunKind::Add, "novel")],
+                wholesale: false,
+                group: peer_group(1, 2, 2, 2),
+            },
+        ],
         ..Default::default()
     };
-    assert!(hunk_orphan.validate_invariants().is_err());
+    assert!(hunk_split.validate_invariants().is_err());
 
-    // 2. Aux row line numbers non-monotonic
-    let hunk_aux_non_monotonic = OutputHunk {
+    // 2. Peer group new lines non-monotonic.
+    let hunk_new_non_monotonic = OutputHunk {
         rows: vec![
             OutputRow {
                 kind: RowKind::Mod,
@@ -295,7 +325,7 @@ fn test_output_hunk_reflow_violations() {
                     make_run(RunKind::MovedSrc, "io, ops"),
                 ],
                 wholesale: false,
-                group: Some(RowGroup::Anchor),
+                group: peer_group(1, 0, 1, 3),
             },
             OutputRow {
                 kind: RowKind::Add,
@@ -304,7 +334,7 @@ fn test_output_hunk_reflow_violations() {
                 old_line: None,
                 runs: vec![make_run(RunKind::MovedTgt, "io,")],
                 wholesale: false,
-                group: Some(RowGroup::Aux { anchor: 10 }),
+                group: peer_group(1, 1, 1, 3),
             },
             OutputRow {
                 kind: RowKind::Add,
@@ -313,48 +343,40 @@ fn test_output_hunk_reflow_violations() {
                 old_line: None,
                 runs: vec![make_run(RunKind::MovedTgt, "ops")],
                 wholesale: false,
-                group: Some(RowGroup::Aux { anchor: 10 }),
+                group: peer_group(1, 2, 1, 3),
             },
         ],
         ..Default::default()
     };
-    assert!(hunk_aux_non_monotonic.validate_invariants().is_err());
+    assert!(hunk_new_non_monotonic.validate_invariants().is_err());
 
-    // 3. Import reflow old-text reconstruction mismatch
-    let rust_profile = lang_profile("rs");
-    let hunk_import_mismatch = OutputHunk {
+    // 3. Peer group slot indices non-monotonic.
+    let hunk_slot_non_monotonic = OutputHunk {
         rows: vec![
             OutputRow {
-                kind: RowKind::Mod,
+                kind: RowKind::Del,
                 mov_side: None,
-                new_line: Some(10),
+                new_line: None,
                 old_line: Some(10),
-                runs: vec![
-                    make_run(RunKind::Ctx, "use std::{"),
-                    make_run(RunKind::MovedSrc, "io, ops};"),
-                ],
+                runs: vec![make_run(RunKind::Del, "gone")],
                 wholesale: false,
-                group: Some(RowGroup::Anchor),
+                group: peer_group(1, 1, 2, 1),
             },
             OutputRow {
-                kind: RowKind::Add,
+                kind: RowKind::Del,
                 mov_side: None,
-                new_line: Some(11),
-                old_line: None,
-                runs: vec![make_run(RunKind::MovedTgt, "net, ops};")], // "net" instead of "io"
+                new_line: None,
+                old_line: Some(11),
+                runs: vec![make_run(RunKind::Del, "also gone")],
                 wholesale: false,
-                group: Some(RowGroup::Aux { anchor: 10 }),
+                group: peer_group(1, 0, 2, 1),
             },
         ],
         ..Default::default()
     };
-    assert!(
-        hunk_import_mismatch
-            .validate_invariants_with_profile(rust_profile)
-            .is_err()
-    );
+    assert!(hunk_slot_non_monotonic.validate_invariants().is_err());
 
-    // 4. Character conservation mismatch
+    // 4. Peer group character conservation mismatch.
     let hunk_char_mismatch = OutputHunk {
         rows: vec![
             OutputRow {
@@ -367,7 +389,7 @@ fn test_output_hunk_reflow_violations() {
                     make_run(RunKind::MovedSrc, "alpha, beta"),
                 ],
                 wholesale: false,
-                group: Some(RowGroup::Anchor),
+                group: peer_group(1, 0, 1, 2),
             },
             OutputRow {
                 kind: RowKind::Add,
@@ -376,7 +398,7 @@ fn test_output_hunk_reflow_violations() {
                 old_line: None,
                 runs: vec![make_run(RunKind::MovedTgt, "alpha, gamma")], // gamma != beta
                 wholesale: false,
-                group: Some(RowGroup::Aux { anchor: 10 }),
+                group: peer_group(1, 1, 1, 2),
             },
         ],
         ..Default::default()

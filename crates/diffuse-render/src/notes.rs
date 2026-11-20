@@ -235,7 +235,7 @@ fn render_note_source_spans(
         if width == 0 {
             let line = row_segment_spans(
                 &text,
-                row.is_aux(),
+                row.is_peer(),
                 row.kind,
                 row.mov_side,
                 None,
@@ -254,14 +254,14 @@ fn render_note_source_spans(
             continue;
         }
         let text_cols = width.saturating_sub(6).max(1);
-        let disp = display_text(&text, row.is_aux(), row.kind, &row.runs, 0, true);
+        let disp = display_text(&text, row.is_peer(), row.kind, &row.runs, 0, true);
         let exp = expand_tabs(&disp, 4);
         let len = display_width(&exp);
         let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
         if seg_count == 1 {
             let line = row_segment_spans(
                 &text,
-                row.is_aux(),
+                row.is_peer(),
                 row.kind,
                 row.mov_side,
                 None,
@@ -288,7 +288,7 @@ fn render_note_source_spans(
             let seg_start = seg_idx * text_cols;
             let line = row_segment_spans(
                 &text,
-                row.is_aux(),
+                row.is_peer(),
                 row.kind,
                 row.mov_side,
                 None,

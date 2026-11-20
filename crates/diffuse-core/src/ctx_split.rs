@@ -54,8 +54,8 @@ pub fn split_trivial_ctx_rows(
         match r {
             Row::Ctx(c) if should_split_ctx(&c.text, &c.text, profile) => {
                 let di = out.len();
-                out.push(Row::Del(DelLine::new(c.old_pos, c.text.clone())));
-                out.push(Row::Add(AddLine::new(c.new_pos, c.text)));
+                out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())));
+                out.push(Row::add(AddLine::new(c.new_pos, c.text)));
                 homes.push((di, di + 1));
             }
             other => out.push(other),
@@ -112,9 +112,9 @@ mod tests {
     fn test_split_rewrite_merges_flanking_clusters() {
         let profile = lang_profile("rs");
         let rows = vec![
-            Row::Del(DelLine::new(312, "                            }")),
+            Row::del(DelLine::new(312, "                            }")),
             Row::Ctx(CtxLine::new(307, 307, "                                }")),
-            Row::Add(AddLine::new(308, "                                }")),
+            Row::add(AddLine::new(308, "                                }")),
         ];
         let (out, homes) = split_trivial_ctx_rows(rows, profile);
         assert!(
@@ -122,8 +122,8 @@ mod tests {
             "trivial Ctx must be rewritten, got: {out:?}"
         );
         assert_eq!(out.len(), 4);
-        assert!(matches!(&out[1], Row::Del(d) if d.num == 307));
-        assert!(matches!(&out[2], Row::Add(a) if a.num == 307));
+        assert!(matches!(&out[1], Row::Del { line: d, .. } if d.num == 307));
+        assert!(matches!(&out[2], Row::Add { line: a, .. } if a.num == 307));
         assert_eq!(homes, vec![(1, 2)]);
     }
 
@@ -132,12 +132,12 @@ mod tests {
         let profile = lang_profile("rs");
         let rows = vec![
             Row::Ctx(CtxLine::new(307, 307, "                                }")),
-            Row::Add(AddLine::new(308, "                                }")),
+            Row::add(AddLine::new(308, "                                }")),
         ];
         let (out, homes) = split_trivial_ctx_rows(rows, profile);
         assert_eq!(out.len(), 3);
-        assert!(matches!(&out[0], Row::Del(d) if d.num == 307));
-        assert!(matches!(&out[1], Row::Add(a) if a.num == 307));
+        assert!(matches!(&out[0], Row::Del { line: d, .. } if d.num == 307));
+        assert!(matches!(&out[1], Row::Add { line: a, .. } if a.num == 307));
         assert_eq!(homes, vec![(0, 1)]);
     }
 
@@ -145,7 +145,7 @@ mod tests {
     fn test_salient_ctx_row_preserved_in_place() {
         let profile = lang_profile("rs");
         let rows = vec![
-            Row::Del(DelLine::new(
+            Row::del(DelLine::new(
                 353,
                 "                            let prev_row = self.row_idx;",
             )),
@@ -154,7 +154,7 @@ mod tests {
                 345,
                 "                                        let seg_off = target_vis - s;",
             )),
-            Row::Add(AddLine::new(
+            Row::add(AddLine::new(
                 349,
                 "                                let prev_row = self.row_idx;",
             )),

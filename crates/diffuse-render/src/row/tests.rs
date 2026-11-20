@@ -3,13 +3,23 @@ use crate::{
     ansi::ColorExt,
     core::{
         merge::RunKind,
-        parse::{RowGroup, RowKind, Spans},
+        parse::{GroupId, RowGroup, RowKind, Spans},
         wire::{ModGlyph, ModSide, MovSide, OutputRun},
     },
     span::StyledSpan,
     theme::{Cursor, DiffKind, DiffuseTheme},
 };
 use diffuse_syntax::color::TokenColor;
+
+/// Compound peer group fixture: grouped rows render the reflow `~` markers.
+fn peer_group() -> RowGroup {
+    RowGroup::Peer {
+        id: GroupId(7),
+        slot: 0,
+        n: 2,
+        m: 3,
+    }
+}
 
 /// Emit gutter prefix spans with the exact CLI spelling, mirroring what
 /// `write_row_segment` does for first-segment prefixes.
@@ -49,38 +59,24 @@ fn test_prefix_gutters() {
 
 #[test]
 fn test_prefix_group_gutters() {
-    // Group anchor row has single left-aligned ~ ("  141~ ")
-    let r_anchor = prefix_of(
+    // Grouped peer mod row has single left-aligned ~ ("  141~ ")
+    let r_peer_mod = prefix_of(
         RowKind::Mod,
         None,
-        Some(RowGroup::Anchor),
+        Some(peer_group()),
         Some(141),
         Some(140),
         &[],
     );
-    assert_eq!(r_anchor, "  141~ ");
+    assert_eq!(r_peer_mod, "  141~ ");
 
-    // Group aux add row has ~+
-    let r_aux_add = prefix_of(
-        RowKind::Add,
-        None,
-        Some(RowGroup::Aux { anchor: 141 }),
-        Some(140),
-        None,
-        &[],
-    );
-    assert_eq!(r_aux_add, "  140~+");
+    // Grouped peer add row has ~+
+    let r_peer_add = prefix_of(RowKind::Add, None, Some(peer_group()), Some(140), None, &[]);
+    assert_eq!(r_peer_add, "  140~+");
 
-    // Group aux del row has ~-
-    let r_aux_del = prefix_of(
-        RowKind::Del,
-        None,
-        Some(RowGroup::Aux { anchor: 141 }),
-        None,
-        Some(140),
-        &[],
-    );
-    assert_eq!(r_aux_del, "  140~-");
+    // Grouped peer del row has ~-
+    let r_peer_del = prefix_of(RowKind::Del, None, Some(peer_group()), None, Some(140), &[]);
+    assert_eq!(r_peer_del, "  140~-");
 }
 
 #[test]
@@ -109,20 +105,20 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
 
-    // Group anchor row has left-aligned ~ ("  141~ ")
-    let s_anchor = emitted_prefix(
+    // Grouped peer mod row has left-aligned ~ ("  141~ ")
+    let s_peer_mod = emitted_prefix(
         RowKind::Mod,
         None,
-        Some(RowGroup::Anchor),
+        Some(peer_group()),
         Some(141),
         Some(140),
         &[],
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_anchor), "  141~ ");
+    assert_eq!(crate::ansi::strip_ansi(&s_peer_mod), "  141~ ");
     assert!(
-        s_anchor.contains(
+        s_peer_mod.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
                 .gutter
                 .icon
@@ -131,20 +127,20 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
 
-    // Group aux add row has ~+ ("  140~+")
-    let s_aux_add = emitted_prefix(
+    // Grouped peer add row has ~+ ("  140~+")
+    let s_peer_add = emitted_prefix(
         RowKind::Add,
         None,
-        Some(RowGroup::Aux { anchor: 141 }),
+        Some(peer_group()),
         Some(140),
         None,
         &[],
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_aux_add), "  140~+");
+    assert_eq!(crate::ansi::strip_ansi(&s_peer_add), "  140~+");
     assert!(
-        s_aux_add.contains(
+        s_peer_add.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
                 .gutter
                 .icon
@@ -153,7 +149,7 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
     assert!(
-        s_aux_add.contains(
+        s_peer_add.contains(
             &theme.palette[Cursor::Rest][DiffKind::Add]
                 .gutter
                 .icon
@@ -161,32 +157,32 @@ fn test_styled_prefix_group_and_non_group() {
                 .fg_code()
         )
     );
-    // Aux add numbers use standard add number color (green)
+    // Peer add numbers use standard add number color (green)
     assert!(
-        s_aux_add.starts_with(
+        s_peer_add.starts_with(
             &theme.palette[Cursor::Rest][DiffKind::Add]
                 .gutter
                 .num
                 .color
                 .fg_code()
         ),
-        "aux add number must match standard add number color: {s_aux_add:?}"
+        "peer add number must match standard add number color: {s_peer_add:?}"
     );
 
-    // Group aux del row has ~- (" 140~-")
-    let s_aux_del = emitted_prefix(
+    // Grouped peer del row has ~- (" 140~-")
+    let s_peer_del = emitted_prefix(
         RowKind::Del,
         None,
-        Some(RowGroup::Aux { anchor: 141 }),
+        Some(peer_group()),
         None,
         Some(140),
         &[],
         true,
         &theme,
     );
-    assert_eq!(crate::ansi::strip_ansi(&s_aux_del), "  140~-");
+    assert_eq!(crate::ansi::strip_ansi(&s_peer_del), "  140~-");
     assert!(
-        s_aux_del.contains(
+        s_peer_del.contains(
             &theme.palette[Cursor::Rest][DiffKind::Mod]
                 .gutter
                 .icon
@@ -195,7 +191,7 @@ fn test_styled_prefix_group_and_non_group() {
         )
     );
     assert!(
-        s_aux_del.contains(
+        s_peer_del.contains(
             &theme.palette[Cursor::Rest][DiffKind::Del]
                 .gutter
                 .icon
@@ -203,20 +199,20 @@ fn test_styled_prefix_group_and_non_group() {
                 .fg_code()
         )
     );
-    // Aux del numbers use standard del number color (red) in italic style
+    // Peer del numbers use standard del number color (red) in italic style
     assert!(
-        s_aux_del.starts_with(
+        s_peer_del.starts_with(
             &theme.palette[Cursor::Rest][DiffKind::Del]
                 .gutter
                 .num
                 .color
                 .italic_fg_code()
         ),
-        "aux del number must use standard del number color in italic style: {s_aux_del:?}"
+        "peer del number must use standard del number color in italic style: {s_peer_del:?}"
     );
     assert!(
-        s_aux_del.contains("\x1b[23m"),
-        "aux del must turn off italic after line number: {s_aux_del:?}"
+        s_peer_del.contains("\x1b[23m"),
+        "peer del must turn off italic after line number: {s_peer_del:?}"
     );
 }
 
@@ -1363,27 +1359,9 @@ fn test_styled_prefix_spans_match_ansi_prefix_text() {
         (RowKind::Add, None, None, Some(42), None),
         (RowKind::Del, None, None, None, Some(10)),
         (RowKind::Mod, None, None, Some(55), Some(54)),
-        (
-            RowKind::Mod,
-            None,
-            Some(RowGroup::Anchor),
-            Some(141),
-            Some(140),
-        ),
-        (
-            RowKind::Add,
-            None,
-            Some(RowGroup::Aux { anchor: 141 }),
-            Some(140),
-            None,
-        ),
-        (
-            RowKind::Del,
-            None,
-            Some(RowGroup::Aux { anchor: 141 }),
-            None,
-            Some(140),
-        ),
+        (RowKind::Mod, None, Some(peer_group()), Some(141), Some(140)),
+        (RowKind::Add, None, Some(peer_group()), Some(140), None),
+        (RowKind::Del, None, Some(peer_group()), None, Some(140)),
         (RowKind::Mov, Some(MovSide::Src), None, None, Some(9)),
         (RowKind::Mov, Some(MovSide::Tgt), None, Some(11), None),
     ];
@@ -1717,7 +1695,7 @@ fn test_raw_row_spans_match_ansi_text_and_trailing_fill() {
 }
 
 #[test]
-fn test_aux_add_row_use_merged_display_text() {
+fn test_peer_add_row_use_merged_display_text() {
     let runs = vec![
         OutputRun {
             kind: RunKind::Del,
@@ -1732,11 +1710,11 @@ fn test_aux_add_row_use_merged_display_text() {
             text: "new_part".into(),
         },
     ];
-    // With is_aux_row = true, display_text merges the del and add runs.
-    let disp_aux = display_text("new_part", true, RowKind::Add, &runs, 0, true);
-    assert_eq!(disp_aux, "old_partnew_part");
+    // With is_peer_row = true, display_text merges the del and add runs.
+    let disp_peer = display_text("new_part", true, RowKind::Add, &runs, 0, true);
+    assert_eq!(disp_peer, "old_partnew_part");
 
-    // With is_aux_row = false, display_text does not merge; returns text.
+    // With is_peer_row = false, display_text does not merge; returns text.
     let disp_plain = display_text("new_part", false, RowKind::Add, &runs, 0, true);
     assert_eq!(disp_plain, "new_part");
 }
@@ -2586,11 +2564,11 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
         "≈-"
     );
     assert_eq!(
-        split_left_glyph(RowKind::Mod, None, Some(RowGroup::Anchor)),
+        split_left_glyph(RowKind::Mod, None, Some(peer_group())),
         "~ "
     );
     assert_eq!(
-        split_left_glyph(RowKind::Del, None, Some(RowGroup::Aux { anchor: 0 })),
+        split_left_glyph(RowKind::Del, None, Some(peer_group())),
         "~-"
     );
 
@@ -2602,11 +2580,11 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
         "≈+"
     );
     assert_eq!(
-        split_right_glyph(RowKind::Mod, None, Some(RowGroup::Anchor)),
+        split_right_glyph(RowKind::Mod, None, Some(peer_group())),
         "~ "
     );
     assert_eq!(
-        split_right_glyph(RowKind::Add, None, Some(RowGroup::Aux { anchor: 1 })),
+        split_right_glyph(RowKind::Add, None, Some(peer_group())),
         "~+"
     );
 
@@ -2662,33 +2640,21 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
         "      "
     );
 
-    // Anchor and aux plain prefixes
+    // Peer group plain prefixes
     assert_eq!(
-        split_left_prefix_of(RowKind::Mod, None, Some(RowGroup::Anchor), Some(42), 3),
+        split_left_prefix_of(RowKind::Mod, None, Some(peer_group()), Some(42), 3),
         " 42~ "
     );
     assert_eq!(
-        split_left_prefix_of(
-            RowKind::Del,
-            None,
-            Some(RowGroup::Aux { anchor: 0 }),
-            Some(42),
-            3
-        ),
+        split_left_prefix_of(RowKind::Del, None, Some(peer_group()), Some(42), 3),
         " 42~-"
     );
     assert_eq!(
-        split_right_prefix_of(RowKind::Mod, None, Some(RowGroup::Anchor), Some(105), 4),
+        split_right_prefix_of(RowKind::Mod, None, Some(peer_group()), Some(105), 4),
         " 105~ "
     );
     assert_eq!(
-        split_right_prefix_of(
-            RowKind::Add,
-            None,
-            Some(RowGroup::Aux { anchor: 1 }),
-            Some(105),
-            4
-        ),
+        split_right_prefix_of(RowKind::Add, None, Some(peer_group()), Some(105), 4),
         " 105~+"
     );
 
@@ -2753,60 +2719,60 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     assert_eq!(span_len(&s_r_del), 6);
     assert_eq!(s_r_del[0].text, "      ");
 
-    // Anchor and aux styled prefix spans
-    let s_l_anchor = styled_split_left_prefix_spans(
+    // Peer group styled prefix spans
+    let s_l_peer = styled_split_left_prefix_spans(
         RowKind::Mod,
         None,
-        Some(RowGroup::Anchor),
+        Some(peer_group()),
         Some(42),
         false,
         None,
         &theme,
         3,
     );
-    assert_eq!(span_len(&s_l_anchor), 5);
-    assert_eq!(s_l_anchor[1].text, "~ ");
+    assert_eq!(span_len(&s_l_peer), 5);
+    assert_eq!(s_l_peer[1].text, "~ ");
 
-    let s_l_aux_del = styled_split_left_prefix_spans(
+    let s_l_peer_del = styled_split_left_prefix_spans(
         RowKind::Del,
         None,
-        Some(RowGroup::Aux { anchor: 0 }),
+        Some(peer_group()),
         Some(42),
         false,
         None,
         &theme,
         3,
     );
-    assert_eq!(span_len(&s_l_aux_del), 5);
-    assert_eq!(s_l_aux_del[1].text, "~");
-    assert_eq!(s_l_aux_del[2].text, "-");
+    assert_eq!(span_len(&s_l_peer_del), 5);
+    assert_eq!(s_l_peer_del[1].text, "~");
+    assert_eq!(s_l_peer_del[2].text, "-");
 
-    let s_r_anchor = styled_split_right_prefix_spans(
+    let s_r_peer_mod = styled_split_right_prefix_spans(
         RowKind::Mod,
         None,
-        Some(RowGroup::Anchor),
+        Some(peer_group()),
         Some(105),
         false,
         None,
         &theme,
         4,
     );
-    assert_eq!(span_len(&s_r_anchor), 6);
-    assert_eq!(s_r_anchor[1].text, "~ ");
+    assert_eq!(span_len(&s_r_peer_mod), 6);
+    assert_eq!(s_r_peer_mod[1].text, "~ ");
 
-    let s_r_aux_add = styled_split_right_prefix_spans(
+    let s_r_peer_add = styled_split_right_prefix_spans(
         RowKind::Add,
         None,
-        Some(RowGroup::Aux { anchor: 1 }),
+        Some(peer_group()),
         Some(105),
         false,
         None,
         &theme,
         4,
     );
-    assert_eq!(span_len(&s_r_aux_add), 6);
-    assert_eq!(s_r_aux_add[1].text, "~");
-    assert_eq!(s_r_aux_add[2].text, "+");
+    assert_eq!(span_len(&s_r_peer_add), 6);
+    assert_eq!(s_r_peer_add[1].text, "~");
+    assert_eq!(s_r_peer_add[2].text, "+");
 
     // Minimum split pane width threshold
     assert_eq!(MIN_SIDE_BY_SIDE_PANE_CHARS, 80);

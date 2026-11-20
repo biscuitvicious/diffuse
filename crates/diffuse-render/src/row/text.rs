@@ -11,14 +11,14 @@ use crate::{
 /// Extract display text of a row considering word diff and column offset.
 pub fn display_text(
     text: &str,
-    is_aux_row: bool,
+    is_peer_row: bool,
     kind: RowKind,
     runs: &[OutputRun],
     col_offset: usize,
     word_diff: bool,
 ) -> String {
     let use_merged =
-        (kind == RowKind::Mod || kind == RowKind::Mov || (kind == RowKind::Add && is_aux_row))
+        (kind == RowKind::Mod || kind == RowKind::Mov || (kind == RowKind::Add && is_peer_row))
             && word_diff
             && !runs.is_empty();
 

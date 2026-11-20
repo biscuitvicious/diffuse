@@ -1,10 +1,9 @@
 //! Post-walk normalization: converts identical Mod rows to Ctx when invariants
 //! hold.
 
-use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;
 
-use crate::parse::{CtxLine, Hunk, Row, RowGroup};
+use crate::parse::{CtxLine, Hunk, Row};
 
 /// Swap an identical Mod row to Ctx in place, returning the original for
 /// potential rollback. Returns `None` for non-Mod rows (never a
@@ -33,8 +32,7 @@ pub(crate) fn swap_mod_to_ctx(slot: &mut Row) -> Option<Row> {
 pub fn pass_normalize_identical_mods(
     h: &Hunk,
     res: Vec<Row>,
-    profile: Option<&LangProfile>,
-    block_anchor_news: &FxHashSet<u32>,
+    pinned_new_lines: &FxHashSet<u32>,
 ) -> Vec<Row> {
     let candidates: Vec<usize> = res
         .iter()
@@ -51,8 +49,7 @@ pub fn pass_normalize_identical_mods(
                 });
                 old_line.text == new_line.text
                     && !has_moves
-                    && !matches!(r.group(), Some(RowGroup::Anchor))
-                    && !block_anchor_news.contains(&new_line.num)
+                    && !pinned_new_lines.contains(&new_line.num)
             }
             _ => false,
         })
@@ -69,7 +66,7 @@ pub fn pass_normalize_identical_mods(
             originals.push((i, original));
         }
     }
-    if normalized_invariants_hold(h, &out, profile) {
+    if normalized_invariants_hold(h, &out) {
         repair_peer_group_atomicity(&mut out);
         return out;
     }
@@ -80,13 +77,13 @@ pub fn pass_normalize_identical_mods(
         let Some(original) = swap_mod_to_ctx(&mut out[i]) else {
             continue;
         };
-        if normalized_invariants_hold(h, &out, profile) {
+        if normalized_invariants_hold(h, &out) {
             converted.push((i, original));
         } else {
             out[i] = original;
         }
     }
-    while !converted.is_empty() && !normalized_invariants_hold(h, &out, profile) {
+    while !converted.is_empty() && !normalized_invariants_hold(h, &out) {
         let (i, original) = converted.pop().expect("non-empty checked above");
         out[i] = original;
     }
@@ -184,12 +181,11 @@ fn check_peer_token_conservation(rows: &[Row]) -> Result<(), String> {
 
 /// Every collapsed-row invariant a normalized stream must satisfy (the
 /// same gates `collapse_hunk_rows` enforces before returning).
-fn normalized_invariants_hold(h: &Hunk, out: &[Row], profile: Option<&LangProfile>) -> bool {
+fn normalized_invariants_hold(h: &Hunk, out: &[Row]) -> bool {
     let mut out_copy = out.to_vec();
     repair_peer_group_atomicity(&mut out_copy);
     super::invariants::check_context_old_line_monotonicity(&out_copy).is_ok()
         && super::invariants::check_no_orphaned_continuation_dels(h, &out_copy).is_ok()
         && super::invariants::check_del_add_topological_order(h, &out_copy).is_ok()
-        && super::invariants::assert_collapsed_reflow_invariants(&out_copy, profile).is_ok()
         && check_peer_token_conservation(&out_copy).is_ok()
 }

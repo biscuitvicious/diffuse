@@ -1,7 +1,6 @@
 //! Unified M-to-N peer reflow pipeline.
 //!
-//! Replaces legacy asymmetric anchor/aux reflow hierarchy with symmetric macro
-//! cluster factorization cuts and micro slot-alignment DP.
+//! Symmetric macro cluster factorization cuts and micro slot-alignment DP.
 
 use diffuse_syntax::profile::LangProfile;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -10,8 +9,8 @@ use crate::{
     cluster::factor::factor_cluster_with_content,
     collapse::{
         invariants::{
-            assert_collapsed_reflow_invariants, check_context_old_line_monotonicity,
-            check_del_add_topological_order, check_no_orphaned_continuation_dels,
+            check_context_old_line_monotonicity, check_del_add_topological_order,
+            check_no_orphaned_continuation_dels,
         },
         normalize::pass_normalize_identical_mods,
         slot::{PeerGroupRows, align_and_type_peer_group_with_content},
@@ -127,7 +126,7 @@ fn slots_project_to_text(group_rows: &PeerGroupRows) -> bool {
 
 /// Decides the group metadata for slots of a factored peer group. `None`
 /// strips grouping: 1×1 pairs and uniform 1-to-1 Mod runs render as plain
-/// rows, and groups with no strong token link (neither a `Mod` anchor nor a
+/// rows, and groups with no strong token link (neither a `Mod` seed nor a
 /// salient moved-token relationship) dissolve to plain Del/Add rather than
 /// implying a reflow that slot alignment found no evidence for.
 fn peer_group_meta(
@@ -147,7 +146,7 @@ fn peer_group_meta(
 fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     enum Item {
         PeerGroup(Vec<Row>),
-        Unanchored(Row),
+        Ungrouped(Row),
     }
 
     let mut items: Vec<Item> = Vec::new();
@@ -161,7 +160,7 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
             }
             items.push(Item::PeerGroup(peer_rows));
         } else {
-            items.push(Item::Unanchored(rows[i].clone()));
+            items.push(Item::Ungrouped(rows[i].clone()));
             i += 1;
         }
     }
@@ -169,42 +168,42 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
     let mut out = Vec::with_capacity(rows.len());
     let mut i = 0;
     while i < items.len() {
-        let anchor_pos = items[i..].iter().position(|it| match it {
+        let placed_pos = items[i..].iter().position(|it| match it {
             Item::PeerGroup(_) => true,
-            Item::Unanchored(r) => {
+            Item::Ungrouped(r) => {
                 matches!(r, Row::Mod { .. } | Row::MovSrc { .. } | Row::MovTgt { .. })
             }
         });
-        let end = match anchor_pos {
+        let end = match placed_pos {
             Some(p) => i + p,
             None => items.len(),
         };
 
-        let mut unanchored_dels = Vec::new();
-        let mut unanchored_adds = Vec::new();
-        let mut unanchored_others = Vec::new();
+        let mut ungrouped_dels = Vec::new();
+        let mut ungrouped_adds = Vec::new();
+        let mut ungrouped_others = Vec::new();
         for it in &items[i..end] {
             match it {
                 Item::PeerGroup(_) => unreachable!(),
-                Item::Unanchored(r) => match r {
-                    Row::Del(_) | Row::AuxDel { .. } => {
-                        unanchored_dels.push(r.clone());
+                Item::Ungrouped(r) => match r {
+                    Row::Del { .. } => {
+                        ungrouped_dels.push(r.clone());
                     }
-                    Row::Add(_) | Row::AuxAdd { .. } => {
-                        unanchored_adds.push(r.clone());
+                    Row::Add { .. } => {
+                        ungrouped_adds.push(r.clone());
                     }
-                    _ => unanchored_others.push(r.clone()),
+                    _ => ungrouped_others.push(r.clone()),
                 },
             }
         }
-        out.extend(unanchored_dels);
-        out.extend(unanchored_adds);
-        out.extend(unanchored_others);
+        out.extend(ungrouped_dels);
+        out.extend(ungrouped_adds);
+        out.extend(ungrouped_others);
 
         if end < items.len() {
             match &items[end] {
                 Item::PeerGroup(g) => out.extend(g.clone()),
-                Item::Unanchored(r) => out.push(r.clone()),
+                Item::Ungrouped(r) => out.push(r.clone()),
             }
             i = end + 1;
         } else {
@@ -224,11 +223,11 @@ pub fn peer_reflow_pipeline(
     let has_dels = h
         .rows
         .iter()
-        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. }));
+        .any(|r| matches!(r, Row::Del { .. } | Row::MovSrc { .. }));
     let has_adds = h
         .rows
         .iter()
-        .any(|r| matches!(r, Row::Add(_) | Row::MovTgt { .. }));
+        .any(|r| matches!(r, Row::Add { .. } | Row::MovTgt { .. }));
 
     let h_split = if has_dels && has_adds {
         let rows = &h.rows;
@@ -246,8 +245,8 @@ pub fn peer_reflow_pipeline(
                         Row::Ctx(c)
                             if crate::ctx_split::should_split_ctx(&c.text, &c.text, profile) =>
                         {
-                            out.push(Row::Del(DelLine::new(c.old_pos, c.text.clone())));
-                            out.push(Row::Add(AddLine::new(c.new_pos, c.text.clone())));
+                            out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())));
+                            out.push(Row::add(AddLine::new(c.new_pos, c.text.clone())));
                         }
                         other => out.push(other.clone()),
                     }
@@ -288,9 +287,9 @@ pub fn peer_reflow_pipeline(
                 let mut old_rows = Vec::new();
                 let mut new_rows = Vec::new();
                 for r in cluster_rows {
-                    if matches!(r, Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. }) {
+                    if matches!(r, Row::Del { .. } | Row::MovSrc { .. }) {
                         old_rows.push(r.clone());
-                    } else if matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) {
+                    } else if matches!(r, Row::Add { .. } | Row::MovTgt { .. }) {
                         new_rows.push(r.clone());
                     }
                 }
@@ -405,10 +404,9 @@ pub fn peer_reflow_pipeline(
                                             cached_runs: slot.runs,
                                         });
                                     } else if n == 0 || group_meta.is_none() {
-                                        cluster_out.push(Row::Add(AddLine::new(v, new_text)));
+                                        cluster_out.push(Row::add(AddLine::new(v, new_text)));
                                     } else {
-                                        cluster_out.push(Row::AuxAdd {
-                                            anchor: *peer_group.id,
+                                        cluster_out.push(Row::Add {
                                             line: AddLine::new(v, new_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
@@ -425,10 +423,9 @@ pub fn peer_reflow_pipeline(
                                             cached_runs: slot.runs,
                                         });
                                     } else if m == 0 || group_meta.is_none() {
-                                        cluster_out.push(Row::Del(DelLine::new(u, old_text)));
+                                        cluster_out.push(Row::del(DelLine::new(u, old_text)));
                                     } else {
-                                        cluster_out.push(Row::AuxDel {
-                                            anchor: *peer_group.id,
+                                        cluster_out.push(Row::Del {
                                             line: DelLine::new(u, old_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
@@ -446,8 +443,7 @@ pub fn peer_reflow_pipeline(
         }
     }
 
-    let block_anchor_news = FxHashSet::default();
-    let res = pass_normalize_identical_mods(h, out, profile, &block_anchor_news);
+    let res = pass_normalize_identical_mods(h, out, &FxHashSet::default());
 
     crate::ensure!(
         res.iter().all(|r| match r {
@@ -455,21 +451,13 @@ pub fn peer_reflow_pipeline(
                 old_line, new_line, ..
             } => old_line.num > 0 && new_line.num > 0,
             Row::Ctx(c) => c.old_pos > 0 && c.new_pos > 0,
-            Row::Add(a) => a.num > 0,
-            Row::Del(d) => d.num > 0,
+            Row::Add { line, .. } => line.num > 0,
+            Row::Del { line, .. } => line.num > 0,
             Row::MovSrc { line, .. } => line.num > 0,
             Row::MovTgt { line, .. } => line.num > 0,
-            Row::AuxDel { line, .. } => line.num > 0,
-            Row::AuxAdd { line, .. } => line.num > 0,
             Row::Sep(_) => true,
         }),
         "All collapsed rows must have valid, non-zero line coordinates"
-    );
-
-    crate::invariant!(
-        assert_collapsed_reflow_invariants(&res, profile).is_ok(),
-        "Collapsed rows must satisfy reflow group invariants: {:?}",
-        assert_collapsed_reflow_invariants(&res, profile).err()
     );
 
     crate::invariant!(
@@ -520,11 +508,11 @@ mod tests {
     }
 
     fn make_del(num: u32, text: &str) -> Row {
-        Row::Del(DelLine::new(num, text))
+        Row::del(DelLine::new(num, text))
     }
 
     fn make_add(num: u32, text: &str) -> Row {
-        Row::Add(AddLine::new(num, text))
+        Row::add(AddLine::new(num, text))
     }
 
     #[test]
@@ -641,11 +629,7 @@ mod tests {
         for r in &res[1..34] {
             assert!(matches!(
                 r,
-                Row::Del(_)
-                    | Row::Mod { .. }
-                    | Row::AuxDel { .. }
-                    | Row::AuxAdd { .. }
-                    | Row::Add(_)
+                Row::Del { .. } | Row::Mod { .. } | Row::Add { .. }
             ));
         }
         assert!(matches!(res[34], Row::Ctx(_)));
@@ -815,7 +799,7 @@ mod tests {
         };
 
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
-        // A 2-to-1 merge has no 1-to-1 Mod anchor, so the peer group
+        // A 2-to-1 merge has no 1-to-1 Mod seed, so the peer group
         // dissolves: both deletions and the combined addition render
         // ungrouped rather than forcing a partial Mod pairing.
         assert_eq!(peer.len(), 5);
@@ -836,12 +820,12 @@ mod tests {
         };
 
         let dels = vec![
-            Row::Del(DelLine::new(11, "aaa row bbb")),
-            Row::Del(DelLine::new(12, "ccc row ddd")),
+            Row::del(DelLine::new(11, "aaa row bbb")),
+            Row::del(DelLine::new(12, "ccc row ddd")),
         ];
         let adds = vec![
-            Row::Add(AddLine::new(11, "eee row fff")),
-            Row::Add(AddLine::new(12, "ggg row hhh")),
+            Row::add(AddLine::new(11, "eee row fff")),
+            Row::add(AddLine::new(12, "ggg row hhh")),
         ];
         let group = FactoredGroup {
             id: GroupId(1),
@@ -905,7 +889,7 @@ mod tests {
         assert!(matches!(res[5], Row::Ctx(_)));
         for r in &res[1..5] {
             assert!(
-                matches!(r, Row::Del(_) | Row::Add(_)),
+                matches!(r, Row::Del { .. } | Row::Add { .. }),
                 "expected plain row, got {:?}",
                 r
             );
@@ -918,9 +902,8 @@ mod tests {
     fn test_peer_pipeline_single_pair_rival_stays_plain() {
         // A verbatim rival elsewhere in the old snapshot blocks Mod pairing,
         // and the shared identifier still relocates — but a lone pair is not
-        // a group: it must dissolve to plain Del/Add, never to anchor-less
-        // Aux rows (legacy reflow invariants reject orphan aux rows, and the
-        // peer pipeline emits no Anchor rows at all).
+        // a group: it must dissolve to plain Del/Add, never to grouped rows
+        // (the peer invariants require atomic groups).
         let hunk = Hunk {
             old_start: 10,
             old_count: 3,
@@ -944,8 +927,8 @@ mod tests {
 
         let res = peer_reflow_pipeline(&hunk, Some(&old_content), Some(&new_content), None);
         assert_eq!(res.len(), 4);
-        assert!(matches!(res[1], Row::Del(_)), "got {:?}", res[1]);
-        assert!(matches!(res[2], Row::Add(_)), "got {:?}", res[2]);
+        assert!(matches!(res[1], Row::Del { .. }), "got {:?}", res[1]);
+        assert!(matches!(res[2], Row::Add { .. }), "got {:?}", res[2]);
         assert_eq!(res[1].group(), None);
         assert_eq!(res[2].group(), None);
         assert_peer_group_invariants(&res);

@@ -3,310 +3,7 @@
 
 use rustc_hash::FxHashSet;
 
-use diffuse_syntax::profile::LangProfile;
-
-use crate::{
-    merge::{RunKind, merged_runs},
-    parse::{Hunk, Row, RowGroup},
-};
-
-/// Asserts reflow group invariants on collapsed rows:
-/// 1. Old-side reconstruction: removing novel additions across the group in
-///    visual order reproduces the surviving old-side text.
-/// 2. Moved-text conservation: anchor MovedSrc == sum(aux MovedTgt).
-/// 3. Aux line numbers strictly ascending.
-/// 4. No orphan aux rows.
-pub(crate) fn assert_collapsed_reflow_invariants(
-    rows: &[Row],
-    profile: Option<&LangProfile>,
-) -> Result<(), String> {
-    let strip_ws = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-
-    let anchor_indices: Vec<usize> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.group() == Some(RowGroup::Anchor))
-        .map(|(i, _)| i)
-        .collect();
-
-    for &anchor_idx in &anchor_indices {
-        let anchor_row = &rows[anchor_idx];
-        if anchor_row.old_text().is_none() {
-            continue;
-        }
-        let anchor_nl = anchor_row.new_line();
-        let anchor_ol = anchor_row.old_line();
-        let anchor_num = anchor_nl.or(anchor_ol).unwrap_or(0);
-
-        let mut group_rows: Vec<&Row> = vec![anchor_row];
-        for (i, r) in rows.iter().enumerate() {
-            if i == anchor_idx {
-                continue;
-            }
-            if let Some(RowGroup::Aux { anchor }) = r.group()
-                && Some(anchor) == anchor_nl
-            {
-                group_rows.push(r);
-            }
-        }
-
-        let aux_adds: Vec<&&Row> = group_rows
-            .iter()
-            .filter(|r| matches!(r, Row::AuxAdd { .. }))
-            .collect();
-        let aux_dels: Vec<&&Row> = group_rows
-            .iter()
-            .filter(|r| matches!(r, Row::AuxDel { .. }))
-            .collect();
-        let aux_mods: Vec<&&Row> = group_rows
-            .iter()
-            .filter(|r| matches!(r, Row::Mod { .. }) && r.group() != Some(RowGroup::Anchor))
-            .collect();
-        let has_aux_dels = group_rows
-            .iter()
-            .any(|r| matches!(r, Row::AuxDel { .. } | Row::MovSrc { .. }));
-        let has_aux_adds = group_rows
-            .iter()
-            .any(|r| matches!(r, Row::AuxAdd { .. } | Row::MovTgt { .. }));
-
-        if !aux_mods.is_empty() {
-            let group_moved_src: String = group_rows
-                .iter()
-                .flat_map(|r| merged_runs(r))
-                .filter(|run| run.kind == RunKind::MovedSrc)
-                .map(|run| run.text)
-                .collect();
-            let group_moved_tgt: String = group_rows
-                .iter()
-                .flat_map(|r| merged_runs(r))
-                .filter(|run| run.kind == RunKind::MovedTgt)
-                .map(|run| run.text)
-                .collect();
-
-            let mut s1: Vec<char> = group_moved_src
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let mut s2: Vec<char> = group_moved_tgt
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            s1.sort_unstable();
-            s2.sort_unstable();
-            if s1 != s2 {
-                return Err(format!(
-                    "Anchor line {anchor_num} compound mod group character conservation mismatch:\n  group MovedSrc chars: {s1:?}\n  group MovedTgt chars: {s2:?}"
-                ));
-            }
-
-            let mut last_old = None;
-            for r in &group_rows {
-                if let Some(ol) = r.old_line() {
-                    if let Some(prev) = last_old
-                        && ol <= prev
-                    {
-                        return Err(format!(
-                            "Compound mod group old line {ol} <= previous old line {prev}"
-                        ));
-                    }
-                    last_old = Some(ol);
-                }
-            }
-
-            let mut last_new = None;
-            for r in &group_rows {
-                if let Some(nl) = r.new_line() {
-                    if let Some(prev) = last_new
-                        && nl <= prev
-                    {
-                        return Err(format!(
-                            "Compound mod group new line {nl} <= previous new line {prev}"
-                        ));
-                    }
-                    last_new = Some(nl);
-                }
-            }
-        } else if !aux_adds.is_empty() && !has_aux_dels {
-            let is_import = profile.is_some_and(|p| {
-                anchor_row
-                    .old_text()
-                    .is_some_and(|dt| p.is_import_statement(dt))
-            });
-
-            let anchor_moved_src: String = merged_runs(anchor_row)
-                .into_iter()
-                .filter(|run| run.kind == RunKind::MovedSrc)
-                .map(|run| run.text)
-                .collect();
-            let aux_non_add: String = aux_adds
-                .iter()
-                .flat_map(|aux| merged_runs(aux))
-                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
-                .map(|run| run.text)
-                .collect();
-
-            // 1. Old-side reconstruction invariant (mandatory for import statements)
-            if is_import {
-                let expected_old: String = merged_runs(anchor_row)
-                    .into_iter()
-                    .filter(|run| run.kind == RunKind::Ctx || run.kind == RunKind::MovedSrc)
-                    .map(|run| run.text)
-                    .collect();
-                let mut reconstructed_old = String::new();
-                for r in &group_rows {
-                    if matches!(r, Row::Mod { .. }) {
-                        reconstructed_old.extend(
-                            merged_runs(r)
-                                .into_iter()
-                                .filter(|run| run.kind == RunKind::Ctx)
-                                .map(|run| run.text),
-                        );
-                    } else if matches!(r, Row::AuxAdd { .. }) {
-                        reconstructed_old.extend(
-                            merged_runs(r)
-                                .into_iter()
-                                .filter(|run| {
-                                    run.kind == RunKind::MovedTgt || run.kind == RunKind::Del
-                                })
-                                .map(|run| run.text),
-                        );
-                    }
-                }
-                if strip_ws(&reconstructed_old) != strip_ws(&expected_old) {
-                    return Err(format!(
-                        "Anchor line {anchor_num} old-text reconstruction mismatch:\n  expected: {expected_old:?}\n  got:      {reconstructed_old:?}"
-                    ));
-                }
-                if strip_ws(&anchor_moved_src) != strip_ws(&aux_non_add) {
-                    return Err(format!(
-                        "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux non-add:     {aux_non_add:?}"
-                    ));
-                }
-            } else {
-                // 2. Character conservation invariant across all reflow groups
-                let mut s1: Vec<char> = anchor_moved_src
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect();
-                let mut s2: Vec<char> =
-                    aux_non_add.chars().filter(|c| !c.is_whitespace()).collect();
-                s1.sort_unstable();
-                s2.sort_unstable();
-                if s1 != s2 {
-                    return Err(format!(
-                        "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux non-add chars:     {s2:?}"
-                    ));
-                }
-            }
-
-            // 4. Suffix aux add line numbers strictly ascending
-            let mut last_aux_line = None;
-            for aux in group_rows
-                .iter()
-                .filter(|r| matches!(r, Row::AuxAdd { .. }))
-            {
-                if let Some(nl) = aux.new_line() {
-                    if let Some(prev) = last_aux_line
-                        && nl <= prev
-                    {
-                        return Err(format!("Aux row line {nl} <= previous aux line {prev}"));
-                    }
-                    last_aux_line = Some(nl);
-                }
-            }
-        } else if !aux_dels.is_empty() && !has_aux_adds {
-            let anchor_moved_tgt: String = merged_runs(anchor_row)
-                .into_iter()
-                .filter(|run| run.kind == RunKind::MovedTgt)
-                .map(|run| run.text)
-                .collect();
-            let aux_moved_src: String = aux_dels
-                .iter()
-                .flat_map(|aux| merged_runs(aux))
-                .filter(|run| run.kind == RunKind::MovedSrc)
-                .map(|run| run.text)
-                .collect();
-            let mut s1: Vec<char> = anchor_moved_tgt
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let mut s2: Vec<char> = aux_moved_src
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            s1.sort_unstable();
-            s2.sort_unstable();
-            if s1 != s2 {
-                return Err(format!(
-                    "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedTgt chars: {s1:?}\n  aux MovedSrc chars: {s2:?}"
-                ));
-            }
-
-            // Suffix aux del line numbers strictly ascending
-            let mut last_aux_line = None;
-            for aux in &aux_dels {
-                if let Some(ol) = aux.old_line() {
-                    if let Some(prev) = last_aux_line
-                        && ol <= prev
-                    {
-                        return Err(format!("Aux del line {ol} <= previous aux del line {prev}"));
-                    }
-                    last_aux_line = Some(ol);
-                }
-            }
-        }
-    }
-
-    // 4. Reflow Group Atomicity: Anchor row and all its companion aux additions
-    // (both prefix and suffix) and aux deletions must form an unbroken contiguous
-    // slice in visual row order.
-    for &anchor_idx in &anchor_indices {
-        let anchor_row = &rows[anchor_idx];
-        let anchor_nl = anchor_row.new_line();
-        let anchor_ol = anchor_row.old_line();
-
-        let mut group_indices: Vec<usize> = vec![anchor_idx];
-        for (i, r) in rows.iter().enumerate() {
-            if i == anchor_idx {
-                continue;
-            }
-            if let Some(RowGroup::Aux { anchor }) = r.group()
-                && Some(anchor) == anchor_nl
-            {
-                group_indices.push(i);
-            }
-        }
-
-        if group_indices.len() > 1 {
-            group_indices.sort_unstable();
-            for window in group_indices.windows(2) {
-                if window[1] != window[0] + 1 {
-                    let anchor_ident = anchor_nl.or(anchor_ol).unwrap_or(0);
-                    return Err(format!(
-                        "Reflow atomicity violation: Reflow group for anchor line {anchor_ident} is interrupted at row indices {} and {}",
-                        window[0], window[1]
-                    ));
-                }
-            }
-        }
-    }
-
-    // Verify no orphan aux rows
-    for (i, r) in rows.iter().enumerate() {
-        if let Some(RowGroup::Aux { anchor }) = r.group() {
-            let has_anchor = anchor_indices
-                .iter()
-                .any(|&ai| rows[ai].new_line() == Some(anchor));
-            if !has_anchor {
-                return Err(format!(
-                    "Orphan aux row {i} (line {:?}) pointing to non-existent anchor {anchor}",
-                    r.new_line().or_else(|| r.old_line())
-                ));
-            }
-        }
-    }
-    Ok(())
-}
+use crate::parse::{Hunk, Row};
 
 /// Contract Invariant 1: Reflow Cluster Confinement.
 ///
@@ -318,11 +15,16 @@ pub(crate) fn assert_collapsed_reflow_invariants(
 /// 1`) was also deleted in the diff.
 pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), String> {
     for (i, r) in res.iter().enumerate() {
-        let Row::Del(d) = r else {
+        let Row::Del {
+            line: d,
+            group: None,
+            ..
+        } = r
+        else {
             continue;
         };
         // Only inspect the head of a deletion run
-        if i > 0 && matches!(res[i - 1], Row::Del(_) | Row::AuxDel { .. }) {
+        if i > 0 && matches!(res[i - 1], Row::Del { .. }) {
             continue;
         }
         let t = d.text.trim_start();
@@ -350,7 +52,7 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
                 let prev_was_del_in_hunk = h
                     .rows
                     .iter()
-                    .any(|row| matches!(row, Row::Del(d0) if d0.num == prev_old));
+                    .any(|row| matches!(row, Row::Del { line: d0, .. } if d0.num == prev_old));
                 if prev_was_del_in_hunk {
                     return Err(format!(
                         "Orphaned continuation deletion at visual row {i} (old line {}): {:?} (syntactic parent old line {prev_old} was deleted in the hunk but separated across context lines from its continuation)",
@@ -443,7 +145,7 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
             let cluster_adds: FxHashSet<u32> =
                 cluster.new_rows.iter().filter_map(Row::new_line).collect();
 
-            // Find all Mod or Ctx anchor rows in res that belong to this cluster
+            // Find all Mod or Ctx reference rows in res that belong to this cluster
             let cluster_mods: Vec<(u32, u32)> = res
                 .iter()
                 .filter_map(|r| match r {
@@ -465,12 +167,16 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                 .collect();
 
             for (vi, r) in res.iter().enumerate() {
-                if let Row::Del(d) = r
+                if let Row::Del {
+                    line: d,
+                    group: None,
+                    ..
+                } = r
                     && cluster_dels.contains(&d.num)
                 {
-                    // Find the anchor new line for deletion d: the new line of the
+                    // Find the seed new line for deletion d: the new line of the
                     // latest Mod/Ctx row in the cluster with old_line <= d.num.
-                    let d_anchor_new = cluster_mods
+                    let d_seed_new = cluster_mods
                         .iter()
                         .filter(|&&(old_num, _)| old_num <= d.num)
                         .map(|&(_, new_num)| new_num)
@@ -483,11 +189,11 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                         }
                         if let Some(nl) = prev.new_line()
                             && cluster_adds.contains(&nl)
-                            && matches!(prev, Row::Add(_))
-                            && nl > d_anchor_new
+                            && matches!(prev, Row::Add { group: None, .. })
+                            && nl > d_seed_new
                         {
                             return Err(format!(
-                                "Topological del/add inversion: unpaired deletion at visual row {vi} (old line {}, anchor new {d_anchor_new}) appears after pure addition at visual row {vj} (new line {nl}): deletion {:?} after addition {:?}",
+                                "Topological del/add inversion: unpaired deletion at visual row {vi} (old line {}, seed new {d_seed_new}) appears after pure addition at visual row {vj} (new line {nl}): deletion {:?} after addition {:?}",
                                 d.num,
                                 d.text.trim(),
                                 prev.text().trim()

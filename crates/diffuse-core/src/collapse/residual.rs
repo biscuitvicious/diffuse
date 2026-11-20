@@ -138,7 +138,7 @@ pub fn pass_residual_pairing(
     // Collect unpaired deletion indices.
     let mut unpaired_dels = Vec::new();
     for (ri, r) in h.rows.iter().enumerate() {
-        if let Row::Del(dl) = r
+        if let Row::Del { line: dl, .. } = r
             && !paired_dels.contains(&ri)
             && !in_collapse_blocks.contains(&ri)
             && !r.is_moved()
@@ -151,7 +151,7 @@ pub fn pass_residual_pairing(
     // Collect unpaired addition indices.
     let mut unpaired_adds = Vec::new();
     for (ri, r) in h.rows.iter().enumerate() {
-        if let Row::Add(al) = r
+        if let Row::Add { line: al, .. } = r
             && !p1.pair_of.contains_key(&ri)
             && !in_expand_blocks.contains(&ri)
             && !r.is_moved()
@@ -176,7 +176,7 @@ pub fn pass_residual_pairing(
             continue;
         }
         let al = match &h.rows[ai] {
-            Row::Add(a) => a,
+            Row::Add { line: a, .. } => a,
             _ => continue,
         };
         let add_text = &al.text;
@@ -199,7 +199,7 @@ pub fn pass_residual_pairing(
                 continue;
             }
             let dl = match &h.rows[di] {
-                Row::Del(d) => d,
+                Row::Del { line: d, .. } => d,
                 _ => continue,
             };
             let del_text = &dl.text;

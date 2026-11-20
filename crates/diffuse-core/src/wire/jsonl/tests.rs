@@ -615,51 +615,8 @@ fn test_output_hunk_counts() {
 
 #[test]
 fn test_row_group_wire_serialization() {
-    let anchor = RowGroup::Anchor;
-    let anchor_json = serde_json::to_string(&anchor).unwrap();
-    assert_eq!(anchor_json, r#"{"role":"anchor"}"#);
-    let de_anchor: RowGroup = serde_json::from_str(&anchor_json).unwrap();
-    assert_eq!(de_anchor, RowGroup::Anchor);
-
-    let aux = RowGroup::Aux { anchor: 141 };
-    let aux_json = serde_json::to_string(&aux).unwrap();
-    assert_eq!(aux_json, r#"{"role":"aux","anchor":141}"#);
-    let de_aux: RowGroup = serde_json::from_str(&aux_json).unwrap();
-    assert_eq!(de_aux, RowGroup::Aux { anchor: 141 });
-
-    // OutputRow with anchor group
-    let row_anchor = OutputRow {
-        kind: RowKind::Mod,
-        mov_side: None,
-        new_line: Some(141),
-        old_line: Some(140),
-        runs: vec![
-            OutputRun {
-                kind: RunKind::Del,
-                color: TokenColor::Default,
-                sgr: None,
-                text: "old text".into(),
-            },
-            OutputRun {
-                kind: RunKind::Add,
-                color: TokenColor::Default,
-                sgr: None,
-                text: "mod text".into(),
-            },
-        ],
-        wholesale: false,
-        group: Some(RowGroup::Anchor),
-    };
-    let json_anchor = serde_json::to_string(&row_anchor).unwrap();
-    assert!(
-        json_anchor.contains(r#""group":{"role":"anchor"}"#),
-        "serialized OutputRow must contain group with anchor role: {json_anchor}"
-    );
-    let de_row_anchor: OutputRow = serde_json::from_str(&json_anchor).unwrap();
-    assert_eq!(de_row_anchor.group, Some(RowGroup::Anchor));
-
-    // OutputRow with aux group
-    let row_aux = OutputRow {
+    // OutputRow with a grouped peer addition
+    let row_peer_add = OutputRow {
         kind: RowKind::Add,
         mov_side: None,
         new_line: Some(142),
@@ -671,15 +628,20 @@ fn test_row_group_wire_serialization() {
             text: "add text".into(),
         }],
         wholesale: false,
-        group: Some(RowGroup::Aux { anchor: 141 }),
+        group: Some(RowGroup::Peer {
+            id: GroupId(7),
+            slot: 2,
+            n: 2,
+            m: 3,
+        }),
     };
-    let json_aux = serde_json::to_string(&row_aux).unwrap();
+    let json_peer_add = serde_json::to_string(&row_peer_add).unwrap();
     assert!(
-        json_aux.contains(r#""group":{"role":"aux","anchor":141}"#),
-        "serialized OutputRow must contain group with aux role and anchor num: {json_aux}"
+        json_peer_add.contains(r#""group":{"role":"peer","id":7,"slot":2,"n":2,"m":3}"#),
+        "serialized OutputRow must contain peer group info: {json_peer_add}"
     );
-    let de_row_aux: OutputRow = serde_json::from_str(&json_aux).unwrap();
-    assert_eq!(de_row_aux.group, Some(RowGroup::Aux { anchor: 141 }));
+    let de_row_peer_add: OutputRow = serde_json::from_str(&json_peer_add).unwrap();
+    assert_eq!(de_row_peer_add.group, row_peer_add.group);
 
     // OutputRow without group: group field is omitted from JSON
     let row_none = OutputRow {

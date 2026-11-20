@@ -48,8 +48,8 @@ pub struct VerbatimSeedInput<'a, 'm> {
 /// seeded dels, and block formation skips seeded members (rows fall back
 /// to 1-to-1/standalone rendering — never double-rendered). Assembly
 /// needs no changes — it builds Mods from `pair_of` regardless of
-/// provenance (heuristic aux may still attach unseeded neighbors around
-/// seeded anchors).
+/// provenance (heuristic members may still attach unseeded neighbors around
+/// seeded pairs).
 pub fn verbatim_seeds(mut input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, usize> {
     let mut seeds = ngram_block_seeds(&mut input);
     let seeded_dels: FxHashSet<usize> = seeds.values().copied().collect();
@@ -92,7 +92,7 @@ pub fn verbatim_seeds(mut input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
     }
     let mut dels: FxHashMap<&str, Vec<Cand<'_>>> = FxHashMap::default();
     for r in &cluster.old_rows {
-        if !matches!(r, Row::Del(_)) {
+        if !matches!(r, Row::Del { .. }) {
             continue;
         }
         let text = r.text();
@@ -114,7 +114,7 @@ pub fn verbatim_seeds(mut input: VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
     }
     let mut adds: FxHashMap<&str, Vec<Cand<'_>>> = FxHashMap::default();
     for r in &cluster.new_rows {
-        if !matches!(r, Row::Add(_)) {
+        if !matches!(r, Row::Add { .. }) {
             continue;
         }
         let text = r.text();
@@ -228,7 +228,7 @@ fn ngram_block_seeds(input: &mut VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
         .old_rows
         .iter()
         .map(|r| {
-            if let Row::Del(d) = r
+            if let Row::Del { line: d, .. } = r
                 && let Some(&gi) = input.del_by_num.get(&d.num)
             {
                 let text = r.text();
@@ -251,7 +251,7 @@ fn ngram_block_seeds(input: &mut VerbatimSeedInput<'_, '_>) -> FxHashMap<usize, 
         .new_rows
         .iter()
         .map(|r| {
-            if let Row::Add(a) = r
+            if let Row::Add { line: a, .. } = r
                 && let Some(&gi) = input.add_by_num.get(&a.num)
             {
                 let text = r.text();

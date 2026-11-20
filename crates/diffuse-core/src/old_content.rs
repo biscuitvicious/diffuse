@@ -96,7 +96,7 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
         }
         for r in &h.rows {
             match r {
-                crate::parse::Row::Del(del) => {
+                crate::parse::Row::Del { line: del, .. } => {
                     let num = del.num as usize;
                     if num > 0 {
                         while out.len() < num {
@@ -136,7 +136,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
         }
         for r in &h.rows {
             match r {
-                crate::parse::Row::Add(add) => {
+                crate::parse::Row::Add { line: add, .. } => {
                     let num = add.num as usize;
                     if num > 0 {
                         while out.len() < num {
@@ -157,8 +157,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                     }
                 }
                 crate::parse::Row::Mod { new_line, .. }
-                | crate::parse::Row::MovTgt { line: new_line, .. }
-                | crate::parse::Row::AuxAdd { line: new_line, .. } => {
+                | crate::parse::Row::MovTgt { line: new_line, .. } => {
                     let num = new_line.num as usize;
                     if num > 0 {
                         while out.len() < num {

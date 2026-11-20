@@ -8,10 +8,10 @@
 //!   survives elsewhere in the file, tail-before-closing candidates, …) filters
 //!   the DP's pairs exactly as it filtered the greedy candidates — a guarded
 //!   del renders as a pure del under both engines.
-//! - A DP block transition (expand/collapse) contributes its ANCHOR pairing to
-//!   `pair_of` (the legacy 1-to-1 shape passes 2–4 expect); its absorbed rows
-//!   stay unpaired adds/dels, which passes 2–4 already handle (the
-//!   expansion-tail logic in `pass_assemble_mods`).
+//! - A DP block transition (expand/collapse) contributes its representative
+//!   pairing to `pair_of` (the legacy 1-to-1 shape passes 2–4 expect); its
+//!   absorbed rows stay unpaired adds/dels, which passes 2–4 already handle
+//!   (the expansion-tail logic in `pass_assemble_mods`).
 //!
 //! The engine override is thread-local (`set_dp_engine`) so the frozen
 //! golden legs keep running legacy in the same process; the binary reads
@@ -65,7 +65,7 @@ where
 /// DP pairing: partition the hunk's change runs into clusters, solve each
 /// with the DP, and convert the transitions into the legacy `pair_of` map
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
-/// transitions pair directly; block transitions contribute their anchor
+/// transitions pair directly; block transitions contribute their representative
 /// pair; hard-guarded (relocated) dels never pair.
 pub static T_DP: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
@@ -111,7 +111,7 @@ pub fn dp_pairing_with_splits(
     let del_by_num: FxHashMap<u32, usize> = {
         let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
         m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
-            Row::Del(d) | Row::MovSrc { line: d, .. } => Some((d.num, i)),
+            Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => Some((d.num, i)),
             _ => None,
         }));
         m
@@ -119,7 +119,7 @@ pub fn dp_pairing_with_splits(
     let add_by_num: FxHashMap<u32, usize> = {
         let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
         m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
-            Row::Add(a) | Row::MovTgt { line: a, .. } => Some((a.num, i)),
+            Row::Add { line: a, .. } | Row::MovTgt { line: a, .. } => Some((a.num, i)),
             _ => None,
         }));
         m
@@ -144,8 +144,8 @@ pub fn dp_pairing_with_splits(
     // Verbatim pre-seeding: unambiguous trimmed-equal pairs join `pair_of`
     // before the DP walk, so corridor exclusion and global rerouting cannot
     // strand true moves. Seeded endpoints keep walk exclusivity below
-    // (never re-pair; blocks never absorb them except a seeded anchor with
-    // clean aux); assembly builds Mods from `pair_of` regardless of
+    // (never re-pair; blocks never absorb them except a seeded pair with
+    // clean members); assembly builds Mods from `pair_of` regardless of
     // provenance, so no downstream changes are needed.
     let mut seeded_dels: FxHashSet<usize> = FxHashSet::default();
     let mut seeded_adds: FxHashSet<usize> = FxHashSet::default();
@@ -285,11 +285,11 @@ pub fn dp_pairing_with_splits(
                                     break;
                                 }
                             }
-                            // Seeded aux members would double-render (aux
+                            // Seeded members would double-render (member
                             // context plus their own seed Mod): fall back to
                             // 1-to-1/standalone rows instead of forming.
-                            let aux_clean = block_adds.iter().all(|a| !seeded_adds.contains(a));
-                            if all_valid && block_adds.len() == *k && aux_clean {
+                            let member_clean = block_adds.iter().all(|a| !seeded_adds.contains(a));
+                            if all_valid && block_adds.len() == *k && member_clean {
                                 expand_blocks.insert(ga, block_adds);
                             }
                         }
@@ -373,7 +373,7 @@ pub fn dp_pairing_with_splits(
 /// reshuffle — a half left unpaired, or paired with a full-text-identical
 /// twin elsewhere — the split bought nothing: git's positional alignment
 /// carries at least as much evidence (same text, nearer position), and
-/// the identical twin it stranded was a quiet anchor before. Such homes
+/// the identical twin it stranded was quietly paired before. Such homes
 /// are restored by force-pairing the originals (assembly renders the
 /// identical Mod and the normalize pass folds it back to Ctx), unseating
 /// the identical theft links so the stranded twins fall back to leftover
@@ -425,16 +425,20 @@ fn restore_split_homes(input: SplitHomeInput<'_>) {
         pair_of.iter().map(|(&add, &del)| (del, add)).collect();
     let full_text = |idx: usize| -> Option<&str> {
         match h.rows.get(idx) {
-            Some(Row::Del(d)) | Some(Row::MovSrc { line: d, .. }) => Some(d.text.as_str()),
-            Some(Row::Add(a)) | Some(Row::MovTgt { line: a, .. }) => Some(a.text.as_str()),
+            Some(Row::Del { line: d, .. }) | Some(Row::MovSrc { line: d, .. }) => {
+                Some(d.text.as_str())
+            }
+            Some(Row::Add { line: a, .. }) | Some(Row::MovTgt { line: a, .. }) => {
+                Some(a.text.as_str())
+            }
             _ => None,
         }
     };
     for &(gd, ga) in split_homes {
         // Split homes are Del+Add by construction; anything else (or
         // out-of-range after upstream surgery) keeps the DP solution.
-        if !matches!(h.rows.get(gd), Some(Row::Del(_)))
-            || !matches!(h.rows.get(ga), Some(Row::Add(_)))
+        if !matches!(h.rows.get(gd), Some(Row::Del { .. }))
+            || !matches!(h.rows.get(ga), Some(Row::Add { .. }))
             || hard.contains(&gd)
             || h.rows[gd].is_moved()
             || h.rows[ga].is_moved()
@@ -494,11 +498,11 @@ mod restore_tests {
     }
 
     fn del(num: u32, text: &str) -> Row {
-        Row::Del(DelLine::new(num, text.to_string()))
+        Row::del(DelLine::new(num, text.to_string()))
     }
 
     fn add(num: u32, text: &str) -> Row {
-        Row::Add(AddLine::new(num, text.to_string()))
+        Row::add(AddLine::new(num, text.to_string()))
     }
 
     /// Restore helper: seeds, guards, and block membership default to

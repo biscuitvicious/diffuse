@@ -655,7 +655,7 @@ fn test_initial_screen_multi_file_head_diff() {
 --- a/crates/diffuse-core/src/moves/mod.rs
 +++ b/crates/diffuse-core/src/moves/mod.rs
 @@ -140,6 +140,8 @@ pub fn mark_moves(f: &mut DiffFile) {
-             if matches!(r, Row::Del(_)) {
+             if matches!(r, Row::Del { .. }) {
                  run.push((hi, ri));
              } else {
 -                // flush the run
@@ -1404,7 +1404,7 @@ fn test_side_by_side_diff_layout_and_toggle() {
 }
 
 #[test]
-fn test_side_by_side_anchor_and_aux_gutter_icons() {
+fn test_side_by_side_peer_group_gutter_icons() {
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,3 +5,6 @@\n \n-use std::fmt::{self, Write};\n+use std::{\n+    borrow::Cow,\n+    fmt::{self, Write},\n+};\n \n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
     let mut state = AppState::new(
@@ -1423,20 +1423,20 @@ fn test_side_by_side_anchor_and_aux_gutter_icons() {
         }
         screen.push('\n');
     }
-    // Anchor row has "~ " icon
+    // Peer group row has "~ " icon
     assert!(
         screen.contains("~ "),
-        "screen must contain anchor icon '~ ':\n{screen}"
+        "screen must contain peer group icon '~ ':\n{screen}"
     );
-    // Aux addition row has "~+" icon
+    // Grouped addition row has "~+" icon
     assert!(
         screen.contains("~+"),
-        "screen must contain aux add icon '~+':\n{screen}"
+        "screen must contain grouped add icon '~+':\n{screen}"
     );
 }
 
 #[test]
-fn test_side_by_side_aux_deletion_gutter_icon() {
+fn test_side_by_side_grouped_deletion_gutter_icon() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -53,3 +67,3 @@\n-    /// movs, notes). At most five segments exist, stored inline. Empty when\n-    /// [`FileCounts::is_empty`].\n-    pub fn segments(&self) -> SmallVec<[CountSegment; 5]> {\n+    /// movs, notes, in_progress, resolved). At most seven segments exist,\n+    /// stored inline. Empty when [`FileCounts::is_empty`].\n+    pub fn segments(&self) -> SmallVec<[CountSegment; 7]> {\n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
     let mut state = AppState::new(
@@ -1455,17 +1455,17 @@ fn test_side_by_side_aux_deletion_gutter_icon() {
         }
         screen.push('\n');
     }
-    // Anchor row has "~ " icon
+    // Peer group row has "~ " icon
     assert!(
         screen.contains("~ "),
-        "screen must contain anchor icon '~ ':\n{screen}"
+        "screen must contain peer group icon '~ ':\n{screen}"
     );
     // The peer collapse models the comment reflow as Mod rows with moved
-    // runs rather than aux rows: both reflowed lines carry the peer-group
-    // '~' gutter and no aux icon appears.
+    // runs rather than grouped rows: both reflowed lines carry the peer-group
+    // '~' gutter and no grouped icon appears.
     assert!(
         !screen.contains("~-"),
-        "screen must not contain aux del icon '~-':\n{screen}"
+        "screen must not contain grouped del icon '~-':\n{screen}"
     );
     // The reflowed words render on both sides (struck "five" left,
     // filled "in_progress, resolved" right; "seven" itself straddles the

@@ -1,6 +1,6 @@
 //! Ports of the collapse tests from test/review.test.ts: the similarity
 //! pairing + the declaration section-stop, the `None` ↔ `Some(result)`
-//! brace-anchor, the reflow pairing, the reverse stretch.
+//! brace stop, the reflow pairing, the reverse stretch.
 
 use std::time::Instant;
 
@@ -17,11 +17,11 @@ fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) 
     match kind {
         RowKind::Del => {
             let num = old_line.expect("Del row requires old_line in test helper");
-            Row::Del(DelLine::new(num, text))
+            Row::del(DelLine::new(num, text))
         }
         RowKind::Add => {
             let num = new_line.expect("Add row requires new_line in test helper");
-            Row::Add(AddLine::new(num, text))
+            Row::add(AddLine::new(num, text))
         }
         RowKind::Mod => {
             let old_num = old_line.expect("Mod row requires old_line in test helper");
@@ -228,7 +228,7 @@ fn brace_close_tail_does_not_claim_slot() {
 // In indentation-based languages like Python, the block close is defined by a
 // dedent boundary. Tail statements right before the dedent pair appropriately.
 #[test]
-fn python_block_tail_anchor_none_some_result() {
+fn python_block_tail_dedent_none_some_result() {
     let mut old_content: Vec<&str> = vec![""; 130];
     old_content[113] = "def next_fn():"; // dedent boundary after return None
     let mut new_content: Vec<&str> = vec![""; 320];
@@ -257,7 +257,7 @@ fn python_block_tail_anchor_none_some_result() {
     assert_eq!(
         none_mod.new_line(),
         Some(153),
-        "the python dedent anchor pairs return None with verbatim return None"
+        "the python dedent pairs return None with verbatim return None"
     );
 }
 
@@ -288,7 +288,7 @@ fn reflow_pairing_first_del() {
     ]);
     let c = collapse_hunk_rows(&h, None, None, None);
     assert_eq!(c.len(), 3, "1 mod + 2 dels");
-    // Peer anchors the head del: it shares the `self.` receiver and the
+    // Peer pairs the head del: it shares the `self.` receiver and the
     // `layers` subject with the one-liner; the dropped `.iter()` / `.any()`
     // tails ride as moved-out runs on the trailing dels.
     assert_eq!(c[0].kind(), RowKind::Mod);
@@ -431,7 +431,7 @@ fn modified_pair_absorbs_section_and_reflow() {
     assert_eq!(
         c[1].kind(),
         RowKind::Mov,
-        "source moved line appears as MovSrc anchored after mod"
+        "source moved line appears as MovSrc placed after mod"
     );
     assert_eq!(c[1].old_line(), Some(4));
     assert_eq!(
@@ -560,7 +560,7 @@ fn fragment_pair_rejection() {
     assert_eq!(
         c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
         1,
-        "use expansion pairs anchor as mod"
+        "use expansion pairs seed as mod"
     );
     assert_eq!(
         c.iter().filter(|r| r.kind() == RowKind::Add).count(),
@@ -1037,10 +1037,10 @@ fn test_multiline_expansion_subword_distribution() {
     assert_eq!(c[2].new_line(), Some(1084));
 }
 
-// Kept-del anchoring: a genuinely removed line renders right after the mod
+// Kept-del placement: a genuinely removed line renders right after the mod
 // whose old position preceded it, never interrupting the adds.
 #[test]
-fn kept_del_anchoring() {
+fn kept_del_follows_head_mod() {
     let h2 = hunk(vec![
         row(
             RowKind::Del,
@@ -1077,11 +1077,7 @@ fn kept_del_anchoring() {
     let c = collapse_hunk_rows(&h2, None, None, None);
     assert_eq!(c[0].kind(), RowKind::Mod, "mod leads");
     assert_eq!(c[0].new_line(), Some(142));
-    assert_eq!(
-        c[1].kind(),
-        RowKind::Del,
-        "anchored del follows its head mod"
-    );
+    assert_eq!(c[1].kind(), RowKind::Del, "kept del follows its head mod");
     assert_eq!(c[1].old_line(), Some(109));
     assert_eq!(c[2].kind(), RowKind::Mov, "then the moves");
     assert_eq!(c[2].new_line(), Some(143));
@@ -1391,7 +1387,7 @@ fn test_closing_brace_released_from_add_block() {
 }
 
 #[test]
-fn test_hunk_patience_anchoring_prevents_cross_block_mispairing() {
+fn test_hunk_stable_pairing_prevents_cross_block_mispairing() {
     let h = hunk(vec![
         // Function alpha
         row(RowKind::Del, "pub fn alpha() -> u32 {", None, Some(10)),
@@ -1448,7 +1444,7 @@ fn test_hunk_patience_anchoring_prevents_cross_block_mispairing() {
 }
 
 #[test]
-fn test_unpaired_del_anchors_after_intermediate_context() {
+fn test_unpaired_del_settles_after_intermediate_context() {
     let h = hunk(vec![
         row(
             RowKind::Ctx,
@@ -1482,7 +1478,7 @@ fn test_unpaired_del_anchors_after_intermediate_context() {
     assert_eq!(collapsed[1].kind(), RowKind::Ctx);
     assert_eq!(collapsed[1].new_line(), Some(301));
 
-    // Row 2: dropped_legacy_cleanup Del at old line 202 (must anchor AFTER let
+    // Row 2: dropped_legacy_cleanup Del at old line 202 (must sit AFTER let
     // stats Ctx, NOT at top of hunk)
     assert_eq!(collapsed[2].kind(), RowKind::Del);
     assert_eq!(collapsed[2].old_line(), Some(202));
@@ -1736,11 +1732,11 @@ fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
             2028,
             "                  \"color\": \"text\",",
         )),
-        Row::Del(DelLine::new(
+        Row::del(DelLine::new(
             2028,
             "                  \"text\": \"        \"",
         )),
-        Row::Add(AddLine::new(2029, "                  \"text\": \"    \"")),
+        Row::add(AddLine::new(2029, "                  \"text\": \"    \"")),
         Row::Ctx(CtxLine::new(2029, 2030, "                },")),
     ]);
 
@@ -1812,11 +1808,11 @@ fn test_multiline_to_single_line_collapse_reflow() {
 
     let c = collapse_hunk_rows(&h, None, None, profile);
 
-    // Assert: 1 anchor Mod row + 3 AuxDel rows
+    // Assert: 1 seed Mod row + 3 grouped Del rows
     assert_eq!(
         c.len(),
         4,
-        "Expected 1 anchor Mod row + 3 aux dels, got: {:?}",
+        "Expected 1 seed Mod row + 3 grouped dels, got: {:?}",
         c
     );
     assert_eq!(c[0].kind(), RowKind::Mod);
@@ -1879,7 +1875,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
         struck
             .iter()
             .any(|s| s.contains("crate::syntax::profile::")),
-        "Expected crate::syntax::profile:: to be struck out in the aux del row, got struck: {:?}",
+        "Expected crate::syntax::profile:: to be struck out in the grouped del row, got struck: {:?}",
         struck
     );
     let common: Vec<&str> = runs
@@ -1980,7 +1976,7 @@ fn test_parallel_assemble_mods_multi_row_parity() {
 }
 
 #[test]
-fn test_expansion_group_anchor_and_aux_tagging() {
+fn test_expansion_group_seed_and_tail_tagging() {
     use crate::parse::RowGroup;
     let h = hunk(vec![
         row(
@@ -2020,20 +2016,20 @@ fn test_expansion_group_anchor_and_aux_tagging() {
                 ..
             })
         ),
-        "Expansion anchor row must have RowGroup::Peer slot 0"
+        "Expansion seed row must have RowGroup::Peer slot 0"
     );
     for (idx, r) in c[1..].iter().enumerate() {
         assert_eq!(r.kind(), RowKind::Add);
         assert!(
             matches!(r.group(), Some(RowGroup::Peer { slot, n: 1, m: 7, .. }) if slot == idx + 1),
-            "Expansion auxiliary add row at index {idx} must have RowGroup::Peer with slot {}",
+            "Expansion tail add row at index {idx} must have RowGroup::Peer with slot {}",
             idx + 1
         );
     }
 }
 
 #[test]
-fn test_auxiliary_deletion_in_expansion_block_receives_row_group_aux() {
+fn test_grouped_deletion_in_expansion_block_receives_row_group_peer() {
     use crate::parse::RowGroup;
     let h = hunk(vec![
         row(
@@ -2103,12 +2099,12 @@ fn test_auxiliary_deletion_in_expansion_block_receives_row_group_aux() {
     );
 }
 
-/// Seeded anchors must not swallow run members: a verbatim seed pairs its
-/// anchor 1-to-1, and sibling dels of the same run still render (as
+/// Seeded groups must not swallow run members: a verbatim seed pairs
+/// 1-to-1, and sibling dels of the same run still render (as
 /// reflow pairs or standalone dels) — never vanish. Every old line
 /// renders.
 #[test]
-fn seeded_anchor_does_not_absorb_run_members() {
+fn seeded_group_does_not_absorb_run_members() {
     // Mirrors the `word_spans` early-return refactor: old `};` (indent 8)
     // seeds with new `};` (indent 4); the DP pairs the `WordSpans {`
     // bodies; the leftover lone-`}` dels must reflow-pair, never vanish.
@@ -2204,7 +2200,7 @@ fn test_import_block_expansion_delimiter_hijacking() {
     );
 
     // Concatenating the non-add tokens across the visual reflow group:
-    // Anchor context + aux MovedTgt tokens must reconstruct the exact original old
+    // Seed context + tail MovedTgt tokens must reconstruct the exact original old
     // line.
     let mut reconstructed = String::new();
     for r in &c {
@@ -2250,7 +2246,7 @@ fn test_import_expansion_reaches_terminal_close_delimiter() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Line 34 (};) must be part of the reflow group with anchor 23
+    // Line 34 (};) must be part of the reflow group with seed 23
     let last_row = c
         .iter()
         .find(|r| r.text() == "};")
@@ -2264,25 +2260,25 @@ fn test_import_expansion_reaches_terminal_close_delimiter() {
     );
 
     // Line 23 (use std::{) must NOT have a struck ';'
-    let anchor_row = &c[0];
-    let anchor_del_runs: Vec<_> = merged_runs(anchor_row)
+    let seed_row = &c[0];
+    let seed_del_runs: Vec<_> = merged_runs(seed_row)
         .into_iter()
         .filter(|r| r.kind == RunKind::Del && r.text.contains(';'))
         .collect();
     assert!(
-        anchor_del_runs.is_empty(),
-        "anchor row must not strike out ';' when terminal '}};' is part of reflow group, but found: {anchor_del_runs:?}"
+        seed_del_runs.is_empty(),
+        "seed row must not strike out ';' when terminal '}};' is part of reflow group, but found: {seed_del_runs:?}"
     );
 
-    // The anchor row reconstructs the old line in full (Ctx + MovedSrc + Del).
-    let anchor_reconstructed: String = merged_runs(&c[0])
+    // The seed row reconstructs the old line in full (Ctx + MovedSrc + Del).
+    let seed_reconstructed: String = merged_runs(&c[0])
         .into_iter()
         .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::MovedSrc || r.kind == RunKind::Del)
         .map(|r| r.text)
         .collect();
     assert_eq!(
-        anchor_reconstructed, "use std::{collections::HashMap, sync::Arc};",
-        "Anchor row must reconstruct the old line"
+        seed_reconstructed, "use std::{collections::HashMap, sync::Arc};",
+        "Seed row must reconstruct the old line"
     );
 
     // Concatenating surviving runs (Ctx + MovedTgt) across the reflow rows matches
@@ -2325,7 +2321,7 @@ fn test_import_expansion_with_misaligned_brace_indentation() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Terminal row must be part of the reflow group with anchor 10
+    // Terminal row must be part of the reflow group with seed 10
     let last_row = c
         .iter()
         .find(|r| r.text().trim() == "};")
@@ -2338,14 +2334,14 @@ fn test_import_expansion_with_misaligned_brace_indentation() {
         "terminal '}};' row with misaligned indent must still be in the reflow group"
     );
 
-    // Anchor row must not strike out ';'
-    let anchor_del_runs: Vec<_> = merged_runs(&c[0])
+    // Seed row must not strike out ';'
+    let seed_del_runs: Vec<_> = merged_runs(&c[0])
         .into_iter()
         .filter(|r| r.kind == RunKind::Del && r.text.contains(';'))
         .collect();
     assert!(
-        anchor_del_runs.is_empty(),
-        "anchor row must not strike out ';' when terminal '}};' is part of reflow group"
+        seed_del_runs.is_empty(),
+        "seed row must not strike out ';' when terminal '}};' is part of reflow group"
     );
 
     // Terminal row must have }; marked as MovedTgt, with leading indent marked as
@@ -2427,7 +2423,7 @@ fn test_multiline_import_collapse_nested_core() {
 }
 
 #[test]
-fn test_multiline_inter_argument_residue_localized_to_aux_tail() {
+fn test_multiline_inter_argument_residue_localized_to_group_tail() {
     let old_line = "check!(r.del_text().is_some(), \"{}: mod row carries delText\", f.path);";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(332)),
@@ -2460,7 +2456,7 @@ fn test_multiline_inter_argument_residue_localized_to_aux_tail() {
 }
 
 #[test]
-fn test_multiline_deleted_identifier_localized_to_aux_row() {
+fn test_multiline_deleted_identifier_localized_to_group_row() {
     let old_line = "check!(a, deleted_arg, c);";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(10)),
@@ -2472,32 +2468,30 @@ fn test_multiline_deleted_identifier_localized_to_aux_row() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Anchor row retains deleted_arg as struck Del
-    let anchor_del_runs: Vec<_> = merged_runs(&c[0])
+    // Seed row retains deleted_arg as struck Del
+    let seed_del_runs: Vec<_> = merged_runs(&c[0])
         .into_iter()
         .filter(|r| r.kind == RunKind::Del)
         .collect();
     assert!(
-        anchor_del_runs
-            .iter()
-            .any(|r| r.text.contains("deleted_arg")),
-        "Anchor row should retain deleted_arg as struck Del, but found: {:?}",
-        anchor_del_runs
+        seed_del_runs.iter().any(|r| r.text.contains("deleted_arg")),
+        "Seed row should retain deleted_arg as struck Del, but found: {:?}",
+        seed_del_runs
     );
 
-    // Aux row 1 (a,) carries MovedTgt("a,")
-    let aux1_runs = merged_runs(&c[1]);
+    // Tail row 1 (a,) carries MovedTgt("a,")
+    let tail_runs = merged_runs(&c[1]);
     assert!(
-        aux1_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text.contains('a')),
-        "Aux row 1 should carry 'a' as MovedTgt, but got runs: {:?}",
-        aux1_runs
+        "Tail row 1 should carry 'a' as MovedTgt, but got runs: {:?}",
+        tail_runs
     );
 }
 
 #[test]
-fn test_reflow_atomicity_trailing_deletions_do_not_interleave_anchor_and_aux_add() {
+fn test_reflow_atomicity_trailing_deletions_do_not_interleave_seed_and_tail_add() {
     use crate::parse::RowGroup;
     let h = hunk(vec![
         row(
@@ -2557,20 +2551,20 @@ fn test_multiline_reflow_closing_terminator_does_not_attach_to_intermediate_item
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    let aux1 = c.iter().find(|r| r.text().contains("let x = 1")).unwrap();
-    let aux1_dels: Vec<_> = merged_runs(aux1)
+    let tail = c.iter().find(|r| r.text().contains("let x = 1")).unwrap();
+    let tail_dels: Vec<_> = merged_runs(tail)
         .into_iter()
         .filter(|r| r.kind == RunKind::Del)
         .collect();
     assert!(
-        aux1_dels.is_empty(),
+        tail_dels.is_empty(),
         "Intermediate item should not have Del attached, got: {:?}",
-        aux1_dels
+        tail_dels
     );
 }
 
 #[test]
-fn test_prefix_companion_does_not_steal_anchor_call_arguments() {
+fn test_prefix_companion_does_not_steal_seed_call_arguments() {
     let old_line = "            ctx.theme.write_token(\"text\", text, \"ctx\", None, None, out);";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(376)),
@@ -2636,7 +2630,7 @@ fn test_residue_inside_call_does_not_append_after_trailing_comma() {
 }
 
 #[test]
-fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
+fn test_multiline_call_reflow_does_not_attach_closing_paren_to_seed() {
     let old_line = "    assert_eq!(super::resolve_theme(Some(\"dark\")), DiffuseTheme::dark());";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(134)),
@@ -2658,27 +2652,27 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    let anchor = c.iter().find(|r| r.old_line_num() == Some(134)).unwrap();
-    let anchor_runs = merged_runs(anchor);
-    // Anchor row assert_eq!( must not contain any deleted paren
-    let has_paren_del = anchor_runs
+    let seed = c.iter().find(|r| r.old_line_num() == Some(134)).unwrap();
+    let seed_runs = merged_runs(seed);
+    // Seed row assert_eq!( must not contain any deleted paren
+    let has_paren_del = seed_runs
         .iter()
         .any(|r| r.kind == RunKind::Del && r.text.contains(')'));
     assert!(
         !has_paren_del,
-        "Anchor row assert_eq!( must not contain deleted ')', but runs are: {:?}",
-        anchor_runs
+        "Seed row assert_eq!( must not contain deleted ')', but runs are: {:?}",
+        seed_runs
     );
 
-    // Peer anchors the old call on the first continuation line: shared
+    // Peer pairs the old call on the first continuation line: shared
     // callee text stays context, the head fragment and removed tail ride
     // as moved-out, and the novel `false` / trailing comma ride as fill.
-    let aux1 = c.iter().find(|r| r.new_line_num() == Some(135)).unwrap();
-    assert_eq!(aux1.kind(), RowKind::Mod);
-    assert_eq!(aux1.old_line_num(), Some(134));
-    let aux1_runs = merged_runs(aux1);
+    let tail = c.iter().find(|r| r.new_line_num() == Some(135)).unwrap();
+    assert_eq!(tail.kind(), RowKind::Mod);
+    assert_eq!(tail.old_line_num(), Some(134));
+    let tail_runs = merged_runs(tail);
     assert_eq!(
-        aux1_runs,
+        tail_runs,
         vec![
             crate::merge::Run {
                 kind: RunKind::Add,
@@ -2755,7 +2749,7 @@ fn test_multiline_match_arm_expansion_monotonicity() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Peer emits the head add first as moved-in, then anchors the old arm
+    // Peer emits the head add first as moved-in, then pairs the old arm
     // on the middle continuation: shared `| Row::MovTgt` / `{` stay context,
     // the replaced head moves out, and genuinely novel struct fields fill.
     let head = &c[0];
@@ -2773,11 +2767,11 @@ fn test_multiline_match_arm_expansion_monotonicity() {
         ]
     );
 
-    let anchor = &c[1];
-    assert_eq!(anchor.kind(), RowKind::Mod);
-    let anchor_runs = merged_runs(anchor);
+    let paired = &c[1];
+    assert_eq!(paired.kind(), RowKind::Mod);
+    let seed_runs = merged_runs(paired);
     assert_eq!(
-        anchor_runs,
+        seed_runs,
         vec![
             crate::merge::Run {
                 kind: RunKind::Ctx,
@@ -2810,9 +2804,9 @@ fn test_multiline_match_arm_expansion_monotonicity() {
         ]
     );
 
-    let aux2 = &c[2];
+    let trailing = &c[2];
     assert_eq!(
-        merged_runs(aux2),
+        merged_runs(trailing),
         vec![crate::merge::Run {
             kind: RunKind::Add,
             text: "                | Row::AuxAdd { line: add_line, .. } => {",
@@ -2830,22 +2824,22 @@ fn test_multiline_expansion_universal_unicode_delimiters_no_profile() {
         row(RowKind::Add, "beta", Some(3), None),
     ]);
     let c = collapse_hunk_rows(&h, None, None, None);
-    let anchor_runs = merged_runs(&c[0]);
+    let seed_runs = merged_runs(&c[0]);
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::Del && r.text == "（"),
-        "anchor must carry struck opening unicode bracket '（', got: {:?}",
-        anchor_runs
+        "seed must carry struck opening unicode bracket '（', got: {:?}",
+        seed_runs
     );
-    let aux = &c[1];
-    let aux_runs = merged_runs(aux);
+    let tail = &c[1];
+    let tail_runs = merged_runs(tail);
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text == "content"),
-        "aux must carry moved 'content', got: {:?}",
-        aux_runs
+        "tail must carry moved 'content', got: {:?}",
+        tail_runs
     );
 }
 
@@ -2935,10 +2929,10 @@ fn test_dbc_macro_invariant_4_del_add_topological_order() {
 fn test_reflow_filter_preserves_context_old_line_monotonicity() {
     let h = hunk(vec![
         Row::Ctx(CtxLine::new(1, 1, "context before")),
-        Row::Add(crate::parse::AddLine::new(2, "}")),
-        Row::Del(crate::parse::DelLine::new(2, "files.push(item);")),
-        Row::Add(crate::parse::AddLine::new(3, "files.push(item);")),
-        Row::Del(crate::parse::DelLine::new(3, "}")),
+        Row::add(crate::parse::AddLine::new(2, "}")),
+        Row::del(crate::parse::DelLine::new(2, "files.push(item);")),
+        Row::add(crate::parse::AddLine::new(3, "files.push(item);")),
+        Row::del(crate::parse::DelLine::new(3, "}")),
         Row::Ctx(CtxLine::new(4, 4, "context after")),
     ]);
     let profile = diffuse_syntax::registry::lang_profile("rs");
@@ -2989,7 +2983,7 @@ fn test_token_rs_line_722_not_wholesale_mod() {
 }
 
 #[test]
-fn test_aux_opening_delimiter_matches_trailing_delimiter_from_reflowed_anchor() {
+fn test_peer_opening_delimiter_matches_trailing_delimiter_from_reflowed_row() {
     let old_line =
         "                            && matches!(prev, Row::Add(_)) && nl > d_anchor_new {";
     let h = hunk(vec![
@@ -3011,31 +3005,32 @@ fn test_aux_opening_delimiter_matches_trailing_delimiter_from_reflowed_anchor() 
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Row 1 (aux for 2590: && nl > d_anchor_new) must NOT contain struck '{'
-    let aux1 = &c[1];
-    let aux1_runs = merged_runs(aux1);
+    // Row 1 (grouped with 2590: && nl > d_anchor_new) must NOT contain struck
+    // '{'
+    let first_add = &c[1];
+    let first_add_runs = merged_runs(first_add);
     assert!(
-        !aux1_runs
+        !first_add_runs
             .iter()
             .any(|r| r.kind == RunKind::Del && r.text.contains('{')),
         "Line 2590 must not contain struck '{{', got: {:?}",
-        aux1_runs
+        first_add_runs
     );
 
-    // Row 2 (aux for 2591: {) must match '{' as MovedTgt
-    let aux2 = &c[2];
-    let aux2_runs = merged_runs(aux2);
+    // Row 2 (peer-grouped with 2591: {) must match '{' as MovedTgt
+    let second_add = &c[2];
+    let second_add_runs = merged_runs(second_add);
     assert!(
-        aux2_runs
+        second_add_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text == "{"),
         "Line 2591 must have MovedTgt '{{', got: {:?}",
-        aux2_runs
+        second_add_runs
     );
 }
 
 #[test]
-fn test_aux_single_delimiter_reflow_without_alphanumeric_deletion() {
+fn test_peer_single_delimiter_reflow_without_alphanumeric_deletion() {
     let old_line = "                    && ol <= prev_old {";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(2455)),
@@ -3051,10 +3046,10 @@ fn test_aux_single_delimiter_reflow_without_alphanumeric_deletion() {
     let c = collapse_hunk_rows(&h, None, None, rs);
 
     assert_eq!(c.len(), 2);
-    let anchor = &c[0];
-    let anchor_runs = merged_runs(anchor);
+    let seed = &c[0];
+    let seed_runs = merged_runs(seed);
     assert!(matches!(
-        anchor.group(),
+        seed.group(),
         Some(RowGroup::Peer {
             slot: 0,
             n: 1,
@@ -3063,24 +3058,24 @@ fn test_aux_single_delimiter_reflow_without_alphanumeric_deletion() {
         })
     ));
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::Del && r.text == " "),
         "Preceding space must be struck, got: {:?}",
-        anchor_runs
+        seed_runs
     );
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedSrc && r.text == "{"),
-        "Anchor must have MovedSrc for '{{', got: {:?}",
-        anchor_runs
+        "Seed must have MovedSrc for '{{', got: {:?}",
+        seed_runs
     );
 
-    let aux = &c[1];
-    let aux_runs = merged_runs(aux);
+    let tail = &c[1];
+    let tail_runs = merged_runs(tail);
     assert!(matches!(
-        aux.group(),
+        tail.group(),
         Some(RowGroup::Peer {
             slot: 1,
             n: 1,
@@ -3089,23 +3084,23 @@ fn test_aux_single_delimiter_reflow_without_alphanumeric_deletion() {
         })
     ));
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::Add && r.text.contains("                ")),
-        "Aux row must have added indentation, got: {:?}",
-        aux_runs
+        "Tail row must have added indentation, got: {:?}",
+        tail_runs
     );
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text == "{"),
-        "Aux row must have MovedTgt for '{{', got: {:?}",
-        aux_runs
+        "Tail row must have MovedTgt for '{{', got: {:?}",
+        tail_runs
     );
 }
 
 #[test]
-fn test_aux_delimiter_run_with_whitespace_variation() {
+fn test_grouped_delimiter_run_with_whitespace_variation() {
     let old_line = "    let foo = bar [ (";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(10)),
@@ -3116,10 +3111,10 @@ fn test_aux_delimiter_run_with_whitespace_variation() {
     let c = collapse_hunk_rows(&h, None, None, rs);
 
     assert_eq!(c.len(), 2);
-    let anchor = &c[0];
-    let anchor_runs = merged_runs(anchor);
+    let seed = &c[0];
+    let seed_runs = merged_runs(seed);
     assert!(matches!(
-        anchor.group(),
+        seed.group(),
         Some(RowGroup::Peer {
             slot: 0,
             n: 1,
@@ -3128,31 +3123,31 @@ fn test_aux_delimiter_run_with_whitespace_variation() {
         })
     ));
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::Del && r.text.contains(' ')),
         "Preceding whitespace must show as struck Del, got: {:?}",
-        anchor_runs
+        seed_runs
     );
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedSrc && r.text.contains('[')),
-        "Anchor must have MovedSrc for '[', got: {:?}",
-        anchor_runs
+        "Seed must have MovedSrc for '[', got: {:?}",
+        seed_runs
     );
     assert!(
-        anchor_runs
+        seed_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedSrc && r.text.contains('(')),
-        "Anchor must have MovedSrc for '(', got: {:?}",
-        anchor_runs
+        "Seed must have MovedSrc for '(', got: {:?}",
+        seed_runs
     );
 
-    let aux = &c[1];
-    let aux_runs = merged_runs(aux);
+    let tail = &c[1];
+    let tail_runs = merged_runs(tail);
     assert!(matches!(
-        aux.group(),
+        tail.group(),
         Some(RowGroup::Peer {
             slot: 1,
             n: 1,
@@ -3161,25 +3156,25 @@ fn test_aux_delimiter_run_with_whitespace_variation() {
         })
     ));
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::Add && r.text.contains("        ")),
         "Indentation must show as Add, got: {:?}",
-        aux_runs
+        tail_runs
     );
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text.contains('[')),
-        "Aux must have MovedTgt for '[', got: {:?}",
-        aux_runs
+        "Tail must have MovedTgt for '[', got: {:?}",
+        tail_runs
     );
     assert!(
-        aux_runs
+        tail_runs
             .iter()
             .any(|r| r.kind == RunKind::MovedTgt && r.text.contains('(')),
-        "Aux must have MovedTgt for '(', got: {:?}",
-        aux_runs
+        "Tail must have MovedTgt for '(', got: {:?}",
+        tail_runs
     );
 }
 
@@ -3226,14 +3221,13 @@ fn test_residual_declaration_roles_and_compatibility() {
 
 #[test]
 fn test_normalize_identical_mods_converts_faithful_pair_to_ctx() {
-    let rs = lang_profile("rs");
     let h = hunk(vec![]);
     let res = vec![
         row(RowKind::Ctx, "    handle_event(", Some(920), Some(914)),
         row(RowKind::Mod, "    );", Some(923), Some(917)),
         row(RowKind::Ctx, "    assert_eq!(x);", Some(924), Some(921)),
     ];
-    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
+    let out = pass_normalize_identical_mods(&h, res, &Default::default());
     assert_eq!(
         out[1].kind(),
         RowKind::Ctx,
@@ -3248,13 +3242,12 @@ fn test_normalize_identical_mods_keeps_crossed_pair_as_mod() {
     // Miniature of the theme-light-toggle `);` case: a leftover del with a
     // higher old line sits before the identical pair, so no Ctx placement
     // is legal and the pair must stay Mod (never trip the DBC).
-    let rs = lang_profile("rs");
     let h = hunk(vec![]);
     let res = vec![
         row(RowKind::Del, "    assert!(", None, Some(918)),
         row(RowKind::Mod, "    );", Some(923), Some(917)),
     ];
-    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
+    let out = pass_normalize_identical_mods(&h, res, &Default::default());
     assert_eq!(
         out[1].kind(),
         RowKind::Mod,
@@ -3263,11 +3256,10 @@ fn test_normalize_identical_mods_keeps_crossed_pair_as_mod() {
 }
 
 #[test]
-fn test_normalize_identical_mods_skips_anchors_but_converts_plain() {
+fn test_normalize_identical_mods_skips_pinned_but_converts_plain() {
     use crate::parse::Spans;
-    let rs = lang_profile("rs");
     let h = hunk(vec![]);
-    let anchor = Row::Mod {
+    let pinned = Row::Mod {
         old_line: DelLine::new(1, "    };"),
         new_line: AddLine::new(2, "    };"),
         spans: Spans {
@@ -3275,15 +3267,16 @@ fn test_normalize_identical_mods_skips_anchors_but_converts_plain() {
             add: vec![],
         },
         cached_runs: vec![],
-        group: Some(RowGroup::Anchor),
+        group: None,
     };
     let res = vec![
-        anchor,
+        pinned,
         row(RowKind::Mod, "    };", Some(4), Some(3)),
         row(RowKind::Del, "    changed;", None, Some(5)),
     ];
-    let out = pass_normalize_identical_mods(&h, res, rs, &Default::default());
-    assert_eq!(out[0].kind(), RowKind::Mod, "anchor Mod must be untouched");
+    let pinned_lines: rustc_hash::FxHashSet<u32> = [2].into_iter().collect();
+    let out = pass_normalize_identical_mods(&h, res, &pinned_lines);
+    assert_eq!(out[0].kind(), RowKind::Mod, "pinned Mod must be untouched");
     assert_eq!(
         out[1].kind(),
         RowKind::Ctx,
@@ -3293,26 +3286,25 @@ fn test_normalize_identical_mods_skips_anchors_but_converts_plain() {
 }
 
 #[test]
-fn test_normalize_identical_mods_skips_block_anchors() {
-    // A collapse anchor whose joined del_text equals the add text must stay
+fn test_normalize_identical_mods_skips_pinned_new_lines() {
+    // A pinned Mod whose joined del_text equals the add text must stay
     // Mod: absorbed member lines (e.g. opt-2 `win` + `.iter()`) need the
-    // anchor to render, and converting it would drop them from the stream.
+    // paired row to render, and converting it would drop them from the stream.
     use rustc_hash::FxHashSet;
-    let rs = lang_profile("rs");
     let h = hunk(vec![]);
     let res = vec![row(RowKind::Mod, "    win.iter()", Some(371), Some(371))];
-    let anchors: FxHashSet<u32> = [371].into_iter().collect();
-    let out = pass_normalize_identical_mods(&h, res, rs, &anchors);
-    assert_eq!(out[0].kind(), RowKind::Mod, "block anchor must stay Mod");
+    let pinned: FxHashSet<u32> = [371].into_iter().collect();
+    let out = pass_normalize_identical_mods(&h, res, &pinned);
+    assert_eq!(out[0].kind(), RowKind::Mod, "pinned Mod must stay Mod");
 }
 
 #[test]
-fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
+fn test_collapse_two_to_one_emits_peer_mod_and_grouped_del() {
     let rs = lang_profile("rs");
     let h = hunk(vec![
-        Row::Del(DelLine::new(10, "fn render(&self) -> String {")),
-        Row::Del(DelLine::new(11, "    return self.name.clone(); }")),
-        Row::Add(AddLine::new(
+        Row::del(DelLine::new(10, "fn render(&self) -> String {")),
+        Row::del(DelLine::new(11, "    return self.name.clone(); }")),
+        Row::add(AddLine::new(
             21,
             "fn render(&self) -> String { return self.name.clone(); }",
         )),
@@ -3321,7 +3313,7 @@ fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
     assert_eq!(
         out.len(),
         2,
-        "Expected exactly 2 rows (anchor Mod + AuxDel), got: {out:?}"
+        "Expected exactly 2 rows (peer Mod + grouped Del), got: {out:?}"
     );
     match &out[0] {
         Row::Mod {
@@ -3350,7 +3342,7 @@ fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
         _ => panic!("Expected Row::Mod at index 0, got {:?}", out[0]),
     }
     match &out[1] {
-        Row::AuxDel { line, group, .. } => {
+        Row::Del { line, group, .. } => {
             assert_eq!(line.num, 11);
             assert_eq!(line.text, "    return self.name.clone(); }");
             assert!(matches!(
@@ -3363,7 +3355,7 @@ fn test_collapse_two_to_one_emits_anchor_mod_and_aux_del() {
                 })
             ));
         }
-        _ => panic!("Expected Row::AuxDel at index 1, got {:?}", out[1]),
+        _ => panic!("Expected Row::Del at index 1, got {:?}", out[1]),
     }
 }
 
@@ -3447,21 +3439,21 @@ fn test_lcs_mod_hunk_15_stepwise() {
 fn test_interior_donor_inlining_mod_group_assembly() {
     let rs = None;
     let h = hunk(vec![
-        Row::Del(DelLine::new(
+        Row::del(DelLine::new(
             227,
             "                let scrollbar_seek = is_on_scrollbar;",
         )),
-        Row::Del(DelLine::new(228, "                if scrollbar_seek {")),
-        Row::Add(AddLine::new(237, "                if is_on_scrollbar {")),
+        Row::del(DelLine::new(228, "                if scrollbar_seek {")),
+        Row::add(AddLine::new(237, "                if is_on_scrollbar {")),
     ]);
     let out = collapse_hunk_rows(&h, None, None, rs);
     assert_eq!(
         out.len(),
         2,
-        "Expected exactly 2 rows (AuxDel + anchor Mod), got: {out:?}"
+        "Expected exactly 2 rows (grouped Del + seed Mod), got: {out:?}"
     );
     match &out[0] {
-        Row::AuxDel { line, group, .. } => {
+        Row::Del { line, group, .. } => {
             assert_eq!(line.num, 227);
             assert_eq!(
                 line.text,
@@ -3477,7 +3469,7 @@ fn test_interior_donor_inlining_mod_group_assembly() {
                 })
             ));
         }
-        _ => panic!("Expected Row::AuxDel at index 0, got {:?}", out[0]),
+        _ => panic!("Expected Row::Del at index 0, got {:?}", out[0]),
     }
     match &out[1] {
         Row::Mod {
@@ -3508,7 +3500,7 @@ fn test_interior_donor_inlining_mod_group_assembly() {
             .cached_runs()
             .iter()
             .any(|(kind, text)| *kind == RunKind::MovedSrc && text == "is_on_scrollbar"),
-        "AuxDel row must label donated token as MovedSrc, got: {:?}",
+        "Grouped Del row must label donated token as MovedSrc, got: {:?}",
         out[0].cached_runs()
     );
     assert!(
@@ -3516,7 +3508,7 @@ fn test_interior_donor_inlining_mod_group_assembly() {
             .cached_runs()
             .iter()
             .any(|(kind, text)| *kind == RunKind::MovedTgt && text == "is_on_scrollbar"),
-        "Anchor Mod row must label received token as MovedTgt, got: {:?}",
+        "Seed Mod row must label received token as MovedTgt, got: {:?}",
         out[1].cached_runs()
     );
 }
@@ -3525,23 +3517,23 @@ fn test_interior_donor_inlining_mod_group_assembly() {
 fn test_compound_mod_group_closure_reflow_assembly() {
     let rs = diffuse_syntax::registry::lang_profile("rs");
     let h = hunk(vec![
-        Row::Del(DelLine::new(
+        Row::del(DelLine::new(
             293,
             "                                    let hit =",
         )),
-        Row::Del(DelLine::new(
+        Row::del(DelLine::new(
             294,
             "                                        |pat: &str| wrapped_glyph_hit(&txt, pat, seg_off, col, cw);",
         )),
-        Row::Add(AddLine::new(
+        Row::add(AddLine::new(
             288,
             "                                        let hit = |pat: &str| {",
         )),
-        Row::Add(AddLine::new(
+        Row::add(AddLine::new(
             289,
             "                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)",
         )),
-        Row::Add(AddLine::new(
+        Row::add(AddLine::new(
             290,
             "                                        };",
         )),
@@ -3550,7 +3542,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
     assert_eq!(
         out.len(),
         3,
-        "Expected exactly 3 rows (Anchor Mod + Aux Mod + AuxAdd), got: {out:?}"
+        "Expected exactly 3 rows (seed Mod + grouped Mod + grouped Add), got: {out:?}"
     );
 
     // Row 0: Mod (293 -> 288)
@@ -3598,7 +3590,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
             .cached_runs()
             .iter()
             .any(|(kind, text)| *kind == RunKind::MovedTgt && text.contains("pat")),
-        "Anchor Mod (288) must label received closure parameter as MovedTgt, got: {:?}",
+        "Seed Mod (288) must label received closure parameter as MovedTgt, got: {:?}",
         out[0].cached_runs()
     );
 
@@ -3608,7 +3600,7 @@ fn test_compound_mod_group_closure_reflow_assembly() {
             .cached_runs()
             .iter()
             .any(|(kind, text)| *kind == RunKind::MovedSrc && text.contains("pat")),
-        "Aux Mod (294) must label moved closure parameter as MovedSrc, got: {:?}",
+        "Grouped Mod (294) must label moved closure parameter as MovedSrc, got: {:?}",
         out[1].cached_runs()
     );
 }

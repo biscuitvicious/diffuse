@@ -159,8 +159,6 @@ pub const fn split_left_glyph(
     group: Option<RowGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => "~ ",
-        (Some(RowGroup::Aux { .. }), RowKind::Del) => "~-",
         (Some(RowGroup::Peer { n, m, .. }), RowKind::Mod) if n > 1 || m > 1 => "~ ",
         (Some(RowGroup::Peer { n, m, .. }), RowKind::Del) if n > 1 || m > 1 => "~-",
         _ => match kind {
@@ -184,8 +182,6 @@ pub const fn split_right_glyph(
     group: Option<RowGroup>,
 ) -> &'static str {
     match (group, kind) {
-        (Some(RowGroup::Anchor | RowGroup::Aux { .. }), RowKind::Mod) => "~ ",
-        (Some(RowGroup::Aux { .. }), RowKind::Add) => "~+",
         (Some(RowGroup::Peer { n, m, .. }), RowKind::Mod) if n > 1 || m > 1 => "~ ",
         (Some(RowGroup::Peer { n, m, .. }), RowKind::Add) if n > 1 || m > 1 => "~+",
         _ => match kind {
@@ -463,13 +459,6 @@ pub fn prefix_of_with_mod_side_and_widths(
                 };
             }
             return match group {
-                Some(RowGroup::Anchor) if kind == RowKind::Mod => "~ ".to_string(),
-                Some(RowGroup::Aux { .. }) => match kind {
-                    RowKind::Add => "~+".to_string(),
-                    RowKind::Del => "~-".to_string(),
-                    RowKind::Mod => "~ ".to_string(),
-                    _ => "  ".to_string(),
-                },
                 Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
                     RowKind::Add => "~+".to_string(),
                     RowKind::Del => "~-".to_string(),
@@ -510,24 +499,6 @@ pub fn prefix_of_with_mod_side_and_widths(
             };
         }
         return match group {
-            Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-                format!("{}~ ", format_line_num(new_line, new_line_width, &mut buf))
-            }
-            Some(RowGroup::Aux { .. }) => match kind {
-                RowKind::Add => {
-                    format!("{}~+", format_line_num(new_line, new_line_width, &mut buf))
-                }
-                RowKind::Del => {
-                    format!("{}~-", format_line_num(old_line, new_line_width, &mut buf))
-                }
-                RowKind::Mod => {
-                    format!("{}~ ", format_line_num(new_line, new_line_width, &mut buf))
-                }
-                _ => format!(
-                    "{}  ",
-                    format_line_num(new_line.or(old_line), new_line_width, &mut buf)
-                ),
-            },
             Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
                 RowKind::Add => {
                     format!("{}~+", format_line_num(new_line, new_line_width, &mut buf))
@@ -588,15 +559,6 @@ pub fn prefix_of_with_mod_side_and_widths(
         };
     }
     match group {
-        Some(RowGroup::Anchor) if kind == RowKind::Mod => {
-            format!("{old_pad} {new_pad}~ ")
-        }
-        Some(RowGroup::Aux { .. }) => match kind {
-            RowKind::Add => format!("{blank_old} {new_pad}~+"),
-            RowKind::Del => format!("{old_pad} {blank_new}~-"),
-            RowKind::Mod => format!("{old_pad} {new_pad}~ "),
-            _ => format!("{old_pad} {new_pad}  "),
-        },
         Some(RowGroup::Peer { n, m, .. }) if n > 1 || m > 1 => match kind {
             RowKind::Add => format!("{blank_old} {new_pad}~+"),
             RowKind::Del => format!("{old_pad} {blank_new}~-"),

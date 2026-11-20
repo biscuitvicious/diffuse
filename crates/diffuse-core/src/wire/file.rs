@@ -11,7 +11,7 @@ use super::{MovSide, OutputFence, OutputHunk, OutputNote, OutputRow, OutputRun, 
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{DiffFile, FileStatus, RowGroup, RowKind},
+    parse::{DiffFile, FileStatus, RowKind},
 };
 
 pub const NON_EXISTENT_SYMBOL: &str = "×";
@@ -541,12 +541,7 @@ impl OutputFile {
             }
             file_moved_src.sort_unstable();
             file_moved_tgt.sort_unstable();
-            let has_legacy_anchor = self.hunks.iter().any(|h| {
-                h.rows
-                    .iter()
-                    .any(|r| matches!(r.group, Some(RowGroup::Anchor | RowGroup::Aux { .. })))
-            });
-            if !has_legacy_anchor && file_moved_src != file_moved_tgt {
+            if file_moved_src != file_moved_tgt {
                 return Err(format!(
                     "{}: file-level moved character conservation mismatch (∑ MovedSrc ≢ ∑ MovedTgt):\n  MovedSrc: {:?}\n  MovedTgt: {:?}",
                     self.path, file_moved_src, file_moved_tgt

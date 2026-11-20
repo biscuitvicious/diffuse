@@ -49,7 +49,7 @@ fn parse_diff_multi_file_new_deleted_rename() {
         a.hunks[0]
             .rows
             .iter()
-            .filter(|r| matches!(r, Row::Add(_)))
+            .filter(|r| matches!(r, Row::Add { .. }))
             .count(),
         2,
         "2 adds"
@@ -58,7 +58,7 @@ fn parse_diff_multi_file_new_deleted_rename() {
         a.hunks[0]
             .rows
             .iter()
-            .filter(|r| matches!(r, Row::Del(_)))
+            .filter(|r| matches!(r, Row::Del { .. }))
             .count(),
         1,
         "1 del"
@@ -66,13 +66,13 @@ fn parse_diff_multi_file_new_deleted_rename() {
     let add_row = a.hunks[0]
         .rows
         .iter()
-        .find(|r| matches!(r, Row::Add(add_line) if add_line.text == "new line one"))
+        .find(|r| matches!(r, Row::Add { line: add_line, .. } if add_line.text == "new line one"))
         .expect("add row");
     assert_eq!(add_row.new_line(), Some(10), "add row newLine 10");
     let del_row = a.hunks[0]
         .rows
         .iter()
-        .find(|r| matches!(r, Row::Del(_)))
+        .find(|r| matches!(r, Row::Del { .. }))
         .expect("del row");
     assert_eq!(del_row.old_line(), Some(10), "del row oldLine 10");
     assert_eq!(files[1].status, FileStatus::Added, "README added");
@@ -182,18 +182,55 @@ fn test_diff_components_reverse_involution() {
     assert_eq!(rev_mov.new_line(), Some(10));
     assert_eq!(rev_mov.reverse(), mov_src);
 
-    // AuxAdd <-> AuxDel reverse
-    let aux_add = Row::AuxAdd {
-        anchor: 100,
-        line: AddLine::new(105, "aux text"),
+    // Grouped Add <-> Del reverse preserves the peer group (with N/M swapped)
+    let grouped_add = Row::Add {
+        line: AddLine::new(105, "grouped text"),
         spans: spans.clone(),
-        cached_runs: vec![(RunKind::MovedTgt, "aux text".to_string())],
-        group: None,
+        cached_runs: vec![(RunKind::MovedTgt, "grouped text".to_string())],
+        group: Some(RowGroup::Peer {
+            id: GroupId(3),
+            slot: 1,
+            n: 2,
+            m: 3,
+        }),
     };
-    let rev_aux = aux_add.clone().reverse();
-    assert_eq!(rev_aux.group(), Some(RowGroup::Aux { anchor: 100 }));
-    assert_eq!(rev_aux.old_line(), Some(105));
-    assert_eq!(rev_aux.reverse(), aux_add);
+    let rev_grouped = grouped_add.clone().reverse();
+    assert_eq!(
+        rev_grouped.group(),
+        Some(RowGroup::Peer {
+            id: GroupId(3),
+            slot: 1,
+            n: 3,
+            m: 2,
+        })
+    );
+    assert_eq!(rev_grouped.old_line(), Some(105));
+    assert_eq!(rev_grouped.reverse(), grouped_add);
+
+    // Grouped Mod reverse swaps the peer group N/M like any group member
+    let grouped_mod = Row::Mod {
+        old_line: DelLine::new(38, "old line text"),
+        new_line: AddLine::new(42, "new line text"),
+        spans: spans.clone(),
+        cached_runs: Vec::new(),
+        group: Some(RowGroup::Peer {
+            id: GroupId(3),
+            slot: 1,
+            n: 2,
+            m: 3,
+        }),
+    };
+    let rev_grouped_mod = grouped_mod.clone().reverse();
+    assert_eq!(
+        rev_grouped_mod.group(),
+        Some(RowGroup::Peer {
+            id: GroupId(3),
+            slot: 1,
+            n: 3,
+            m: 2,
+        })
+    );
+    assert_eq!(rev_grouped_mod.reverse(), grouped_mod);
 }
 
 #[test]
@@ -324,18 +361,6 @@ fn test_ctx_line_zero_old_pos_precondition() {
 #[should_panic(expected = "new_pos line number must be non-zero (1-based)")]
 fn test_ctx_line_zero_new_pos_precondition() {
     let _ = CtxLine::new(1, 0, "context text");
-}
-
-#[test]
-#[should_panic(expected = "anchor line number must be non-zero (1-based)")]
-fn test_row_aux_add_zero_anchor_precondition() {
-    let _ = Row::aux_add(0, AddLine::new(1, "text"), Spans::default(), Vec::new());
-}
-
-#[test]
-#[should_panic(expected = "anchor line number must be non-zero (1-based)")]
-fn test_row_aux_del_zero_anchor_precondition() {
-    let _ = Row::aux_del(0, DelLine::new(1, "text"), Spans::default(), Vec::new());
 }
 
 #[test]

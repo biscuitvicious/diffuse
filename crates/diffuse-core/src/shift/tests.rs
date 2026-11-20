@@ -20,12 +20,12 @@ fn hunk(rows: Vec<Row>) -> Hunk {
 #[test]
 fn test_max_shift_down_rows() {
     let h = hunk(vec![
-        Row::Del(DelLine::new(10, "old line")),
-        Row::Add(AddLine::new(20, "line 1")),
-        Row::Add(AddLine::new(21, "    }")),
-        Row::Add(AddLine::new(22, "")),
-        Row::Add(AddLine::new(23, "    pub fn next() {}")),
-        Row::Add(AddLine::new(24, "    }")),
+        Row::del(DelLine::new(10, "old line")),
+        Row::add(AddLine::new(20, "line 1")),
+        Row::add(AddLine::new(21, "    }")),
+        Row::add(AddLine::new(22, "")),
+        Row::add(AddLine::new(23, "    pub fn next() {}")),
+        Row::add(AddLine::new(24, "    }")),
         Row::Ctx(CtxLine::new(15, 25, "    }")),
         Row::Ctx(CtxLine::new(16, 26, "")),
     ]);
@@ -40,11 +40,11 @@ fn test_max_shift_down_rows() {
 #[test]
 fn test_apply_shift_down_identity() {
     let mut h = hunk(vec![
-        Row::Del(DelLine::new(10, "old line")),
-        Row::Add(AddLine::new(20, "line 1")),
-        Row::Add(AddLine::new(21, "    }")),
-        Row::Add(AddLine::new(22, "")),
-        Row::Add(AddLine::new(23, "    pub fn next() {}")),
+        Row::del(DelLine::new(10, "old line")),
+        Row::add(AddLine::new(20, "line 1")),
+        Row::add(AddLine::new(21, "    }")),
+        Row::add(AddLine::new(22, "")),
+        Row::add(AddLine::new(23, "    pub fn next() {}")),
         Row::Ctx(CtxLine::new(12, 24, "    }")),
         Row::Ctx(CtxLine::new(13, 25, "")),
     ]);
@@ -61,10 +61,13 @@ fn test_apply_shift_down_identity() {
         "released blank becomes ctx"
     );
     // Absorbed context (5,6) became adds.
-    assert!(matches!(h.rows[5], Row::Add(_)), "absorbed ctx becomes add");
+    assert!(
+        matches!(h.rows[5], Row::Add { .. }),
+        "absorbed ctx becomes add"
+    );
     assert_eq!(h.rows[5].new_line(), Some(24));
     assert!(
-        matches!(h.rows[6], Row::Add(_)),
+        matches!(h.rows[6], Row::Add { .. }),
         "absorbed blank becomes add"
     );
     assert_eq!(h.rows[6].new_line(), Some(25));
@@ -201,10 +204,10 @@ fn test_context_budget_normalization() {
 #[test]
 fn test_semantic_slide_addition_to_function_header() {
     let h = hunk(vec![
-        Row::Add(AddLine::new(21, "    }")),
-        Row::Add(AddLine::new(22, "")),
-        Row::Add(AddLine::new(23, "    pub fn new_func() {")),
-        Row::Add(AddLine::new(24, "        step();")),
+        Row::add(AddLine::new(21, "    }")),
+        Row::add(AddLine::new(22, "")),
+        Row::add(AddLine::new(23, "    pub fn new_func() {")),
+        Row::add(AddLine::new(24, "        step();")),
         Row::Ctx(CtxLine::new(18, 25, "    }")),
         Row::Ctx(CtxLine::new(19, 26, "")),
     ]);
@@ -224,12 +227,12 @@ fn test_semantic_slide_addition_to_function_header() {
     assert_eq!(shifted.rows[2].new_line(), Some(23));
     assert_eq!(shifted.rows[3].text(), "        step();");
     assert!(
-        matches!(shifted.rows[4], Row::Add(_)),
+        matches!(shifted.rows[4], Row::Add { .. }),
         "absorbed brace is add"
     );
     assert_eq!(shifted.rows[4].text(), "    }");
     assert!(
-        matches!(shifted.rows[5], Row::Add(_)),
+        matches!(shifted.rows[5], Row::Add { .. }),
         "absorbed blank is add"
     );
     assert_eq!(shifted.rows[5].text(), "");
@@ -303,15 +306,15 @@ fn test_normalize_and_merge_hunks() {
 #[test]
 fn test_semantic_slide_json_object_closing_delimiter() {
     let h = hunk(vec![
-        Row::Del(DelLine::new(
+        Row::del(DelLine::new(
             2028,
             "                  \"text\": \"        \"",
         )),
-        Row::Add(AddLine::new(2029, "                  \"text\": \"    \"")),
-        Row::Add(AddLine::new(2030, "                },")),
-        Row::Add(AddLine::new(2031, "                {")),
-        Row::Add(AddLine::new(2032, "                  \"kind\": \"del\",")),
-        Row::Add(AddLine::new(2033, "                  \"text\": \")\"")),
+        Row::add(AddLine::new(2029, "                  \"text\": \"    \"")),
+        Row::add(AddLine::new(2030, "                },")),
+        Row::add(AddLine::new(2031, "                {")),
+        Row::add(AddLine::new(2032, "                  \"kind\": \"del\",")),
+        Row::add(AddLine::new(2033, "                  \"text\": \")\"")),
         Row::Ctx(CtxLine::new(2029, 2034, "                },")),
     ]);
 
@@ -327,7 +330,7 @@ fn test_semantic_slide_json_object_closing_delimiter() {
     assert_eq!(shifted.rows[2].new_line(), Some(2030));
 
     assert!(
-        matches!(shifted.rows[6], Row::Add(_)),
+        matches!(shifted.rows[6], Row::Add { .. }),
         "line 2034 closing brace must be add, got {:?}",
         shifted.rows[6]
     );
@@ -339,11 +342,11 @@ fn test_semantic_slide_json_object_closing_delimiter() {
 fn test_shift_down_recognizes_python_decorator_boundary() {
     let py = lang_profile("py");
     let h = hunk(vec![
-        Row::Del(DelLine::new(10, "old line")),
-        Row::Add(AddLine::new(20, "    pass")),
-        Row::Add(AddLine::new(21, "    )")),
-        Row::Add(AddLine::new(22, "@dataclass")),
-        Row::Add(AddLine::new(23, "class Foo:")),
+        Row::del(DelLine::new(10, "old line")),
+        Row::add(AddLine::new(20, "    pass")),
+        Row::add(AddLine::new(21, "    )")),
+        Row::add(AddLine::new(22, "@dataclass")),
+        Row::add(AddLine::new(23, "class Foo:")),
     ]);
     let shift_rows = calculate_needed_shift_down(&h, 1, 5, 2, py);
     assert_eq!(

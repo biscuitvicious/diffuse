@@ -18,11 +18,11 @@ fn ctx(o: u32, n: u32, t: &str) -> Row {
 }
 
 fn del(n: u32, t: &str) -> Row {
-    Row::Del(DelLine::new(n, t))
+    Row::del(DelLine::new(n, t))
 }
 
 fn add(n: u32, t: &str) -> Row {
-    Row::Add(AddLine::new(n, t))
+    Row::add(AddLine::new(n, t))
 }
 
 fn hunk(old_start: u32, old_count: u32, new_start: u32, new_count: u32, rows: Vec<Row>) -> Hunk {
@@ -44,8 +44,8 @@ fn signature(h: &Hunk) -> Vec<&'static str> {
         .iter()
         .map(|r| match r {
             Row::Ctx(_) => "ctx",
-            Row::Del(_) => "del",
-            Row::Add(_) => "add",
+            Row::Del { .. } => "del",
+            Row::Add { .. } => "add",
             Row::Mod { .. } => "mod",
             Row::MovSrc { .. } => "mov_src",
             Row::MovTgt { .. } => "mov_tgt",

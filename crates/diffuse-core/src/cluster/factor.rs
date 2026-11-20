@@ -636,11 +636,11 @@ mod tests {
     use crate::parse::{AddLine, DelLine};
 
     fn make_del(num: u32, text: &str) -> Row {
-        Row::Del(DelLine::new(num, text))
+        Row::del(DelLine::new(num, text))
     }
 
     fn make_add(num: u32, text: &str) -> Row {
-        Row::Add(AddLine::new(num, text))
+        Row::add(AddLine::new(num, text))
     }
 
     #[test]

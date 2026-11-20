@@ -176,13 +176,13 @@ pub fn partition_hunk_segments<'a>(
             let row = &hunk.rows[i];
 
             match row {
-                Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } => old_rows.push(row.clone()),
-                Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } => new_rows.push(row.clone()),
+                Row::Del { .. } | Row::MovSrc { .. } => old_rows.push(row.clone()),
+                Row::Add { .. } | Row::MovTgt { .. } => new_rows.push(row.clone()),
                 Row::Mod {
                     old_line, new_line, ..
                 } => {
-                    old_rows.push(Row::Del(old_line.clone()));
-                    new_rows.push(Row::Add(new_line.clone()));
+                    old_rows.push(Row::del(old_line.clone()));
+                    new_rows.push(Row::add(new_line.clone()));
                 }
                 Row::Ctx(_) | Row::Sep(_) => {}
             }

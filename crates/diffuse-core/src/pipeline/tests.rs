@@ -571,7 +571,7 @@ fn test_head_commit_hunk_render() {
 --- a/crates/diffuse-core/src/moves/mod.rs
 +++ b/crates/diffuse-core/src/moves/mod.rs
 @@ -143,18 +147,65 @@ pub fn mark_moves(f: &mut DiffFile) {
-             if matches!(r, Row::Del(_)) {
+             if matches!(r, Row::Del { .. }) {
                  run.push((hi, ri));
              } else {
 -                // flush the run

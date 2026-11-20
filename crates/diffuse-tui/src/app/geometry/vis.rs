@@ -363,7 +363,7 @@ impl AppState {
             let text_cols = content_width.saturating_sub(gutter_w).max(1);
             let disp = display_text(
                 &text,
-                r.is_aux(),
+                r.is_peer(),
                 r.kind,
                 &r.runs,
                 self.col_offset,

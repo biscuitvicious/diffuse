@@ -66,18 +66,6 @@ impl OutputRow {
         self.into()
     }
 
-    /// Whether this row is an auxiliary row within a multiline cluster.
-    #[inline]
-    pub fn is_aux(&self) -> bool {
-        match self.group {
-            Some(RowGroup::Aux { .. }) => true,
-            Some(RowGroup::Peer { n, m, .. }) => {
-                (n > 1 || m > 1) && (self.kind == RowKind::Add || self.kind == RowKind::Del)
-            }
-            _ => false,
-        }
-    }
-
     /// Whether this row belongs to an N -> M peer reflow group.
     #[inline]
     pub fn is_peer(&self) -> bool {
@@ -232,47 +220,21 @@ impl From<&OutputRow> for Row {
             RowKind::Del => {
                 let num = r.old_line.expect("Del row must have old line");
                 let del = DelLine::new(num, r.old_text());
-                if let Some(RowGroup::Aux { anchor }) = r.group {
-                    Row::AuxDel {
-                        anchor,
-                        line: del,
-                        spans,
-                        cached_runs,
-                        group: r.group,
-                    }
-                } else if let Some(RowGroup::Peer { id, .. }) = r.group {
-                    Row::AuxDel {
-                        anchor: id.0,
-                        line: del,
-                        spans,
-                        cached_runs,
-                        group: r.group,
-                    }
-                } else {
-                    Row::Del(del)
+                Row::Del {
+                    line: del,
+                    spans,
+                    cached_runs,
+                    group: r.group,
                 }
             }
             RowKind::Add => {
                 let num = r.new_line.expect("Add row must have new line");
                 let add = AddLine::new(num, r.new_text());
-                if let Some(RowGroup::Aux { anchor }) = r.group {
-                    Row::AuxAdd {
-                        anchor,
-                        line: add,
-                        spans,
-                        cached_runs,
-                        group: r.group,
-                    }
-                } else if let Some(RowGroup::Peer { id, .. }) = r.group {
-                    Row::AuxAdd {
-                        anchor: id.0,
-                        line: add,
-                        spans,
-                        cached_runs,
-                        group: r.group,
-                    }
-                } else {
-                    Row::Add(add)
+                Row::Add {
+                    line: add,
+                    spans,
+                    cached_runs,
+                    group: r.group,
                 }
             }
             RowKind::Mod => {

@@ -87,8 +87,8 @@ fn resurface_ctx_rows(h: &mut Hunk, old_lines: &[&str], new_lines: &[&str]) -> b
             && ws_only_diff(ot, nt)
             && (*c.text == *ot || *c.text == *nt)
         {
-            out.push(Row::Del(DelLine::new(c.old_pos, ot)));
-            out.push(Row::Add(AddLine::new(c.new_pos, nt)));
+            out.push(Row::del(DelLine::new(c.old_pos, ot)));
+            out.push(Row::add(AddLine::new(c.new_pos, nt)));
             changed = true;
         } else {
             out.push(r.clone());
@@ -111,7 +111,7 @@ fn synthesize_gap_hunks(hunks: &mut Vec<Hunk>, old_lines: &[&str], new_lines: &[
     let valid = hunks.iter().all(|h| {
         h.rows
             .iter()
-            .all(|r| matches!(r, Row::Ctx(_) | Row::Del(_) | Row::Add(_)))
+            .all(|r| matches!(r, Row::Ctx(_) | Row::Del { .. } | Row::Add { .. }))
             && h.old_start + h.old_count <= old_lines.len() as u32 + 1
             && h.new_start + h.new_count <= new_lines.len() as u32 + 1
     }) && hunks.windows(2).all(|w| {
@@ -272,13 +272,13 @@ fn flush_run(
     new_lines: &[&str],
 ) {
     for &k in run.iter() {
-        rows.push(Row::Del(DelLine::new(
+        rows.push(Row::del(DelLine::new(
             old_a + k,
             old_lines[(old_a + k - 1) as usize],
         )));
     }
     for &k in run.iter() {
-        rows.push(Row::Add(AddLine::new(
+        rows.push(Row::add(AddLine::new(
             new_a + k,
             new_lines[(new_a + k - 1) as usize],
         )));

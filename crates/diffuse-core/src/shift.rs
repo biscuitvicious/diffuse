@@ -187,7 +187,7 @@ pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
 
             // Append `next` rows, renumbering its peer-group ids past `cur`'s
             // maximum so rows from merged hunks never share a group id.
-            // `set_group` keeps each row's aux anchor in sync with its group.
+            // `set_group` carries each row's peer group across the renumbering.
             let max_id = cur
                 .rows
                 .iter()
@@ -258,12 +258,10 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
     let old_content: &[String] = &file.old_content;
     let new_content: &[String] = &file.new_content;
     for h in &mut file.hunks {
-        let new_side = h.rows.iter().any(|r| {
-            matches!(
-                r,
-                Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Mod { .. }
-            )
-        });
+        let new_side = h
+            .rows
+            .iter()
+            .any(|r| matches!(r, Row::Add { .. } | Row::MovTgt { .. } | Row::Mod { .. }));
 
         // Expand leading context if needed
         if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {
@@ -478,7 +476,7 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
         ));
         swaps.push((
             end_idx + offset,
-            Row::Add(AddLine::new(ctx_new, absorbed.text().to_string())),
+            Row::add(AddLine::new(ctx_new, absorbed.text().to_string())),
         ));
     }
     for (idx, row) in swaps {
@@ -495,12 +493,12 @@ pub fn pass_shift_hunk(h: &Hunk, profile: Option<&diffuse_syntax::profile::LangP
     let mut new_hunk = h.clone();
     let mut i = 0;
     while i < new_hunk.rows.len() {
-        if !matches!(new_hunk.rows[i], Row::Add(_)) {
+        if !matches!(new_hunk.rows[i], Row::Add { group: None, .. }) {
             i += 1;
             continue;
         }
         let start = i;
-        while i < new_hunk.rows.len() && matches!(new_hunk.rows[i], Row::Add(_)) {
+        while i < new_hunk.rows.len() && matches!(new_hunk.rows[i], Row::Add { group: None, .. }) {
             i += 1;
         }
         let end = i;

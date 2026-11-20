@@ -93,9 +93,6 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
     if !matches!(r, Row::Mod { .. }) {
         return false;
     }
-    if r.group() == Some(crate::parse::RowGroup::Anchor) {
-        return false;
-    }
     let Some(del_text) = r.old_text() else {
         return false;
     };
@@ -104,7 +101,7 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
         Some(s)
             if !s.is_empty()
                 || del_text == r.text()
-                || matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) =>
+                || matches!(r, Row::Add { .. } | Row::MovTgt { .. }) =>
         {
             s
         }
@@ -159,13 +156,13 @@ pub fn merged_runs_with_profile<'a>(
             })
             .collect();
     }
-    if matches!(r, Row::AuxAdd { .. }) {
+    if matches!(r, Row::Add { group: Some(_), .. }) {
         return vec![Run {
             kind: RunKind::Add,
             text: r.text(),
         }];
     }
-    if matches!(r, Row::AuxDel { .. }) {
+    if matches!(r, Row::Del { group: Some(_), .. }) {
         return vec![Run {
             kind: RunKind::Del,
             text: r.text(),
@@ -179,7 +176,7 @@ pub fn merged_runs_with_profile<'a>(
         Some(s)
             if !s.is_empty()
                 || del_text == r.text()
-                || matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) =>
+                || matches!(r, Row::Add { .. } | Row::MovTgt { .. }) =>
         {
             s
         }
@@ -197,12 +194,12 @@ pub fn merged_runs_with_profile<'a>(
             project_reverse(&runs)
         );
     }
-    // Aux-grouped additions are reflow destinations: text they share with
-    // the anchor donor moved in — mark it target. (Plain context would be
+    // Peer-grouped additions are reflow destinations: text they share with
+    // the group moved in — mark it target. (Plain context would be
     // equally truthful; the mark lets renderers tell moved-in from merely
     // common, and completes the wire's account of the move whose source
-    // half the anchor marks moved-out.) Genuine fills keep Add.
-    if matches!(r, Row::AuxAdd { .. }) {
+    // half the group marks moved-out.) Genuine fills keep Add.
+    if matches!(r, Row::Add { group: Some(_), .. }) {
         return runs
             .into_iter()
             .map(|run| {

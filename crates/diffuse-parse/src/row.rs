@@ -11,16 +11,15 @@ pub enum RunKind {
     Ctx,
     Del,
     Add,
-    /// Reflow-moved source text: characters that left this (anchor) line
-    /// for continuation aux rows in the same Expand block. Old-side
-    /// content, like [`RunKind::Del`], but explicitly *not* deleted — it
-    /// survives verbatim elsewhere in the hunk. Renderers skip it by
-    /// default (the aux rows show where it went); the strike is reserved
-    /// for genuinely deleted text. See `is_del_like`.
+    /// Reflow-moved source text: characters that left this line for peer
+    /// rows in the same reflow group. Old-side content, like [`RunKind::Del`],
+    /// but explicitly *not* deleted — it survives verbatim elsewhere in the
+    /// hunk. Renderers skip it by default (the peer rows show where it went);
+    /// the strike is reserved for genuinely deleted text. See `is_del_like`.
     MovedSrc,
-    /// Reflow-moved target text: characters an aux row shares with its
-    /// anchor donor — moved in, explicitly not novel. Emitted forward for
-    /// aux-grouped additions (the mirror of [`RunKind::MovedSrc`]); also
+    /// Reflow-moved target text: characters a peer-grouped row shares with
+    /// its group — moved in, explicitly not novel. Emitted forward for
+    /// peer-grouped additions (the mirror of [`RunKind::MovedSrc`]); also
     /// the image of `MovedSrc` under reversal, which keeps wire reversal
     /// an exact involution. Renders exactly as context. See `is_add_like`.
     MovedTgt,
@@ -173,14 +172,15 @@ impl PeerGroupMeta {
     }
 }
 
-/// Identifies the expansion/collapse/peer group role of a diff row.
+/// Identifies the peer reflow group a diff row belongs to.
+///
+/// A row carries `Some(Peer)` when slot alignment placed it in an (N -> M)
+/// peer group with a strong token link (a paired `Mod` slot or a salient
+/// moved-token relationship); otherwise it carries `None` and renders as a
+/// standalone row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RowGroup {
-    Anchor,
-    Aux {
-        anchor: u32,
-    },
     /// A row belonging to an (N -> M) peer reflow group.
     Peer {
         id: GroupId,
@@ -192,16 +192,6 @@ pub enum RowGroup {
 
 impl RowGroup {
     #[inline]
-    pub fn is_anchor(self) -> bool {
-        matches!(self, RowGroup::Anchor)
-    }
-
-    #[inline]
-    pub fn is_aux(self) -> bool {
-        matches!(self, RowGroup::Aux { .. })
-    }
-
-    #[inline]
     pub fn is_peer(self) -> bool {
         matches!(self, RowGroup::Peer { .. })
     }
@@ -210,14 +200,12 @@ impl RowGroup {
     pub fn peer_id(self) -> Option<GroupId> {
         match self {
             RowGroup::Peer { id, .. } => Some(id),
-            _ => None,
         }
     }
 
     #[inline]
     pub fn is_multiline(self) -> bool {
         match self {
-            RowGroup::Anchor | RowGroup::Aux { .. } => true,
             RowGroup::Peer { n, m, .. } => n > 1 || m > 1,
         }
     }
@@ -225,8 +213,6 @@ impl RowGroup {
     #[inline]
     pub fn reverse(self) -> Self {
         match self {
-            RowGroup::Anchor => RowGroup::Anchor,
-            RowGroup::Aux { anchor } => RowGroup::Aux { anchor },
             RowGroup::Peer { id, slot, n, m } => RowGroup::Peer {
                 id,
                 slot,
@@ -334,8 +320,24 @@ impl Spans {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Row {
     Ctx(CtxLine),
-    Del(DelLine),
-    Add(AddLine),
+    Del {
+        line: DelLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<RowGroup>,
+    },
+    Add {
+        line: AddLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<RowGroup>,
+    },
     Mod {
         old_line: DelLine,
         new_line: AddLine,
@@ -359,26 +361,6 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
-    },
-    AuxDel {
-        anchor: u32,
-        line: DelLine,
-        #[serde(default, skip_serializing_if = "Spans::is_empty")]
-        spans: Spans,
-        #[serde(skip)]
-        cached_runs: Vec<(RunKind, String)>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<RowGroup>,
-    },
-    AuxAdd {
-        anchor: u32,
-        line: AddLine,
-        #[serde(default, skip_serializing_if = "Spans::is_empty")]
-        spans: Spans,
-        #[serde(skip)]
-        cached_runs: Vec<(RunKind, String)>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<RowGroup>,
     },
     #[serde(skip_serializing)]
     Sep(String),
@@ -424,18 +406,22 @@ impl Row {
     }
 
     #[inline]
-    pub fn anchor_mod(
-        old_line: DelLine,
-        new_line: AddLine,
-        spans: Spans,
-        cached_runs: Vec<(RunKind, String)>,
-    ) -> Self {
-        Self::Mod {
-            old_line,
-            new_line,
-            spans,
-            cached_runs,
-            group: Some(RowGroup::Anchor),
+    pub fn del(line: DelLine) -> Self {
+        Self::Del {
+            line,
+            spans: Spans::default(),
+            cached_runs: Vec::new(),
+            group: None,
+        }
+    }
+
+    #[inline]
+    pub fn add(line: AddLine) -> Self {
+        Self::Add {
+            line,
+            spans: Spans::default(),
+            cached_runs: Vec::new(),
+            group: None,
         }
     }
 
@@ -458,45 +444,11 @@ impl Row {
     }
 
     #[inline]
-    pub fn aux_add(
-        anchor: u32,
-        line: AddLine,
-        spans: Spans,
-        cached_runs: Vec<(RunKind, String)>,
-    ) -> Self {
-        require!(anchor > 0, "anchor line number must be non-zero (1-based)");
-        Self::AuxAdd {
-            anchor,
-            line,
-            spans,
-            cached_runs,
-            group: None,
-        }
-    }
-
-    #[inline]
-    pub fn aux_del(
-        anchor: u32,
-        line: DelLine,
-        spans: Spans,
-        cached_runs: Vec<(RunKind, String)>,
-    ) -> Self {
-        require!(anchor > 0, "anchor line number must be non-zero (1-based)");
-        Self::AuxDel {
-            anchor,
-            line,
-            spans,
-            cached_runs,
-            group: None,
-        }
-    }
-
-    #[inline]
     pub fn kind(&self) -> RowKind {
         match self {
             Row::Ctx(_) | Row::Sep(_) => RowKind::Ctx,
-            Row::Del(_) | Row::AuxDel { .. } => RowKind::Del,
-            Row::Add(_) | Row::AuxAdd { .. } => RowKind::Add,
+            Row::Del { .. } => RowKind::Del,
+            Row::Add { .. } => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
             Row::MovSrc { .. } | Row::MovTgt { .. } => RowKind::Mov,
         }
@@ -506,13 +458,11 @@ impl Row {
     pub fn text(&self) -> &str {
         match self {
             Row::Ctx(ctx_line) => &ctx_line.text,
-            Row::Del(del_line) => &del_line.text,
-            Row::Add(add_line) => &add_line.text,
+            Row::Del { line, .. } => &line.text,
+            Row::Add { line, .. } => &line.text,
             Row::Mod { new_line, .. } => &new_line.text,
             Row::MovSrc { line, .. } => &line.text,
             Row::MovTgt { line, .. } => &line.text,
-            Row::AuxDel { line, .. } => &line.text,
-            Row::AuxAdd { line, .. } => &line.text,
             Row::Sep(s) => s.as_str(),
         }
     }
@@ -521,11 +471,10 @@ impl Row {
     pub fn old_text(&self) -> Option<&str> {
         match self {
             Row::Ctx(ctx_line) => Some(&ctx_line.text),
-            Row::Del(del_line) => Some(&del_line.text),
+            Row::Del { line, .. } => Some(&line.text),
             Row::Mod { old_line, .. } => Some(&old_line.text),
             Row::MovSrc { line, .. } => Some(&line.text),
-            Row::AuxDel { line, .. } => Some(&line.text),
-            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Sep(_) => None,
+            Row::Add { .. } | Row::MovTgt { .. } | Row::Sep(_) => None,
         }
     }
 
@@ -533,11 +482,10 @@ impl Row {
     pub fn new_text(&self) -> Option<&str> {
         match self {
             Row::Ctx(ctx_line) => Some(&ctx_line.text),
-            Row::Add(add_line) => Some(&add_line.text),
+            Row::Add { line, .. } => Some(&line.text),
             Row::Mod { new_line, .. } => Some(&new_line.text),
             Row::MovTgt { line, .. } => Some(&line.text),
-            Row::AuxAdd { line, .. } => Some(&line.text),
-            Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } | Row::Sep(_) => None,
+            Row::Del { .. } | Row::MovSrc { .. } | Row::Sep(_) => None,
         }
     }
 
@@ -545,11 +493,10 @@ impl Row {
     pub fn old_line(&self) -> Option<u32> {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
-            Row::Del(del_line) => Some(del_line.num),
+            Row::Del { line, .. } => Some(line.num),
             Row::Mod { old_line, .. } => Some(old_line.num),
             Row::MovSrc { line, .. } => Some(line.num),
-            Row::AuxDel { line, .. } => Some(line.num),
-            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Sep(_) => None,
+            Row::Add { .. } | Row::MovTgt { .. } | Row::Sep(_) => None,
         }
     }
 
@@ -557,11 +504,10 @@ impl Row {
     pub fn new_line(&self) -> Option<u32> {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
-            Row::Add(add_line) => Some(add_line.num),
+            Row::Add { line, .. } => Some(line.num),
             Row::Mod { new_line, .. } => Some(new_line.num),
             Row::MovTgt { line, .. } => Some(line.num),
-            Row::AuxAdd { line, .. } => Some(line.num),
-            Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } | Row::Sep(_) => None,
+            Row::Del { .. } | Row::MovSrc { .. } | Row::Sep(_) => None,
         }
     }
 
@@ -581,8 +527,8 @@ impl Row {
             Row::Mod { spans, .. } => Some(spans),
             Row::MovTgt { spans, .. } if !spans.is_empty() => Some(spans),
             Row::MovSrc { spans, .. } if !spans.is_empty() => Some(spans),
-            Row::AuxAdd { spans, .. } if !spans.is_empty() => Some(spans),
-            Row::AuxDel { spans, .. } if !spans.is_empty() => Some(spans),
+            Row::Add { spans, .. } if !spans.is_empty() => Some(spans),
+            Row::Del { spans, .. } if !spans.is_empty() => Some(spans),
             _ => None,
         }
     }
@@ -599,22 +545,20 @@ impl Row {
             Row::Mod { cached_runs, .. } => cached_runs,
             Row::MovTgt { cached_runs, .. } => cached_runs,
             Row::MovSrc { cached_runs, .. } => cached_runs,
-            Row::AuxAdd { cached_runs, .. } => cached_runs,
-            Row::AuxDel { cached_runs, .. } => cached_runs,
+            Row::Add { cached_runs, .. } => cached_runs,
+            Row::Del { cached_runs, .. } => cached_runs,
             _ => &[],
         }
     }
 
-    /// Group role (anchor or auxiliary) if this row belongs to an
-    /// expansion/collapse group.
+    /// Peer group membership if slot alignment placed this row in an (N -> M)
+    /// peer reflow group.
     #[inline]
     pub fn group(&self) -> Option<RowGroup> {
         match self {
             Row::Mod { group, .. } => *group,
-            Row::AuxAdd { group: Some(g), .. } => Some(*g),
-            Row::AuxAdd { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
-            Row::AuxDel { group: Some(g), .. } => Some(*g),
-            Row::AuxDel { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
+            Row::Del { group, .. } => *group,
+            Row::Add { group, .. } => *group,
             _ => None,
         }
     }
@@ -623,34 +567,10 @@ impl Row {
     pub fn set_group(&mut self, new_group: Option<RowGroup>) {
         match self {
             Row::Mod { group, .. } => *group = new_group,
-            Row::AuxAdd { group, anchor, .. } => {
-                *group = new_group;
-                if let Some(RowGroup::Peer { id, .. }) = new_group {
-                    *anchor = *id;
-                }
-            }
-            Row::AuxDel { group, anchor, .. } => {
-                *group = new_group;
-                if let Some(RowGroup::Peer { id, .. }) = new_group {
-                    *anchor = *id;
-                }
-            }
+            Row::Del { group, .. } => *group = new_group,
+            Row::Add { group, .. } => *group = new_group,
             _ => {}
         }
-    }
-
-    /// Whether this row is an auxiliary row within a multiline cluster.
-    #[inline]
-    pub fn is_aux(&self) -> bool {
-        matches!(
-            self,
-            Row::AuxAdd { .. }
-                | Row::AuxDel { .. }
-                | Row::Mod {
-                    group: Some(RowGroup::Aux { .. }),
-                    ..
-                }
-        )
     }
 
     pub fn reverse(self) -> Self {
@@ -660,8 +580,34 @@ impl Row {
                 new_pos: ctx_line.old_pos,
                 text: ctx_line.text,
             }),
-            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text)),
-            Row::Add(add_line) => Row::Del(DelLine::new(add_line.num, add_line.text)),
+            Row::Del {
+                line,
+                spans,
+                cached_runs,
+                group,
+            } => Row::Add {
+                line: AddLine::new(line.num, line.text),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
+                    .collect(),
+                group: group.map(RowGroup::reverse),
+            },
+            Row::Add {
+                line,
+                spans,
+                cached_runs,
+                group,
+            } => Row::Del {
+                line: DelLine::new(line.num, line.text),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
+                    .collect(),
+                group: group.map(RowGroup::reverse),
+            },
             Row::Mod {
                 old_line,
                 new_line,
@@ -676,7 +622,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                group,
+                group: group.map(RowGroup::reverse),
             },
             Row::MovSrc {
                 line,
@@ -701,38 +647,6 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-            },
-            Row::AuxDel {
-                anchor,
-                line,
-                spans,
-                cached_runs,
-                group,
-            } => Row::AuxAdd {
-                anchor,
-                line: AddLine::new(line.num, line.text),
-                spans: spans.reverse(),
-                cached_runs: cached_runs
-                    .into_iter()
-                    .map(|(k, t)| (k.reverse(), t))
-                    .collect(),
-                group: group.map(RowGroup::reverse),
-            },
-            Row::AuxAdd {
-                anchor,
-                line,
-                spans,
-                cached_runs,
-                group,
-            } => Row::AuxDel {
-                anchor,
-                line: DelLine::new(line.num, line.text),
-                spans: spans.reverse(),
-                cached_runs: cached_runs
-                    .into_iter()
-                    .map(|(k, t)| (k.reverse(), t))
-                    .collect(),
-                group: group.map(RowGroup::reverse),
             },
             Row::Sep(s) => Row::Sep(s),
         }

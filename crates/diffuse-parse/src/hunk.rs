@@ -34,9 +34,7 @@ pub fn add_count(h: &Hunk) -> u32 {
     let mut has_new = false;
     for r in &h.rows {
         match r {
-            Row::Add(add_line)
-            | Row::MovTgt { line: add_line, .. }
-            | Row::AuxAdd { line: add_line, .. } => {
+            Row::Add { line: add_line, .. } | Row::MovTgt { line: add_line, .. } => {
                 let lines = add_line.text.matches('\n').count() as u32;
                 max_new = max_new.max(add_line.num + lines);
                 has_new = true;
@@ -57,7 +55,10 @@ pub fn add_count(h: &Hunk) -> u32 {
 }
 
 pub fn del_count(h: &Hunk) -> u32 {
-    h.rows.iter().filter(|r| matches!(r, Row::Del(_))).count() as u32
+    h.rows
+        .iter()
+        .filter(|r| matches!(r, Row::Del { .. }))
+        .count() as u32
 }
 
 pub fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32, &str)> {

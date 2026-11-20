@@ -255,7 +255,7 @@ pub fn render_finder_modal_widget(
                     let text = r.text();
                     let row = row_segment_spans(
                         &text,
-                        r.is_aux(),
+                        r.is_peer(),
                         r.kind,
                         r.mov_side,
                         None,

@@ -12,12 +12,13 @@ pub(crate) fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
     let mut del_runs: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
     while i < h.rows.len() {
-        if !matches!(h.rows[i], Row::Del(_) | Row::MovSrc { .. }) {
+        if !matches!(h.rows[i], Row::Del { .. } | Row::MovSrc { .. }) {
             i += 1;
             continue;
         }
         let mut run = vec![i];
-        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_) | Row::MovSrc { .. }) {
+        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del { .. } | Row::MovSrc { .. })
+        {
             i += 1;
             run.push(i);
         }
@@ -34,7 +35,7 @@ pub(crate) fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| matches!(r, Row::Del(_) | Row::MovSrc { .. }))
+        .filter(|(_, r)| matches!(r, Row::Del { .. } | Row::MovSrc { .. }))
         .map(|(i, _)| i)
         .collect();
     (del_runs, run_of, del_ids)

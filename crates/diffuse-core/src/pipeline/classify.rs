@@ -79,15 +79,12 @@ pub fn colored_runs_with_next(
     let new_line = r.new_line();
     let region = new_line.and_then(|n| region_at(regions, n));
 
-    let use_merged =
-        matches!(r, Row::Mod { .. } | Row::AuxAdd { .. }) || !r.cached_runs().is_empty();
+    let use_merged = matches!(r, Row::Mod { .. } | Row::Add { group: Some(_), .. })
+        || !r.cached_runs().is_empty();
 
     if !use_merged {
-        if matches!(
-            r,
-            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Ctx(_)
-        ) {
-            let kind = if matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) {
+        if matches!(r, Row::Add { .. } | Row::MovTgt { .. } | Row::Ctx(_)) {
+            let kind = if matches!(r, Row::Add { .. } | Row::MovTgt { .. }) {
                 RunKind::Add
             } else {
                 RunKind::Ctx
@@ -226,14 +223,14 @@ pub fn colored_runs_with_next(
         full_tokens.clear();
     });
     if out.is_empty() && r.text().is_empty() {
-        if matches!(r, Row::AuxAdd { .. }) {
+        if matches!(r, Row::Add { group: Some(_), .. }) {
             out.push(OutputRun {
                 kind: RunKind::Add,
                 color: TokenColor::Default,
                 sgr: None,
                 text: token_cow(""),
             });
-        } else if matches!(r, Row::AuxDel { .. }) {
+        } else if matches!(r, Row::Del { group: Some(_), .. }) {
             out.push(OutputRun {
                 kind: RunKind::Del,
                 color: TokenColor::Default,

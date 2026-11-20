@@ -603,11 +603,11 @@ pub(crate) fn solve_cluster_with_anchors(
 
         if cluster.old_rows[ai].text().trim() == cluster.new_rows[aj].text().trim() {
             let old_line = match &cluster.old_rows[ai] {
-                Row::Del(d) | Row::MovSrc { line: d, .. } => d.clone(),
+                Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => d.clone(),
                 other => panic!("cluster old row is not a Del: {other:?}"),
             };
             let new_line = match &cluster.new_rows[aj] {
-                Row::Add(a) | Row::MovTgt { line: a, .. } => a.clone(),
+                Row::Add { line: a, .. } | Row::MovTgt { line: a, .. } => a.clone(),
                 other => panic!("cluster new row is not an Add: {other:?}"),
             };
 
@@ -699,8 +699,8 @@ pub(crate) fn solve_cluster_matrix(
         let mut transitions = Vec::with_capacity(m + n);
         for r in &cluster.old_rows {
             match r {
-                Row::Del(d) | Row::MovSrc { line: d, .. } => {
-                    rows.push(Row::Del(d.clone()));
+                Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => {
+                    rows.push(Row::del(d.clone()));
                     transitions.push(DpOp::Del);
                 }
                 _ => {}
@@ -708,8 +708,8 @@ pub(crate) fn solve_cluster_matrix(
         }
         for r in &cluster.new_rows {
             match r {
-                Row::Add(a) | Row::MovTgt { line: a, .. } => {
-                    rows.push(Row::Add(a.clone()));
+                Row::Add { line: a, .. } | Row::MovTgt { line: a, .. } => {
+                    rows.push(Row::add(a.clone()));
                     transitions.push(DpOp::Add);
                 }
                 _ => {}
@@ -1954,8 +1954,8 @@ pub(crate) fn solve_cluster_matrix(
             let mut transitions = Vec::with_capacity(m + n);
             for r in &cluster.old_rows {
                 match r {
-                    Row::Del(d) | Row::MovSrc { line: d, .. } => {
-                        rows.push(Row::Del(d.clone()));
+                    Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => {
+                        rows.push(Row::del(d.clone()));
                         transitions.push(DpOp::Del);
                     }
                     _ => {}
@@ -1963,8 +1963,8 @@ pub(crate) fn solve_cluster_matrix(
             }
             for r in &cluster.new_rows {
                 match r {
-                    Row::Add(a) | Row::MovTgt { line: a, .. } => {
-                        rows.push(Row::Add(a.clone()));
+                    Row::Add { line: a, .. } | Row::MovTgt { line: a, .. } => {
+                        rows.push(Row::add(a.clone()));
                         transitions.push(DpOp::Add);
                     }
                     _ => {}
@@ -1989,11 +1989,11 @@ pub(crate) fn solve_cluster_matrix(
 
         // Emit rows + transitions in path order.
         let old_line_of = |idx: usize| match &cluster.old_rows[idx] {
-            Row::Del(d) | Row::MovSrc { line: d, .. } => d.clone(),
+            Row::Del { line: d, .. } | Row::MovSrc { line: d, .. } => d.clone(),
             other => panic!("cluster old row is not a Del: {other:?}"),
         };
         let new_line_of = |idx: usize| match &cluster.new_rows[idx] {
-            Row::Add(a) | Row::MovTgt { line: a, .. } => a.clone(),
+            Row::Add { line: a, .. } | Row::MovTgt { line: a, .. } => a.clone(),
             other => panic!("cluster new row is not an Add: {other:?}"),
         };
 
@@ -2002,11 +2002,11 @@ pub(crate) fn solve_cluster_matrix(
         for &(pi, pj, op, k) in &ops {
             match op {
                 OpKind::Del => {
-                    rows.push(Row::Del(old_line_of(pi)));
+                    rows.push(Row::del(old_line_of(pi)));
                     transitions.push(DpOp::Del);
                 }
                 OpKind::Add => {
-                    rows.push(Row::Add(new_line_of(pj)));
+                    rows.push(Row::add(new_line_of(pj)));
                     transitions.push(DpOp::Add);
                 }
                 OpKind::Mov => {
@@ -2027,7 +2027,7 @@ pub(crate) fn solve_cluster_matrix(
                         if idx == anchor {
                             rows.push(Row::mod_row(old_line_of(pi), nl));
                         } else {
-                            rows.push(Row::Add(nl));
+                            rows.push(Row::add(nl));
                         }
                     }
                     transitions.push(DpOp::Expand {
@@ -2045,7 +2045,7 @@ pub(crate) fn solve_cluster_matrix(
                         if idx == anchor {
                             rows.push(Row::mod_row(ol, new_line_of(pj)));
                         } else {
-                            rows.push(Row::Del(ol));
+                            rows.push(Row::del(ol));
                         }
                     }
                     transitions.push(DpOp::Collapse {
