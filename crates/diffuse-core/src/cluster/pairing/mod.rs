@@ -1,24 +1,16 @@
-//! The DP pairing bridge: `solve_cluster` as a drop-in replacement for the
-//! legacy `pass_pairing`'s greedy scoring — the switchover's fidelity-first
-//! step. Legacy passes 2–4 (span assembly, reflow filtering, ordered walk)
-//! run UNCHANGED on top.
+//! DP pairing: `solve_cluster` scores each change cluster and converts the
+//! solution transitions into the 1-to-1 `pair_of` map the downstream passes
+//! expect.
 //!
 //! Fidelity rules:
-//! - The legacy guard set (moved rows, was-moved dels, dels whose content
-//!   survives elsewhere in the file, tail-before-closing candidates, …) filters
-//!   the DP's pairs exactly as it filtered the greedy candidates — a guarded
-//!   del renders as a pure del under both engines.
+//! - The guard set (moved rows, was-moved dels, dels whose content survives
+//!   elsewhere in the file, tail-before-closing candidates, …) filters the DP's
+//!   pairs — a guarded del renders as a pure del.
 //! - A DP block transition (expand/collapse) contributes its representative
-//!   pairing to `pair_of` (the legacy 1-to-1 shape passes 2–4 expect); its
-//!   absorbed rows stay unpaired adds/dels, which passes 2–4 already handle
-//!   (the expansion-tail logic in `pass_assemble_mods`).
-//!
-//! The engine override is thread-local (`set_dp_engine`) so the frozen
-//! golden legs keep running legacy in the same process; the binary reads
-//! `DIFFUSE_ENGINE=dp`.
+//!   pairing to `pair_of`; its absorbed rows stay unpaired adds/dels, which the
+//!   residual pass already handles.
 
 pub mod filter;
-pub mod legacy;
 pub mod seed;
 pub mod survival;
 
@@ -39,7 +31,6 @@ use crate::{
 use super::{ChangeCluster, HunkSegment, dp, partition_hunk_segments};
 
 use filter::is_fragment_pair_rejected;
-use legacy::legacy_index_maps;
 pub use seed::{VerbatimSeedInput, verbatim_seeds};
 pub use survival::{DelGuards, FnScopeCache, classify_dels};
 
@@ -63,11 +54,11 @@ where
 }
 
 /// DP pairing: partition the hunk's change runs into clusters, solve each
-/// with the DP, and convert the transitions into the legacy `pair_of` map
+/// with the DP, and convert the transitions into the `pair_of` map
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
 /// transitions pair directly; block transitions contribute their representative
 /// pair; hard-guarded (relocated) dels never pair.
-pub static T_DP: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+pub static T_DP: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
 pub fn dp_pairing(
     h: &Hunk,
@@ -91,18 +82,11 @@ pub fn dp_pairing_with_splits(
     split_homes: &[(usize, usize)],
 ) -> PairingResults {
     let t0 = Instant::now();
-    let (del_runs, run_of, del_ids) = legacy_index_maps(h);
+    let mut fn_cache: FnScopeCache = FxHashMap::default();
+    let guards = classify_dels(h, old_content, new_content, profile, &mut fn_cache);
     let t1 = Instant::now();
     T_DP[0].fetch_add(
         t1.duration_since(t0).as_micros() as u64,
-        atomic::Ordering::Relaxed,
-    );
-
-    let mut fn_cache: FnScopeCache = FxHashMap::default();
-    let guards = classify_dels(h, old_content, new_content, profile, &mut fn_cache);
-    let t2 = Instant::now();
-    T_DP[1].fetch_add(
-        t2.duration_since(t1).as_micros() as u64,
         atomic::Ordering::Relaxed,
     );
 
@@ -124,9 +108,9 @@ pub fn dp_pairing_with_splits(
         }));
         m
     };
-    let t3 = Instant::now();
-    T_DP[2].fetch_add(
-        t3.duration_since(t2).as_micros() as u64,
+    let t2 = Instant::now();
+    T_DP[1].fetch_add(
+        t2.duration_since(t1).as_micros() as u64,
         atomic::Ordering::Relaxed,
     );
 
@@ -135,9 +119,9 @@ pub fn dp_pairing_with_splits(
     let mut expand_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
 
     let segments = partition_hunk_segments(h, old_content, new_content, profile);
-    let t4 = Instant::now();
-    T_DP[3].fetch_add(
-        t4.duration_since(t3).as_micros() as u64,
+    let t3 = Instant::now();
+    T_DP[2].fetch_add(
+        t3.duration_since(t2).as_micros() as u64,
         atomic::Ordering::Relaxed,
     );
 
@@ -192,7 +176,7 @@ pub fn dp_pairing_with_splits(
                 arena,
             );
             let t_s1 = Instant::now();
-            T_DP[4].fetch_add(
+            T_DP[3].fetch_add(
                 t_s1.duration_since(t_s0).as_micros() as u64,
                 atomic::Ordering::Relaxed,
             );
@@ -358,9 +342,6 @@ pub fn dp_pairing_with_splits(
 
     PairingResults {
         pair_of,
-        del_runs,
-        run_of,
-        del_ids,
         collapse_blocks,
         expand_blocks,
     }

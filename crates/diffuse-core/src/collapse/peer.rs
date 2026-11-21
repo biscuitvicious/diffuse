@@ -498,10 +498,7 @@ pub fn peer_reflow_pipeline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        collapse::collapse_hunk_rows,
-        parse::{CtxLine, RowKind},
-    };
+    use crate::parse::{CtxLine, RowKind};
 
     fn make_ctx(old: u32, new: u32, text: &str) -> Row {
         Row::Ctx(CtxLine::new(old, new, text))
@@ -531,16 +528,15 @@ mod tests {
             ..Default::default()
         };
 
-        let legacy = collapse_hunk_rows(&hunk, None, None, None);
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
 
-        assert_eq!(peer.len(), legacy.len());
-        for (p, l) in peer.iter().zip(&legacy) {
-            assert_eq!(p.kind(), l.kind());
-            assert_eq!(p.old_line(), l.old_line());
-            assert_eq!(p.new_line(), l.new_line());
-            assert_eq!(p.text(), l.text());
-        }
+        assert_eq!(peer.len(), 4);
+        assert!(matches!(peer[0], Row::Ctx(_)));
+        assert_eq!(peer[1].kind(), RowKind::Add);
+        assert_eq!(peer[1].new_line(), Some(2));
+        assert_eq!(peer[2].kind(), RowKind::Add);
+        assert_eq!(peer[2].new_line(), Some(3));
+        assert!(matches!(peer[3], Row::Ctx(_)));
     }
 
     #[test]
@@ -651,16 +647,15 @@ mod tests {
             ..Default::default()
         };
 
-        let legacy = collapse_hunk_rows(&hunk, None, None, None);
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
 
-        assert_eq!(peer.len(), legacy.len());
-        for (p, l) in peer.iter().zip(&legacy) {
-            assert_eq!(p.kind(), l.kind());
-            assert_eq!(p.old_line(), l.old_line());
-            assert_eq!(p.new_line(), l.new_line());
-            assert_eq!(p.text(), l.text());
-        }
+        assert_eq!(peer.len(), 4);
+        assert!(matches!(peer[0], Row::Ctx(_)));
+        assert_eq!(peer[1].kind(), RowKind::Del);
+        assert_eq!(peer[1].old_line(), Some(2));
+        assert_eq!(peer[2].kind(), RowKind::Del);
+        assert_eq!(peer[2].old_line(), Some(3));
+        assert!(matches!(peer[3], Row::Ctx(_)));
     }
 
     #[test]
@@ -679,15 +674,16 @@ mod tests {
             ..Default::default()
         };
 
-        let legacy = collapse_hunk_rows(&hunk, None, None, None);
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
 
-        assert_eq!(peer.len(), legacy.len());
         assert_eq!(peer.len(), 3);
         assert_eq!(peer[1].kind(), RowKind::Mod);
         assert_eq!(peer[1].old_line(), Some(11));
         assert_eq!(peer[1].new_line(), Some(11));
-        assert_eq!(peer[1].spans(), legacy[1].spans());
+        assert!(
+            peer[1].spans().is_some(),
+            "1-to-1 mod must carry word-diff spans"
+        );
     }
 
     #[test]

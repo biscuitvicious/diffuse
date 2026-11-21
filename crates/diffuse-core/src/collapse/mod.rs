@@ -1,7 +1,5 @@
 //! Diff row collapse pipeline via irreducible peer-group reflow.
 
-use std::sync::atomic::AtomicU64;
-
 use rustc_hash::FxHashMap;
 
 use diffuse_syntax::profile::LangProfile;
@@ -43,16 +41,9 @@ pub(crate) fn line_delim_delta(text: &str) -> i32 {
 /// Results of the initial pairing pass.
 pub struct PairingResults {
     pub pair_of: FxHashMap<usize, usize>, // add row id -> del row id
-    pub del_runs: Vec<Vec<usize>>,
-    pub run_of: FxHashMap<usize, Vec<usize>>,
-    pub del_ids: Vec<usize>,
     pub collapse_blocks: FxHashMap<usize, Vec<usize>>,
     pub expand_blocks: FxHashMap<usize, Vec<usize>>,
 }
-
-/// Collapse each FIFO del→add pair into a single "mod" row: the new line
-/// with its word-diff spans baked in.
-pub static T_COLLAPSE: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
 #[tracing::instrument(
     level = "debug",

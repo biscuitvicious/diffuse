@@ -71,7 +71,8 @@ pub struct LangProfile {
     /// line.
     pub fn_decl: Option<Regex>,
     /// Prefixes that introduce declarations/items in this language.
-    /// Used to break multi-line statement expansion in `pass_assemble_mods`.
+    /// Consulted by section classification and cluster cut barriers so
+    /// distinct declarations are never merged into one reflow group.
     pub decl_prefixes: &'static [&'static str],
     /// Prefixes that begin a statement head anywhere, including unfinished
     /// continuations (e.g. variable declarations like `let x =`). Consulted

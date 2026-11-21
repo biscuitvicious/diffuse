@@ -556,20 +556,7 @@ fn test_harvest_and_stream_scale_10000_files() {
             / 1000.0,
     );
     eprintln!(
-        "=== T_COLLAPSE (ms): shift={:?}, dp_pairing={:?}, assemble={:?}, reflows={:?}, sort_walk={:?} ===",
-        diffuse::core::collapse::T_COLLAPSE[0].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::collapse::T_COLLAPSE[1].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::collapse::T_COLLAPSE[2].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::collapse::T_COLLAPSE[3].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::collapse::T_COLLAPSE[4].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-    );
-    eprintln!(
-        "=== T_DP (ms): idx_maps={:?}, guarded_dels={:?}, num_maps={:?}, segments={:?}, solve={:?} ===",
+        "=== T_DP (ms): guarded_dels={:?}, num_maps={:?}, segments={:?}, solve={:?} ===",
         diffuse::core::cluster::pairing::T_DP[0].load(std::sync::atomic::Ordering::Relaxed) as f64
             / 1000.0,
         diffuse::core::cluster::pairing::T_DP[1].load(std::sync::atomic::Ordering::Relaxed) as f64
@@ -577,8 +564,6 @@ fn test_harvest_and_stream_scale_10000_files() {
         diffuse::core::cluster::pairing::T_DP[2].load(std::sync::atomic::Ordering::Relaxed) as f64
             / 1000.0,
         diffuse::core::cluster::pairing::T_DP[3].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::cluster::pairing::T_DP[4].load(std::sync::atomic::Ordering::Relaxed) as f64
             / 1000.0,
     );
 
