@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{FileStatus, GroupId, PeerGroup, PeerGroupMeta, RowKind},
+    parse::{FileStatus, GroupId, PeerGroup, RowKind},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput, TokenColor},
 };
 
@@ -699,33 +699,6 @@ fn test_row_group_wire_serialization() {
     );
     let de_row_peer: OutputRow = serde_json::from_str(&json_peer).unwrap();
     assert_eq!(de_row_peer.group, Some(peer_group));
-}
-
-#[test]
-fn test_peer_group_meta_invariants() {
-    let meta = PeerGroupMeta {
-        id: GroupId(1),
-        old_count: 2,
-        new_count: 3,
-    };
-    assert_eq!(meta.id, GroupId(1));
-    assert_eq!(meta.old_count, 2);
-    assert_eq!(meta.new_count, 3);
-    assert_eq!(meta.max_slots(), 3);
-    assert!(!meta.is_pure_add());
-    assert!(!meta.is_pure_del());
-    assert!(!meta.is_single_mod());
-    assert!(meta.is_compound());
-
-    let single = PeerGroupMeta::new(GroupId(2), 1, 1);
-    assert!(single.is_single_mod());
-    assert!(!single.is_compound());
-
-    let add = PeerGroupMeta::new(GroupId(3), 0, 1);
-    assert!(add.is_pure_add());
-
-    let del = PeerGroupMeta::new(GroupId(4), 1, 0);
-    assert!(del.is_pure_del());
 }
 
 #[test]

@@ -124,54 +124,6 @@ impl std::ops::Deref for GroupId {
     }
 }
 
-/// Symmetric group metadata describing an N -> M transition.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PeerGroupMeta {
-    pub id: GroupId,
-    pub old_count: usize, // N
-    pub new_count: usize, // M
-}
-
-impl PeerGroupMeta {
-    #[inline]
-    pub const fn new(id: GroupId, old_count: usize, new_count: usize) -> Self {
-        Self {
-            id,
-            old_count,
-            new_count,
-        }
-    }
-
-    #[inline]
-    pub const fn max_slots(&self) -> usize {
-        if self.old_count > self.new_count {
-            self.old_count
-        } else {
-            self.new_count
-        }
-    }
-
-    #[inline]
-    pub const fn is_pure_del(&self) -> bool {
-        self.old_count > 0 && self.new_count == 0
-    }
-
-    #[inline]
-    pub const fn is_pure_add(&self) -> bool {
-        self.old_count == 0 && self.new_count > 0
-    }
-
-    #[inline]
-    pub const fn is_single_mod(&self) -> bool {
-        self.old_count == 1 && self.new_count == 1
-    }
-
-    #[inline]
-    pub const fn is_compound(&self) -> bool {
-        self.old_count > 1 || self.new_count > 1
-    }
-}
-
 /// The peer reflow group a diff row belongs to.
 ///
 /// A row carries `Some(group)` when slot alignment placed it in an (N -> M)

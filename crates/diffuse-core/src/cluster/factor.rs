@@ -2,7 +2,7 @@
 
 use diffuse_syntax::profile::LangProfile;
 
-use crate::parse::{GroupId, PeerGroupMeta, Row};
+use crate::parse::{GroupId, Row};
 
 /// A factored peer reflow group within a change cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,11 +24,6 @@ impl FactoredGroup {
     #[inline]
     pub fn new_count(&self) -> usize {
         self.new_range.len()
-    }
-
-    #[inline]
-    pub fn meta(&self) -> PeerGroupMeta {
-        PeerGroupMeta::new(self.id, self.old_count(), self.new_count())
     }
 
     #[inline]

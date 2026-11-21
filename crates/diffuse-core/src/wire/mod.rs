@@ -24,7 +24,7 @@ pub use pipeline::*;
 pub use row::*;
 pub use run::*;
 
-pub use crate::parse::{FileStatus, GroupId, PeerGroup, PeerGroupMeta};
+pub use crate::parse::{FileStatus, GroupId, PeerGroup};
 
 #[cfg(test)]
 pub(crate) use crate::counts::FileCounts;
