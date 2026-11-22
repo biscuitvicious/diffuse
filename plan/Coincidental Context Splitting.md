@@ -42,7 +42,7 @@ No test currently pins the fractured-block behavior: Ctx `307/307` survives, old
 ### Implementation Steps
 
 1. **Golden-driven integration test** (`crates/diffuse-core/tests/` or `crates/diffuse-core/src/cluster/tests.rs`):
-   - Load the `scrollbar-grab-drag` `dispatch.rs` hunk (old/new snapshots from `tests/golden/scrollbar-grab-drag/files/`), run the full pipeline (`collapse_hunk_rows` or `process_single_diff_file`).
+   - Load the `scrollbar-grab-drag` `dispatch.rs` hunk (diff from `tests/golden/scrollbar-grab-drag/fixture/diff.patch`, old/new snapshots from `tests/golden/scrollbar-grab-drag/fixture/{old,new}/crates/diffuse-tui/src/app/dispatch.rs`), run the full pipeline (`collapse_hunk_rows` or `process_single_diff_file`).
    - Assert old 355–367 and new 351–365 no longer render as pure Del/Add runs (expect Mod pairings for the reindent block; exact row-kind vector pinned).
    - If the golden submodule is uninitialized, exit early and pass silently per `AGENTS.md` (`let Some(out) = load_golden(...) else { return; };`).
    - Confirm the test FAILS before implementation (Del/Add runs observed).

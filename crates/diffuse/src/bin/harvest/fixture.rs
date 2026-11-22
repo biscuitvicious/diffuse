@@ -1,5 +1,4 @@
-//! Fixture serialization, snapshot naming, repository detection, and golden
-//! tagging.
+//! Fixture serialization, repository detection, and golden tagging.
 
 use std::{collections::HashMap, fs, path::Path, process};
 
@@ -19,8 +18,8 @@ pub struct FixtureOutput {
     /// The revision (range) this fixture was harvested from, pinned to
     /// absolute short commit ids (`WORKTREE` records the working tree's
     /// `HEAD`). The diff and the old/new side contents travel as separate
-    /// corpus files (`diff.patch`, `files/*.old.*`, `files/*.new.*`) — never
-    /// inside the JSON.
+    /// corpus files (`fixture/diff.patch`, `fixture/old/<path>`,
+    /// `fixture/new/<path>`) — never inside the JSON.
     pub revision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_key: Option<String>,
@@ -28,44 +27,6 @@ pub struct FixtureOutput {
     pub rev_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<NotesDB>,
-}
-
-/// Stable FNV-1a 64-bit hash — snapshot names must be reproducible across
-/// runs, which the std hasher's per-process keys do not guarantee.
-pub fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-/// Filesystem-safe snapshot file name for a corpus path's old/new side:
-/// `<slug>.<side>.<ext>` with the path's `/` folded to `-`. The side tag
-/// and the file's extension always trail the name. A stem that would exceed
-/// the filename budget keeps its TAIL — the file's own name — while the
-/// dropped directory prefix is marked with a stable FNV-1a hash of the full
-/// path so distinct long paths keep distinct names.
-pub fn snapshot_filename(path: &str, side: &str) -> String {
-    const MAX_STEM: usize = 128;
-    let slug = path.replace('/', "-");
-    let (stem, ext) = match slug.rfind('.') {
-        Some(dot_idx) if dot_idx > 0 => (slug[..dot_idx].to_string(), &slug[dot_idx..]),
-        _ => (slug, ""),
-    };
-    if stem.len() <= MAX_STEM {
-        return format!("{stem}.{side}{ext}");
-    }
-    let mut keep_from = stem.len() - (MAX_STEM - 17);
-    while !stem.is_char_boundary(keep_from) {
-        keep_from += 1;
-    }
-    format!(
-        "{}-{:016x}.{side}{ext}",
-        &stem[keep_from..],
-        fnv1a(path.as_bytes())
-    )
 }
 
 /// Detects whether `repo_root` is the diffuse codebase using Cargo metadata /

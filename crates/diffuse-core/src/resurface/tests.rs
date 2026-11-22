@@ -496,10 +496,10 @@ fn dispatch_w_tape_pairs_reindented_blocks_with_true_sources() {
     } else {
         manifest.join("../../tests/golden")
     };
-    let corpus = dir.join("scrollbar-grab-drag/files");
-    let old = std::fs::read_to_string(corpus.join("crates-diffuse-tui-src-app-dispatch.old.rs"))
+    let corpus = dir.join("scrollbar-grab-drag/fixture");
+    let old = std::fs::read_to_string(corpus.join("old/crates/diffuse-tui/src/app/dispatch.rs"))
         .expect("corpus snapshot");
-    let new = std::fs::read_to_string(corpus.join("crates-diffuse-tui-src-app-dispatch.new.rs"))
+    let new = std::fs::read_to_string(corpus.join("new/crates/diffuse-tui/src/app/dispatch.rs"))
         .expect("corpus snapshot");
 
     let mut old_map = HashMap::new();

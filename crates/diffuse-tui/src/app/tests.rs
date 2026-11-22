@@ -988,7 +988,7 @@ index 6f6222d..4aa7a1d 100644
 fn load_opt1_wire_output() -> PipelineOutput {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/outputs/wire.jsonl"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/expect/wire.jsonl"
     ));
     let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
     let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();

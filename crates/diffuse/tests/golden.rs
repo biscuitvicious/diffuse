@@ -26,7 +26,7 @@ use std::{
     collections::HashMap,
     env,
     fs::{self},
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex, Once},
@@ -104,40 +104,15 @@ fn write_file_plain(path: &Path, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn write_gz(path: &Path, data: &[u8]) -> io::Result<()> {
-    let gz_path = if path.extension().is_some_and(|ext| ext == "gz") {
-        path.to_path_buf()
-    } else {
-        PathBuf::from(format!("{}.gz", path.display()))
-    };
-    if let Some(parent) = gz_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = fs::File::create(&gz_path)?;
-    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
-    Write::write_all(&mut encoder, data)?;
-    encoder.finish()?;
-    if path.exists() && path != gz_path {
-        let _ = fs::remove_file(path);
-    }
-    Ok(())
-}
-
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static EXPECTED_FILE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Deserialize, Serialize)]
-struct MetaFileRecord {
-    path: String,
-    #[serde(default)]
-    old: Option<String>,
-    #[serde(default)]
-    new: Option<String>,
-}
-
+/// Provenance only: the file set is derived from `fixture/diff.patch`
+/// itself (new side keyed by `path`, old side by `old_path`), never listed
+/// here — a manifest would be derived data drifting against the diff.
 #[derive(Deserialize, Serialize)]
 struct CorpusMeta {
     #[serde(default)]
@@ -146,8 +121,62 @@ struct CorpusMeta {
     repo_key: Option<String>,
     #[serde(default)]
     rev_key: Option<String>,
-    #[serde(default)]
-    files: Vec<MetaFileRecord>,
+}
+
+/// Snapshot keys derived from the parsed diff: `(new_key, old_key)`. The
+/// new side is keyed by the diff's new path, the old side by the rename
+/// source when present — exactly how the harvester keys its content maps.
+fn fixture_snapshot_keys(diff: &str, name: &str) -> Vec<(String, String)> {
+    diffuse::core::parse::parse_diff(diff)
+        .unwrap_or_else(|e| panic!("failed parsing fixture/diff.patch for {name}: {e}"))
+        .into_iter()
+        .map(|f| {
+            let old_key = f.old_path.unwrap_or_else(|| f.path.clone());
+            (f.path, old_key)
+        })
+        .collect()
+}
+
+/// Every file under `fixture/old` and `fixture/new` must be named by the
+/// diff — a stray snapshot would otherwise load silently into nothing.
+fn assert_no_stray_snapshots(
+    name: &str,
+    keys: &[(String, String)],
+    old_dir: &Path,
+    new_dir: &Path,
+) {
+    use std::collections::HashSet;
+    let expected_old: HashSet<&str> = keys.iter().map(|(_, o)| o.as_str()).collect();
+    let expected_new: HashSet<&str> = keys.iter().map(|(n, _)| n.as_str()).collect();
+    for (dir, expected, side) in [
+        (old_dir, &expected_old, "old"),
+        (new_dir, &expected_new, "new"),
+    ]
+    .into_iter()
+    {
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let entries = fs::read_dir(&current)
+                .unwrap_or_else(|e| panic!("failed listing {} for {name}: {e}", current.display()));
+            for entry in entries {
+                let entry =
+                    entry.unwrap_or_else(|e| panic!("failed reading dir entry for {name}: {e}"));
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if let Ok(rel) = path.strip_prefix(dir) {
+                    let rel_str = rel.to_string_lossy();
+                    assert!(
+                        expected.contains(rel_str.as_ref()),
+                        "[{name}] stray fixture/{side} snapshot {rel_str:?} is not named by the diff"
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn load_fixture(name: &str) -> Arc<Fixture> {
@@ -158,9 +187,10 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         }
     }
     let corpus_dir = golden_dir().join(name);
-    let patch_path = corpus_dir.join("diff.patch");
+    let fixture_dir = corpus_dir.join("fixture");
+    let patch_path = fixture_dir.join("diff.patch");
     let diff = fs::read_to_string(&patch_path)
-        .unwrap_or_else(|e| panic!("failed reading diff.patch for {name}: {e}"));
+        .unwrap_or_else(|e| panic!("failed reading fixture/diff.patch for {name}: {e}"));
     let meta_path = corpus_dir.join("meta.json");
     let meta_raw = fs::read_to_string(&meta_path)
         .unwrap_or_else(|e| panic!("failed reading meta.json for {name}: {e}"));
@@ -168,37 +198,50 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         .unwrap_or_else(|e| panic!("failed parsing meta.json for {name}: {e}"));
     let mut new_content = HashMap::new();
     let mut old_content = HashMap::new();
-    let files_dir = corpus_dir.join("files");
+    let old_dir = fixture_dir.join("old");
+    let new_dir = fixture_dir.join("new");
+
+    // The file set comes from the diff itself: the new side is keyed by
+    // the diff's new path, the old side by the rename source when present.
+    let keys = fixture_snapshot_keys(&diff, name);
+    assert_no_stray_snapshots(name, &keys, &old_dir, &new_dir);
 
     use rayon::prelude::*;
-    let records = meta.files;
-    let loaded: Vec<(String, Option<String>, Option<String>)> = records
+    let loaded: Vec<(String, String, Option<String>, Option<String>)> = keys
         .into_par_iter()
-        .map(|record| {
-            let new_str = record.new.as_ref().map(|new_file| {
-                let new_path = files_dir.join(new_file);
-                fs::read_to_string(&new_path)
-                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()))
-            });
-            let old_str = record.old.as_ref().map(|old_file| {
-                let old_path = files_dir.join(old_file);
-                fs::read_to_string(&old_path)
-                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()))
-            });
-            (record.path, new_str, old_str)
+        .map(|(new_key, old_key)| {
+            let new_disk = new_dir.join(&new_key);
+            let new_str = if new_disk.is_file() {
+                Some(
+                    fs::read_to_string(&new_disk)
+                        .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_disk.display())),
+                )
+            } else {
+                None
+            };
+            let old_disk = old_dir.join(&old_key);
+            let old_str = if old_disk.is_file() {
+                Some(
+                    fs::read_to_string(&old_disk)
+                        .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_disk.display())),
+                )
+            } else {
+                None
+            };
+            (new_key, old_key, new_str, old_str)
         })
         .collect();
 
-    for (path, new_str, old_str) in &loaded {
+    for (new_key, old_key, new_str, old_str) in &loaded {
         if let Some(new_c) = new_str {
-            new_content.insert(path.clone(), Arc::new(new_c.clone()));
+            new_content.insert(new_key.clone(), Arc::new(new_c.clone()));
         }
         if let Some(old_c) = old_str {
-            old_content.insert(path.clone(), Arc::new(old_c.clone()));
+            old_content.insert(old_key.clone(), Arc::new(old_c.clone()));
         }
     }
 
-    let notes_json_path = corpus_dir.join("notes.json");
+    let notes_json_path = fixture_dir.join("notes.json");
     let (notes_file, notes_db, repo_key, rev_key) = if notes_json_path.is_file() {
         let db = diffuse::core::notes::load_notes(&notes_json_path);
         let rk = meta
@@ -231,67 +274,35 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     arc
 }
 
-/// Function-scoped hydration of a fixture's contents onto disk for legs that
-/// pass `--old-dir`/`--new-dir` to the binary. The `TempDir` must stay owned
-/// by the calling test: TempDirs cached in the static `FIXTURE_CACHE` were
-/// never removed (hundreds of lingering `/tmp/.tmp*` hydration dirs),
-/// while function-scoped `TempDir`s clean up reliably when the test ends.
-struct HydratedFixture {
-    _temp_dir: tempfile::TempDir,
-    old_dir: Option<PathBuf>,
-    new_dir: Option<PathBuf>,
+/// The fixture's on-disk sparse trees, passed straight to the binary legs
+/// via `--old-dir`/`--new-dir` — no hydration copy: `fixture/old` and
+/// `fixture/new` already mirror the workspace-relative paths.
+fn fixture_old_dir(name: &str) -> Option<PathBuf> {
+    let dir = golden_dir().join(name).join("fixture").join("old");
+    dir.is_dir().then_some(dir)
 }
 
-fn hydrate_fixture(fixture: &Fixture) -> HydratedFixture {
-    if fixture.new_content.is_empty() && fixture.old_content.is_empty() {
-        return HydratedFixture {
-            _temp_dir: tempfile::tempdir().expect("create tempdir for golden fixture"),
-            old_dir: None,
-            new_dir: None,
-        };
-    }
-    let td = tempfile::tempdir().expect("create tempdir for golden fixture");
-    let od = td.path().join("old");
-    let nd = td.path().join("new");
-    fs::create_dir_all(&od).expect("create old dir");
-    fs::create_dir_all(&nd).expect("create new dir");
-    for (path, old_str) in &fixture.old_content {
-        let target = od.join(path);
-        if let Some(p) = target.parent() {
-            let _ = fs::create_dir_all(p);
-        }
-        let _ = fs::write(&target, old_str.as_bytes());
-    }
-    for (path, new_str) in &fixture.new_content {
-        let target = nd.join(path);
-        if let Some(p) = target.parent() {
-            let _ = fs::create_dir_all(p);
-        }
-        let _ = fs::write(&target, new_str.as_bytes());
-    }
-    HydratedFixture {
-        _temp_dir: td,
-        old_dir: Some(od),
-        new_dir: Some(nd),
-    }
+fn fixture_new_dir(name: &str) -> Option<PathBuf> {
+    let dir = golden_dir().join(name).join("fixture").join("new");
+    dir.is_dir().then_some(dir)
 }
 
 fn expected_pager_render_path(name: &str, flavor: &str) -> PathBuf {
     golden_dir()
         .join(name)
-        .join("outputs")
+        .join("expect")
         .join(format!("pager.render.{flavor}.txt"))
 }
 
 fn expected_tui_render_path(name: &str, screen: &str, dim: &str, flavor: &str) -> PathBuf {
     golden_dir()
         .join(name)
-        .join("outputs")
+        .join("expect")
         .join(format!("tui.{screen}.{dim}.render.{flavor}.txt"))
 }
 
 fn expected_markdown_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("outputs").join("markdown.md")
+    golden_dir().join(name).join("expect").join("markdown.md")
 }
 
 fn load_expected_file(path: &Path, desc: &str) -> Arc<String> {
@@ -1264,28 +1275,14 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
         }
     }
     let wire_jsonl_path = expected_wire_jsonl_path(name);
-    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
-    let files = if wire_jsonl_path.exists() {
-        let file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected wire JSONL for {name} from {}: {e}",
-                wire_jsonl_path.display()
-            )
-        });
-        diffuse::core::wire::jsonl::decode_jsonl_reader(BufReader::new(file))
-            .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL: {e}"))
-    } else {
-        let gz_bytes = fs::read(&gz_wire_jsonl_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected wire JSONL for {name} from {} or {}: {e}",
-                wire_jsonl_path.display(),
-                gz_wire_jsonl_path.display()
-            )
-        });
-        let decoder = flate2::read::GzDecoder::new(&gz_bytes[..]);
-        diffuse::core::wire::jsonl::decode_jsonl_reader(BufReader::new(decoder))
-            .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL gz: {e}"))
-    };
+    let file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected wire JSONL for {name} from {}: {e}",
+            wire_jsonl_path.display()
+        )
+    });
+    let files = diffuse::core::wire::jsonl::decode_jsonl_reader(BufReader::new(file))
+        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL: {e}"));
     let parsed = PipelineOutput {
         files,
         branch: String::new(),
@@ -1319,12 +1316,11 @@ fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
 }
 
 fn expected_wire_jsonl_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("outputs").join("wire.jsonl")
+    golden_dir().join(name).join("expect").join("wire.jsonl")
 }
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_jsonl_path = expected_wire_jsonl_path(name);
-    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
 
     if env::var("GEN_GOLDEN").is_ok() || env::var("UPDATE_WIRE").is_ok() {
         let mut jsonl_buf = Vec::new();
@@ -1333,14 +1329,8 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
                 .expect("emit_file_jsonl");
         }
 
-        if gz_wire_jsonl_path.exists() {
-            write_gz(&gz_wire_jsonl_path, &jsonl_buf).unwrap_or_else(|e| {
-                panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
-            });
-        } else {
-            write_file_plain(&wire_jsonl_path, &jsonl_buf)
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
-        }
+        write_file_plain(&wire_jsonl_path, &jsonl_buf)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
         return;
     }
     let expected = load_expected_wire(name);
@@ -1541,42 +1531,21 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
     let opts = diffuse::render::MarkdownOptions::default();
     let actual_md = diffuse::render::render_markdown_output(output, &opts);
     let md_path = expected_markdown_path(name);
-    let gz_md_path = golden_dir().join(format!("{name}.markdown.md.gz"));
-
     if env::var("GEN_GOLDEN").is_ok()
         || env::var("UPDATE_MARKDOWN").is_ok()
         || env::var("UPDATE_MD").is_ok()
     {
-        if gz_md_path.exists() {
-            write_gz(&gz_md_path, actual_md.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_md_path.display()));
-        } else {
-            write_file_plain(&md_path, actual_md.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
-        }
+        write_file_plain(&md_path, actual_md.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
         return;
     }
 
-    let expected_md = if md_path.exists() {
-        fs::read_to_string(&md_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
-                md_path.display()
-            )
-        })
-    } else {
-        let bytes = fs::read(&gz_md_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected markdown output for {name} from {} or {}: {e}.",
-                md_path.display(),
-                gz_md_path.display()
-            )
-        });
-        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-        let mut s = String::new();
-        Read::read_to_string(&mut decoder, &mut s).unwrap();
-        s
-    };
+    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+            md_path.display()
+        )
+    });
 
     if actual_md != expected_md {
         print_markdown_diff(name, &actual_md, &expected_md);
@@ -1624,7 +1593,8 @@ fn hermetic_bin_cmd() -> Command {
 
 fn run_bin_markdown_leg(name: &str) {
     let fixture = load_fixture(name);
-    let hydrated = hydrate_fixture(&fixture);
+    let old_dir = fixture_old_dir(name);
+    let new_dir = fixture_new_dir(name);
     let input = fixture.diff.as_bytes();
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("-m").arg("--color=never");
@@ -1637,10 +1607,10 @@ fn run_bin_markdown_leg(name: &str) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = hydrated.old_dir {
+    if let Some(ref old_dir) = old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = hydrated.new_dir {
+    if let Some(ref new_dir) = new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     // stderr is piped (not inherited) so the repo's own ioctl width
@@ -1676,27 +1646,12 @@ fn run_bin_markdown_leg(name: &str) {
         return;
     }
 
-    let expected_md = if md_path.exists() {
-        fs::read_to_string(&md_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
-                md_path.display()
-            )
-        })
-    } else {
-        let gz_path = golden_dir().join(format!("{name}.markdown.md.gz"));
-        let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected markdown output for {name} from {} or {}: {e}.",
-                md_path.display(),
-                gz_path.display()
-            )
-        });
-        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-        let mut s = String::new();
-        Read::read_to_string(&mut decoder, &mut s).unwrap();
-        s
-    };
+    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+            md_path.display()
+        )
+    });
 
     if bin_md != expected_md {
         print_markdown_diff(name, &bin_md, &expected_md);
@@ -1715,7 +1670,8 @@ fn run_bin_raw_leg(name: &str) {
         return;
     }
     let fixture = load_fixture(name);
-    let hydrated = hydrate_fixture(&fixture);
+    let old_dir = fixture_old_dir(name);
+    let new_dir = fixture_new_dir(name);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     // The raw fixture encodes the dark palette; pin it so an ambient
@@ -1734,10 +1690,10 @@ fn run_bin_raw_leg(name: &str) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = hydrated.old_dir {
+    if let Some(ref old_dir) = old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = hydrated.new_dir {
+    if let Some(ref new_dir) = new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
@@ -1919,7 +1875,8 @@ fn run_bin_leg(name: &str, num_files: usize) {
         // library leg.  Bailing out here (as before) left the golden written
         // by the library leg, which diverges whenever the two differ.
         let fixture = load_fixture(name);
-        let hydrated = hydrate_fixture(&fixture);
+        let old_dir = fixture_old_dir(name);
+        let new_dir = fixture_new_dir(name);
         let diff_text = Arc::clone(&fixture.diff);
         let mut cmd = hermetic_bin_cmd();
         cmd.arg("parse").arg("--jsonl");
@@ -1932,10 +1889,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
         if let Some(ref rev_key) = fixture.rev_key {
             cmd.arg("--rev-key").arg(rev_key);
         }
-        if let Some(ref old_dir) = hydrated.old_dir {
+        if let Some(ref old_dir) = old_dir {
             cmd.arg("--old-dir").arg(old_dir);
         }
-        if let Some(ref new_dir) = hydrated.new_dir {
+        if let Some(ref new_dir) = new_dir {
             cmd.arg("--new-dir").arg(new_dir);
         }
         let mut child = cmd
@@ -1963,19 +1920,13 @@ fn run_bin_leg(name: &str, num_files: usize) {
         );
 
         let wire_jsonl_path = expected_wire_jsonl_path(name);
-        let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
-        if gz_wire_jsonl_path.exists() {
-            write_gz(&gz_wire_jsonl_path, &out.stdout).unwrap_or_else(|e| {
-                panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
-            });
-        } else {
-            write_file_plain(&wire_jsonl_path, &out.stdout)
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
-        }
+        write_file_plain(&wire_jsonl_path, &out.stdout)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
         return;
     }
     let fixture = load_fixture(name);
-    let hydrated = hydrate_fixture(&fixture);
+    let old_dir = fixture_old_dir(name);
+    let new_dir = fixture_new_dir(name);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("--jsonl");
@@ -1988,10 +1939,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = hydrated.old_dir {
+    if let Some(ref old_dir) = old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = hydrated.new_dir {
+    if let Some(ref new_dir) = new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
@@ -2009,28 +1960,14 @@ fn run_bin_leg(name: &str, num_files: usize) {
     });
 
     let wire_jsonl_path = expected_wire_jsonl_path(name);
-    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
 
-    let expected_reader: Box<dyn BufRead> = if wire_jsonl_path.exists() {
-        let expected_file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
-            panic!(
-                "[{name}] failed to open expected wire.jsonl at {}: {e}",
-                wire_jsonl_path.display()
-            )
-        });
-        Box::new(BufReader::new(expected_file))
-    } else {
-        let gz_file = fs::File::open(&gz_wire_jsonl_path).unwrap_or_else(|e| {
-            panic!(
-                "[{name}] failed to open expected wire.jsonl at {} or {}: {e}",
-                wire_jsonl_path.display(),
-                gz_wire_jsonl_path.display()
-            )
-        });
-        let decoder = flate2::read::GzDecoder::new(gz_file);
-        Box::new(BufReader::new(decoder))
-    };
-    let mut expected_reader = expected_reader;
+    let expected_file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
+        panic!(
+            "[{name}] failed to open expected wire.jsonl at {}: {e}",
+            wire_jsonl_path.display()
+        )
+    });
+    let mut expected_reader: Box<dyn BufRead> = Box::new(BufReader::new(expected_file));
     let mut actual_reader = BufReader::new(child.stdout.take().expect("stdout"));
 
     let mut failures = Vec::new();
@@ -2462,49 +2399,37 @@ fn test_scrollbar_grab_drag_dispatch_hunk_1_has_no_groups() {
 }
 
 #[test]
-fn hydration_tempdir_removed_on_drop() {
-    // Empty fixture: nothing hydrated, scratch TempDir still cleaned up.
-    let empty = Fixture {
-        diff: Arc::new(String::new()),
-        new_content: HashMap::new(),
-        old_content: HashMap::new(),
-        notes_file: None,
-        notes_db: None,
-        repo_key: None,
-        rev_key: None,
-    };
-    let tmp_path = {
-        let hydrated = hydrate_fixture(&empty);
-        assert!(hydrated.old_dir.is_none() && hydrated.new_dir.is_none());
-        hydrated._temp_dir.path().to_path_buf()
-    };
-    assert!(
-        !tmp_path.exists(),
-        "empty hydration TempDir must be removed on drop"
-    );
-
-    // Non-empty fixture: hydrated dirs exist during the guard's life and
-    // vanish with it (regression: static-cached TempDirs lingered in /tmp).
+fn fixture_dirs_match_loaded_content() {
+    // The bin legs pass fixture/old and fixture/new straight to
+    // --old-dir/--new-dir: the on-disk trees must match what load_fixture
+    // reads into memory, with no hydration copy in between.
     if !is_golden_initialized() {
-        eprintln!("tests/golden submodule is not initialized; skipping hydrated drop check");
+        eprintln!("tests/golden submodule is not initialized; skipping fixture dirs check");
         return;
     }
-    let fixture = load_fixture("ansi-optimizer");
+    let name = "ansi-optimizer";
+    let fixture = load_fixture(name);
     assert!(!fixture.new_content.is_empty() || !fixture.old_content.is_empty());
-    let (td_path, old_dir) = {
-        let hydrated = hydrate_fixture(&fixture);
-        let od = hydrated
-            .old_dir
-            .clone()
-            .expect("ansi-optimizer hydrates old_dir");
-        assert!(od.is_dir());
-        (hydrated._temp_dir.path().to_path_buf(), od)
-    };
-    assert!(
-        !td_path.exists(),
-        "hydration TempDir must be removed on drop"
-    );
-    assert!(!old_dir.exists());
+    let old_dir = fixture_old_dir(name).expect("ansi-optimizer has fixture/old");
+    let new_dir = fixture_new_dir(name).expect("ansi-optimizer has fixture/new");
+    for (path, expected) in &fixture.old_content {
+        let actual = fs::read_to_string(old_dir.join(path))
+            .unwrap_or_else(|e| panic!("fixture/old/{path} must exist: {e}"));
+        assert_eq!(
+            actual.as_str(),
+            expected.as_str(),
+            "fixture/old/{path} matches loaded old_content"
+        );
+    }
+    for (path, expected) in &fixture.new_content {
+        let actual = fs::read_to_string(new_dir.join(path))
+            .unwrap_or_else(|e| panic!("fixture/new/{path} must exist: {e}"));
+        assert_eq!(
+            actual.as_str(),
+            expected.as_str(),
+            "fixture/new/{path} matches loaded new_content"
+        );
+    }
 }
 
 #[test]
@@ -2590,7 +2515,8 @@ fn bin_spawn_ignores_hostile_ambient_env() {
     }
     let name = "untracked-files";
     let fixture = load_fixture(name);
-    let hydrated = hydrate_fixture(&fixture);
+    let old_dir = fixture_old_dir(name);
+    let new_dir = fixture_new_dir(name);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse")
@@ -2607,10 +2533,10 @@ fn bin_spawn_ignores_hostile_ambient_env() {
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
     }
-    if let Some(ref old_dir) = hydrated.old_dir {
+    if let Some(ref old_dir) = old_dir {
         cmd.arg("--old-dir").arg(old_dir);
     }
-    if let Some(ref new_dir) = hydrated.new_dir {
+    if let Some(ref new_dir) = new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd

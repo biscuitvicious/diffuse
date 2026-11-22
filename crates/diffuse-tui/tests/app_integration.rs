@@ -831,24 +831,25 @@ fn test_perf_big_hunk_scrolled_frames() {
 fn load_scrollbar_grab_drag() -> Option<PipelineOutput> {
     let base =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/scrollbar-grab-drag");
-    let patch_path = base.join("diff.patch");
+    let patch_path = base.join("fixture").join("diff.patch");
     if !patch_path.is_file() {
         return None;
     }
     let patch = std::fs::read_to_string(&patch_path).ok()?;
-    let meta_raw = std::fs::read_to_string(base.join("meta.json")).ok()?;
-    let meta: serde_json::Value = serde_json::from_str(&meta_raw).ok()?;
+    // The file set comes from the diff itself: new side keyed by `path`,
+    // old side by the rename source when present.
+    let parsed = diffuse_tui::core::parse::parse_diff(&patch).ok()?;
     let mut new_content = std::collections::HashMap::new();
     let mut old_content = std::collections::HashMap::new();
-    for rec in meta["files"].as_array()? {
-        let p = rec["path"].as_str()?.to_string();
-        if let Some(n) = rec["new"].as_str() {
-            let s = std::fs::read_to_string(base.join("files").join(n)).ok()?;
-            new_content.insert(p.clone(), s);
+    for f in &parsed {
+        let new_disk = base.join("fixture").join("new").join(&f.path);
+        if let Ok(s) = std::fs::read_to_string(&new_disk) {
+            new_content.insert(f.path.clone(), s);
         }
-        if let Some(o) = rec["old"].as_str() {
-            let s = std::fs::read_to_string(base.join("files").join(o)).ok()?;
-            old_content.insert(p, s);
+        let old_key = f.old_path.as_ref().unwrap_or(&f.path);
+        let old_disk = base.join("fixture").join("old").join(old_key);
+        if let Ok(s) = std::fs::read_to_string(&old_disk) {
+            old_content.insert(old_key.clone(), s);
         }
     }
     Some(run_pipeline_full(

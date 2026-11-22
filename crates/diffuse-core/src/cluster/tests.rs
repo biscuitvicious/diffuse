@@ -382,14 +382,7 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         },
     };
 
-    use serde::Deserialize;
-
     use crate::parse::parse_diff;
-
-    #[derive(Deserialize)]
-    struct Fixture {
-        diff: String,
-    }
 
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = if manifest.join("tests/golden").exists() {
@@ -398,39 +391,9 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         manifest.join("../../tests/golden")
     };
     let diff = {
-        let corpus_dir = dir.join(name);
-        let patch_gz = corpus_dir.join("diff.patch.gz");
-        let patch_plain = corpus_dir.join("diff.patch");
-        let legacy_gz = dir.join(format!("{name}.json.gz"));
-        let legacy_plain = dir.join(format!("{name}.json"));
-        if patch_gz.exists() {
-            let bytes = fs::read(&patch_gz)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_gz.display()));
-            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-            let mut s = String::new();
-            decoder
-                .read_to_string(&mut s)
-                .expect("valid decompressed gzip");
-            s
-        } else if patch_plain.exists() {
-            fs::read_to_string(&patch_plain)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_plain.display()))
-        } else if legacy_gz.exists() {
-            let bytes = fs::read(&legacy_gz)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", legacy_gz.display()));
-            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-            let mut s = String::new();
-            decoder
-                .read_to_string(&mut s)
-                .expect("valid decompressed gzip");
-            let f: Fixture = serde_json::from_str(&s).unwrap();
-            f.diff
-        } else {
-            let raw = fs::read_to_string(&legacy_plain)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", legacy_plain.display()));
-            let f: Fixture = serde_json::from_str(&raw).unwrap();
-            f.diff
-        }
+        let patch = dir.join(name).join("fixture").join("diff.patch");
+        fs::read_to_string(&patch)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch.display()))
     };
     let files = Arc::new(parse_diff(&diff).unwrap());
     let num_threads = available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
@@ -3730,8 +3693,8 @@ fn test_boolean_literals_are_not_salient() {
 // ---- Chain-consistency scoring (duplicate-verbatim mangle) ----
 //
 // PRISTINE regression: strands are byte-exact from the `scrollbar-grab-drag`
-// corpus, `tests/golden/scrollbar-grab-drag/files/
-// crates-diffuse-tui-src-app-dispatch.{old,new}.rs` (old lines 314..=337 and
+// corpus, `tests/golden/scrollbar-grab-drag/fixture/{old,new}/
+// crates/diffuse-tui/src/app/dispatch.rs` (old lines 314..=337 and
 // 339..=351; new lines 335..=347). A new-side block that is a 13-line
 // reindentation of one old block must pair with its true source, even when a
 // *different* old block earlier in the tape contains a lone trim-equal line and

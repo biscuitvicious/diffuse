@@ -7,7 +7,7 @@ use diffuse_git::testing::{commit_files, init_repo};
 
 use super::{
     args::{Args, exclude_pathspecs},
-    fixture::{is_diffuse_repo, resolve_golden_name, snapshot_filename},
+    fixture::{is_diffuse_repo, resolve_golden_name},
     git::{resolve_revision, target_revision_endpoint},
 };
 
@@ -102,69 +102,6 @@ fn exclude_patterns_map_to_git_exclude_pathspecs() {
         exclude_pathspecs(&["tests/golden".to_string(), "dist".to_string()]),
         vec![":(exclude)tests/golden", ":(exclude)dist"],
         "each pattern becomes a git exclude pathspec"
-    );
-}
-
-#[test]
-fn snapshot_names_slug_paths_and_cap_length() {
-    assert_eq!(
-        snapshot_filename("src/collapse/mod.rs", "old"),
-        "src-collapse-mod.old.rs",
-        "path folds to a side-tagged snapshot name"
-    );
-    assert_eq!(
-        snapshot_filename("Makefile", "new"),
-        "Makefile.new",
-        "extension-less paths get a plain side suffix"
-    );
-
-    // Overflow keeps the TAIL of the slug — the file's own name — with a
-    // stable hash of the full path in front; side tag and extension still
-    // trail.
-    let deep = "very-long-directory-name/".repeat(12).to_string() + "mod.rs";
-    let deep_name = snapshot_filename(&deep, "old");
-    assert!(deep_name.len() <= 255, "fits the filesystem limit");
-    assert!(deep_name.ends_with(".old.rs"), "side and extension survive");
-    let core = deep_name
-        .strip_suffix(".old.rs")
-        .expect("side and extension");
-    let (tail, hash) = core.rsplit_once('-').expect("hash separator");
-    assert_eq!(
-        hash.len(),
-        16,
-        "stable FNV-1a hash marks the dropped prefix"
-    );
-    assert!(tail.ends_with("mod"), "the file's own name is kept");
-    assert_eq!(deep_name, snapshot_filename(&deep, "old"), "stable");
-
-    // A filename longer than the whole budget keeps its own tail.
-    let long_a = format!("deep/{}", "x".repeat(200));
-    let long_b = format!("deep/{}", "y".repeat(200));
-    for (name, fill) in [
-        (snapshot_filename(&long_a, "old"), 'x'),
-        (snapshot_filename(&long_b, "old"), 'y'),
-    ] {
-        assert!(name.len() <= 255, "fits the filesystem limit");
-        assert!(name.ends_with(".old"), "side tag survives");
-        let core = name.strip_suffix(".old").expect("side tag");
-        let (tail, hash) = core.rsplit_once('-').expect("hash separator");
-        assert_eq!(hash.len(), 16, "stable FNV-1a hash suffix");
-        assert!(
-            tail.chars().all(|c| c == fill),
-            "the filename's tail survives: {tail}"
-        );
-    }
-    assert_ne!(
-        snapshot_filename(&long_a, "old"),
-        snapshot_filename(&long_b, "old"),
-        "distinct long paths hash to distinct names"
-    );
-
-    // A long path with a compound extension keeps the extension.
-    let tgz = format!("deep/{}.tar.gz", "z".repeat(200));
-    assert!(
-        snapshot_filename(&tgz, "new").ends_with(".new.gz"),
-        "compound extension survives truncation"
     );
 }
 

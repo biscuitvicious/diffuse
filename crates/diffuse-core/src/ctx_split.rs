@@ -171,16 +171,22 @@ mod tests {
     fn test_dispatch_reindent_block_pairs() {
         let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let base = manifest.join("../../tests/golden/scrollbar-grab-drag");
-        let Ok(patch) = std::fs::read_to_string(base.join("diff.patch")) else {
+        let Ok(patch) = std::fs::read_to_string(base.join("fixture").join("diff.patch")) else {
             eprintln!("golden submodule missing; skipping");
             return;
         };
-        let old =
-            std::fs::read_to_string(base.join("files/crates-diffuse-tui-src-app-dispatch.old.rs"))
-                .expect("old snapshot must exist");
-        let new =
-            std::fs::read_to_string(base.join("files/crates-diffuse-tui-src-app-dispatch.new.rs"))
-                .expect("new snapshot must exist");
+        let old = std::fs::read_to_string(
+            base.join("fixture")
+                .join("old")
+                .join("crates/diffuse-tui/src/app/dispatch.rs"),
+        )
+        .expect("old snapshot must exist");
+        let new = std::fs::read_to_string(
+            base.join("fixture")
+                .join("new")
+                .join("crates/diffuse-tui/src/app/dispatch.rs"),
+        )
+        .expect("new snapshot must exist");
 
         let files = crate::parse::parse_diff(&patch).unwrap();
         let f = files

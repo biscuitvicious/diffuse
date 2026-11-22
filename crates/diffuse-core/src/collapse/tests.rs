@@ -1903,7 +1903,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
 
 #[test]
 fn test_linenum_u32_lcs_collapse_walk_stepwise() {
-    let patch = include_str!("../../../../tests/golden/linenum-u32/diff.patch");
+    let patch = include_str!("../../../../tests/golden/linenum-u32/fixture/diff.patch");
     let patch_lines: Vec<&str> = patch.lines().collect();
     let file_patch = patch_lines[3948..3977].join("\n");
     let files = diffuse_parse::parse_diff(&file_patch).unwrap();
@@ -2842,7 +2842,7 @@ fn test_multiline_expansion_universal_unicode_delimiters_no_profile() {
 
 fn load_scrollbar_grab_drag_dispatch_hunk() -> Hunk {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let patch_path = manifest_dir.join("../../tests/golden/scrollbar-grab-drag/diff.patch");
+    let patch_path = manifest_dir.join("../../tests/golden/scrollbar-grab-drag/fixture/diff.patch");
     let patch = std::fs::read_to_string(&patch_path).expect("patch must exist");
     let files = crate::parse::parse_diff(&patch).unwrap();
     let dispatch = files
@@ -2940,20 +2940,20 @@ fn test_reflow_filter_preserves_context_old_line_monotonicity() {
 #[test]
 fn test_token_rs_line_722_not_wholesale_mod() {
     let old = std::fs::read_to_string(
-        "../../tests/golden/container-compatibility/files/crates-diffuse-core-src-token.old.rs",
+        "../../tests/golden/container-compatibility/fixture/old/crates/diffuse-core/src/token.rs",
     )
     .or_else(|_| {
         std::fs::read_to_string(
-            "tests/golden/container-compatibility/files/crates-diffuse-core-src-token.old.rs",
+            "tests/golden/container-compatibility/fixture/old/crates/diffuse-core/src/token.rs",
         )
     })
     .unwrap();
     let new = std::fs::read_to_string(
-        "../../tests/golden/container-compatibility/files/crates-diffuse-core-src-token.new.rs",
+        "../../tests/golden/container-compatibility/fixture/new/crates/diffuse-core/src/token.rs",
     )
     .or_else(|_| {
         std::fs::read_to_string(
-            "tests/golden/container-compatibility/files/crates-diffuse-core-src-token.new.rs",
+            "tests/golden/container-compatibility/fixture/new/crates/diffuse-core/src/token.rs",
         )
     })
     .unwrap();

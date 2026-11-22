@@ -430,7 +430,7 @@ index 1111111..2222222 100644
 fn test_diffuse_golden_plan_md_hunk_divider() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/diffuse-2026-08/outputs/wire.jsonl"
+        "/../../tests/golden/diffuse-2026-08/expect/wire.jsonl"
     ));
     let jsonl_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08 wire.jsonl");
     let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();

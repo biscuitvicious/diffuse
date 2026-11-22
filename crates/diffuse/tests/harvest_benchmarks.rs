@@ -264,8 +264,8 @@ fn test_harvest_and_stream_massive_1000_files() {
 fn test_harvest_cli_tool_generates_valid_fixture() {
     let (dir, _, _, _) = create_synthetic_multilang_repo(8);
 
-    // Dir output: diff.patch + files/ snapshots + meta.json with a pinned
-    // absolute revision.
+    // Dir output: fixture/diff.patch + fixture/old|new sparse trees +
+    // meta.json with a pinned absolute revision.
     let corpus_dir = dir.path().join("harvested_corpus");
     let out = Command::new(env!("CARGO_BIN_EXE_harvest"))
         .arg("HEAD")
@@ -293,20 +293,34 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
         revision.chars().all(|c| c.is_ascii_hexdigit()),
         "revision must be a short sha1 hash: {revision}"
     );
-    let files = meta["files"].as_array().unwrap();
-    assert_eq!(files.len(), 8, "every changed path is recorded");
+    // The file set is derived from the diff itself, never listed in meta:
+    // every parsed file must carry a snapshot on each side it touches.
+    assert!(
+        meta.get("files").is_none(),
+        "meta.json carries no path list"
+    );
+    let patch = fs::read_to_string(corpus_dir.join("fixture").join("diff.patch")).unwrap();
+    let parsed = diffuse::core::parse::parse_diff(&patch).expect("harvested diff parses");
+    assert_eq!(parsed.len(), 8, "every changed path is recorded");
     let mut new_snapshots = 0;
-    for record in files {
-        if let Some(new_file) = record["new"].as_str() {
+    let mut old_snapshots = 0;
+    for f in &parsed {
+        let new_file = corpus_dir.join("fixture").join("new").join(&f.path);
+        if new_file.exists() {
             new_snapshots += 1;
-            assert!(
-                corpus_dir.join("files").join(new_file).exists(),
-                "snapshot file {new_file} must exist"
-            );
+        }
+        let old_key = f.old_path.as_ref().unwrap_or(&f.path);
+        let old_file = corpus_dir.join("fixture").join("old").join(old_key);
+        if old_file.exists() {
+            old_snapshots += 1;
         }
     }
     assert_eq!(new_snapshots, 8, "every path carries a new-side snapshot");
-    assert!(corpus_dir.join("diff.patch").exists(), "diff.patch written");
+    assert_eq!(old_snapshots, 8, "every path carries an old-side snapshot");
+    assert!(
+        corpus_dir.join("fixture").join("diff.patch").exists(),
+        "fixture/diff.patch written"
+    );
 
     // Flat JSON output: metadata only — no embedded diff/contents blobs.
     let fixture_path = dir.path().join("harvested_fixture.json");
@@ -444,12 +458,13 @@ fn test_harvest_cli_tool_harvests_associated_notes() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Verify notes.json exists and has the note
+    // Verify fixture/notes.json exists and has the note
     assert!(
-        corpus_dir.join("notes.json").exists(),
-        "notes.json must be written"
+        corpus_dir.join("fixture").join("notes.json").exists(),
+        "fixture/notes.json must be written"
     );
-    let harvested_notes = diffuse::core::notes::load_notes(&corpus_dir.join("notes.json"));
+    let harvested_notes =
+        diffuse::core::notes::load_notes(&corpus_dir.join("fixture").join("notes.json"));
     let file_notes = harvested_notes
         .get(repo_k)
         .unwrap()
@@ -496,8 +511,8 @@ fn test_harvest_cli_tool_harvests_associated_notes() {
         String::from_utf8_lossy(&out_empty.stderr)
     );
     assert!(
-        !empty_dir.join("notes.json").exists(),
-        "notes.json should not exist when no notes"
+        !empty_dir.join("fixture").join("notes.json").exists(),
+        "fixture/notes.json should not exist when no notes"
     );
     let empty_meta: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(empty_dir.join("meta.json")).unwrap()).unwrap();
