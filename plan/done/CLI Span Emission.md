@@ -1,8 +1,7 @@
 # CLI Span Emission
 
 - [x] Phase 1 — Span IR retains exact SGR ids; shared token emitter
-- [·] Phase 2 — `theme.write_token` family renders from spans
-- [ ] Phase 2 — `theme.write_token` family renders from spans
+- [x] Phase 2 — `theme.write_token` family renders from spans
 - [x] Phase 3 — Row segment and gutter prefix render from spans
 - [x] Phase 4 — Raw rows render from spans
 - [x] Phase 5 — File banner and hunk divider render from spans
