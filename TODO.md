@@ -39,6 +39,7 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 - [x] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
 - [ ] **Switch to Markdown mode in TUI**: Add a TUI key shortcut for switching to Markdown mode.
 - [ ] **Context gutter display for whitespace-only mod rows**: For lines with whitespace-only changes, display an empty context gutter prefix (` `) instead of a mod (`~`) row icon. Keep the subline highlighting that isolates the changed whitespace, and keep treating the row as a mod row under the hood. Only the icon changes, to reduce the cognitive load of scanning for what changed.
+- [ ] **Compact path diffs for file renames in the TUI**: Inspired by git rename formatting, file renames in the TUI should only display the "actual" parts of the file path that are changed (e.g. `plan/{=> done}/x.md`). Run the global LCS algorithm over the path components to find what has been added, removed, and/or changed in the path, per component.
 - [ ] **Undo mechanism for destructive changes (`x`, notes deletion)**: Add an undo mechanism to reverse destructive operations: recover discarded hunks and files (restoring changes from the safety stash commit created on `x`/`X`), and restore deleted review notes.
 
 ## 4. Notes and review state

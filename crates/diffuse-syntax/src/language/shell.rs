@@ -24,6 +24,8 @@ pub fn profile() -> LangProfile {
         name: "shell",
         keywords: KEYWORDS,
         literals: &[],
+        builtin_types: &[],
+        operator_keywords: &[],
         control_flow_keywords: CONTROL_FLOW,
         declaration_keywords: DECLARATIONS,
         hash_comment: true,

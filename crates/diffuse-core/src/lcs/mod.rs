@@ -27,7 +27,8 @@ pub use spans::{
     word_spans_with_profile_and_cap,
 };
 pub use tokenizer::{
-    LineTokenizer, char_len, char_slice, for_each_token, line_has_salient_token, token_is_alnum,
-    token_is_salient, token_is_ws, tokenize_line, unique_token_anchors,
+    LineTokenizer, char_len, char_slice, for_each_token, is_token_salient_in_context,
+    line_has_salient_token, token_is_alnum, token_is_salient, token_is_ws, tokenize_line,
+    unique_token_anchors,
 };
 pub(crate) use tokenizer::{are_contiguous_subwords, is_subword_token, tokens_can_match};

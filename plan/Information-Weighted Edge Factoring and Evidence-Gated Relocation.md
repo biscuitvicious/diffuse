@@ -1,6 +1,6 @@
 # Information-Weighted Edge Factoring and Evidence-Gated Relocation — Engineering Plan
 
-- [·] Phase 0 — Built-in Type & Operator Keyword Recognition in LangProfile (`crates/diffuse-syntax/`, `crates/diffuse-core/`)
+- [x] Phase 0 — Built-in Type & Operator Keyword Recognition in LangProfile (`crates/diffuse-syntax/`, `crates/diffuse-core/`)
 - [ ] Phase 1 — Information-Theoretic Edge Weighting & Fragile Edge Pruning in Cluster Factoring (`crates/diffuse-core/src/cluster/factor.rs`)
 - [ ] Phase 2 — Competing Destination Affinity in Token Relocation (`crates/diffuse-core/src/collapse/slot.rs`)
 - [ ] Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows (`crates/diffuse-core/src/collapse/slot.rs`)

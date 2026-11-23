@@ -103,7 +103,7 @@ pub fn factor_cluster_with_content(
     let old_words: Vec<Vec<&str>> = old_rows
         .iter()
         .map(|r| {
-            let mut w = significant_words(r.text().trim());
+            let mut w = significant_words(r.text().trim(), profile);
             w.sort_unstable();
             w.dedup();
             w
@@ -113,7 +113,7 @@ pub fn factor_cluster_with_content(
     let new_words: Vec<Vec<&str>> = new_rows
         .iter()
         .map(|r| {
-            let mut w = significant_words(r.text().trim());
+            let mut w = significant_words(r.text().trim(), profile);
             w.sort_unstable();
             w.dedup();
             w
@@ -484,16 +484,19 @@ pub fn factor_cluster_with_content(
 }
 
 const COMMON_KEYWORDS: &[&str] = &[
-    "let", "mut", "const", "static", "pub", "fn", "for", "in", "if", "else", "match", "return",
-    "true", "false", "impl", "trait", "struct", "enum", "type", "where", "use", "mod", "crate",
-    "self", "super", "async", "await", "while", "loop",
+    "as", "let", "mut", "const", "static", "pub", "fn", "for", "in", "if", "else", "match",
+    "return", "true", "false", "impl", "trait", "struct", "enum", "type", "where", "use", "mod",
+    "crate", "self", "super", "async", "await", "while", "loop",
 ];
 
-fn significant_words(text: &str) -> Vec<&str> {
+fn significant_words<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<&'a str> {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .map(str::trim)
         .filter(|w| {
-            w.len() >= 3 && w.chars().any(char::is_alphabetic) && !COMMON_KEYWORDS.contains(w)
+            w.len() >= 3
+                && w.chars().any(char::is_alphabetic)
+                && !COMMON_KEYWORDS.contains(w)
+                && !profile.is_some_and(|p| p.is_non_salient(w))
         })
         .collect()
 }
@@ -771,9 +774,15 @@ mod tests {
             ),
             make_add(239, "                } else {"),
         ];
-        let old_words: Vec<Vec<&str>> = dels.iter().map(|r| significant_words(r.text())).collect();
-        let new_words: Vec<Vec<&str>> = adds.iter().map(|r| significant_words(r.text())).collect();
         let profile = diffuse_syntax::registry::lang_profile("rs");
+        let old_words: Vec<Vec<&str>> = dels
+            .iter()
+            .map(|r| significant_words(r.text(), profile))
+            .collect();
+        let new_words: Vec<Vec<&str>> = adds
+            .iter()
+            .map(|r| significant_words(r.text(), profile))
+            .collect();
         let mut edge_count = 0;
         for (u, d) in dels.iter().enumerate() {
             for (v, a) in adds.iter().enumerate() {

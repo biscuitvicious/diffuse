@@ -53,6 +53,31 @@ pub const CONTROL_FLOW: &[&str] = &[
 
 pub const DECLARATIONS: &[&str] = &["const", "func", "type", "var"];
 
+pub const BUILTIN_TYPES: &[&str] = &[
+    "bool",
+    "byte",
+    "complex128",
+    "complex64",
+    "error",
+    "float32",
+    "float64",
+    "int",
+    "int16",
+    "int32",
+    "int64",
+    "int8",
+    "rune",
+    "string",
+    "uint",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uint8",
+    "uintptr",
+];
+
+pub const OPERATOR_KEYWORDS: &[&str] = &[];
+
 pub const OPERATORS: &[&str] = &[
     "!=", "%=", "&&", "&=", "*=", "++", "+=", "--", "-=", "->", "/=", ":=", "<<", "<<=", "<=",
     "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
@@ -63,6 +88,8 @@ pub fn profile() -> LangProfile {
         name: "go",
         keywords: KEYWORDS,
         literals: LITERALS,
+        builtin_types: BUILTIN_TYPES,
+        operator_keywords: OPERATOR_KEYWORDS,
         control_flow_keywords: CONTROL_FLOW,
         declaration_keywords: DECLARATIONS,
         line_comment: true,

@@ -25,11 +25,45 @@ pub const CONTROL_FLOW: &[&str] = &[
 
 pub const DECLARATIONS: &[&str] = &["class", "enum", "struct", "typedef", "using"];
 
+pub const BUILTIN_TYPES: &[&str] = &[
+    "bool",
+    "char",
+    "char16_t",
+    "char32_t",
+    "char8_t",
+    "double",
+    "float",
+    "int",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "int8_t",
+    "intptr_t",
+    "long",
+    "ptrdiff_t",
+    "short",
+    "signed",
+    "size_t",
+    "ssize_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "uint8_t",
+    "uintptr_t",
+    "unsigned",
+    "void",
+    "wchar_t",
+];
+
+pub const OPERATOR_KEYWORDS: &[&str] = &["sizeof"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "c_family",
         keywords: KEYWORDS,
         literals: LITERALS,
+        builtin_types: BUILTIN_TYPES,
+        operator_keywords: OPERATOR_KEYWORDS,
         control_flow_keywords: CONTROL_FLOW,
         declaration_keywords: DECLARATIONS,
         line_comment: true,

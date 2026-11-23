@@ -23,11 +23,19 @@ pub const CONTROL_FLOW: &[&str] = &[
 
 pub const DECLARATIONS: &[&str] = &["class", "def"];
 
+pub const BUILTIN_TYPES: &[&str] = &[
+    "bool", "bytes", "complex", "dict", "float", "int", "list", "object", "set", "str", "tuple",
+];
+
+pub const OPERATOR_KEYWORDS: &[&str] = &["and", "as", "in", "is", "not", "or"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "python",
         keywords: KEYWORDS,
         literals: &[],
+        builtin_types: BUILTIN_TYPES,
+        operator_keywords: OPERATOR_KEYWORDS,
         control_flow_keywords: CONTROL_FLOW,
         declaration_keywords: DECLARATIONS,
         hash_comment: true,

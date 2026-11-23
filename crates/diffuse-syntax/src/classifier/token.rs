@@ -120,7 +120,9 @@ pub(crate) fn for_each_classified_token_dyn<'a>(
             .next()
             .is_some_and(|c| c.is_alphabetic() || c == '_')
         {
-            if profile.is_keyword(tok) {
+            if profile.is_builtin_type(tok) {
+                TokenColor::Type
+            } else if profile.is_keyword(tok) || profile.is_operator_keyword(tok) {
                 TokenColor::Keyword
             } else if profile.is_literal(tok) {
                 TokenColor::Literal

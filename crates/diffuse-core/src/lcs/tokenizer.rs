@@ -416,22 +416,61 @@ pub fn token_is_alnum(t: &str) -> bool {
 /// The salient test: alphanumeric, not a keyword or literal in `profile`.
 /// Falls back to counting all alphanumerics as salient when no profile is
 /// available.
+pub const COMMON_KEYWORDS: &[&str] = &[
+    "as", "let", "mut", "const", "static", "pub", "fn", "for", "in", "if", "else", "match",
+    "return", "impl", "trait", "struct", "enum", "type", "where", "use", "mod", "crate", "self",
+    "super", "async", "await", "while", "loop",
+];
+
+/// The salient test: alphanumeric, contains at least one alphabetic character
+/// (not a pure numeric literal), and not a keyword, literal, or builtin type in
+/// `profile`. Falls back to counting all alphabetic tokens as salient when no
+/// profile is available.
 pub fn token_is_salient(t: &str, profile: Option<&LangProfile>) -> bool {
-    token_is_alnum(t) && !profile.is_some_and(|p| p.is_keyword(t) || p.is_literal(t))
+    token_is_alnum(t)
+        && t.chars().any(char::is_alphabetic)
+        && !profile.is_some_and(|p| p.is_non_salient(t))
 }
 
 /// Checks whether `text` contains at least one salient token.
 pub fn line_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
-    let mut has = false;
-    for_each_token(text, |t| {
-        if has {
-            return;
-        }
-        if token_is_salient(t, profile) {
-            has = true;
-        }
-    });
-    has
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|w| !COMMON_KEYWORDS.contains(&w) && token_is_salient(w, profile))
+}
+
+/// Checks whether token `tokens[idx]` is salient within its slice context.
+///
+/// Expands contiguous subword tokens (`are_contiguous_subwords`) to check the
+/// full identifier against the profile's non-salient table, ensuring that
+/// split primitive types (such as `f` + `64` from `f64`) are recognized as
+/// non-salient.
+pub fn is_token_salient_in_context(
+    tokens: &[&str],
+    idx: usize,
+    profile: Option<&LangProfile>,
+) -> bool {
+    if idx >= tokens.len() {
+        return false;
+    }
+    let t = tokens[idx];
+    if !token_is_alnum(t) || !t.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    let mut start = idx;
+    while start > 0 && are_contiguous_subwords(tokens[start - 1], tokens[start]) {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < tokens.len() && are_contiguous_subwords(tokens[end - 1], tokens[end]) {
+        end += 1;
+    }
+    let full_start = tokens[start].as_ptr();
+    let full_len =
+        (tokens[end - 1].as_ptr() as usize + tokens[end - 1].len()) - full_start as usize;
+    let full_word =
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(full_start, full_len)) };
+
+    !COMMON_KEYWORDS.contains(&full_word) && token_is_salient(full_word, profile)
 }
 
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).

@@ -108,6 +108,42 @@ fn syntax_classification() {
     );
 }
 
+#[test]
+fn test_builtin_type_and_operator_keyword_classification() {
+    let rs = lang_profile("rs");
+    let tokens = classify_tokens("let x = 1.0 as f64;", rs);
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Type && t.text == "f64"),
+        "f64 should classify as TokenColor::Type: {tokens:?}"
+    );
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Keyword && t.text == "as"),
+        "as should classify as TokenColor::Keyword: {tokens:?}"
+    );
+
+    let ts = lang_profile("ts");
+    let ts_tokens = classify_tokens("let val: number = 5;", ts);
+    assert!(
+        ts_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Type && t.text == "number"),
+        "TS number should classify as TokenColor::Type: {ts_tokens:?}"
+    );
+
+    let c = lang_profile("c");
+    let c_tokens = classify_tokens("int x = 5;", c);
+    assert!(
+        c_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Type && t.text == "int"),
+        "C int should classify as TokenColor::Type: {c_tokens:?}"
+    );
+}
+
 // Rust doc-comment fences with doctest execution modifiers — `no_run`,
 // `ignore`, `should_panic`, `compile_fail`, `edition2021`, `ignore_linux`,
 // and combos like `rust,no_run,edition2021` — still contain valid Rust
@@ -827,6 +863,26 @@ fn test_all_profiles_keywords_sorted() {
             "declaration_keywords in profile `{}` not sorted. Expected:\n{:?}",
             prof.name,
             sorted_decl
+        );
+
+        let mut sorted_types = prof.builtin_types.to_vec();
+        sorted_types.sort();
+        assert_eq!(
+            prof.builtin_types,
+            sorted_types.as_slice(),
+            "builtin_types in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted_types
+        );
+
+        let mut sorted_op_kw = prof.operator_keywords.to_vec();
+        sorted_op_kw.sort();
+        assert_eq!(
+            prof.operator_keywords,
+            sorted_op_kw.as_slice(),
+            "operator_keywords in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted_op_kw
         );
     }
 }

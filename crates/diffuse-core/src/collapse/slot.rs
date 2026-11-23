@@ -695,29 +695,8 @@ fn align_collapse_n_to_1(
     }
 }
 
-const COMMON_KEYWORDS: &[&str] = &[
-    "let", "mut", "const", "static", "pub", "fn", "for", "in", "if", "else", "match", "return",
-    "true", "false", "impl", "trait", "struct", "enum", "type", "where", "use", "mod", "crate",
-    "self", "super", "async", "await", "while", "loop",
-];
-
-fn is_salient_token(t: &str, profile: Option<&LangProfile>) -> bool {
-    crate::lcs::token_is_alnum(t)
-        && !COMMON_KEYWORDS.contains(&t)
-        && !profile.is_some_and(|p| p.is_keyword(t) || p.is_literal(t))
-}
-
 fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
-    let mut has = false;
-    crate::lcs::for_each_token(text, |t| {
-        if has {
-            return;
-        }
-        if is_salient_token(t, profile) {
-            has = true;
-        }
-    });
-    has
+    crate::lcs::line_has_salient_token(text, profile)
 }
 
 /// Whether a peer group without any paired `Mod` slot still establishes a
@@ -860,9 +839,12 @@ fn is_admissible_slot_pair(
         return true;
     }
     let v_tokens: Vec<&str> = crate::lcs::tokenize_line(v_text).collect();
-    crate::lcs::tokenize_line(u_text)
-        .filter(|t| is_salient_token(t, profile))
-        .any(|t| v_tokens.contains(&t))
+    let u_tokens: Vec<&str> = crate::lcs::tokenize_line(u_text).collect();
+    u_tokens
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| crate::lcs::is_token_salient_in_context(&u_tokens, i, profile))
+        .any(|(_, t)| v_tokens.contains(t))
 }
 
 fn align_slots_micro_dp<'a>(
@@ -903,10 +885,10 @@ fn align_slots_micro_dp<'a>(
         let tokens: Vec<&'a str> = tokenize_line(text).collect();
         let mut has_salient = false;
         let mut salient_chars = 0;
-        for &t in &tokens {
-            if is_salient_token(t, profile) {
+        for i in 0..tokens.len() {
+            if crate::lcs::is_token_salient_in_context(&tokens, i, profile) {
                 has_salient = true;
-                salient_chars += t.chars().count();
+                salient_chars += tokens[i].chars().count();
             }
         }
         PrecomputedRow {
@@ -1083,9 +1065,12 @@ fn align_slots_micro_dp<'a>(
                         let matched_salient_chars: usize = u
                             .tokens
                             .iter()
-                            .filter(|t| is_salient_token(t, profile))
-                            .filter(|t| v.tokens.contains(t))
-                            .map(|t| t.chars().count())
+                            .enumerate()
+                            .filter(|&(idx, _)| {
+                                crate::lcs::is_token_salient_in_context(&u.tokens, idx, profile)
+                            })
+                            .filter(|&(_, t)| v.tokens.contains(t))
+                            .map(|(_, t)| t.chars().count())
                             .sum();
                         let min_salient = del_salient_chars.min(add_salient_chars);
                         // HEAD parity: at least 4 matched salient chars — a
@@ -1420,12 +1405,46 @@ fn expand_match(
         }
     }
 
-    (
-        d_pos - expand_left,
-        d_pos + token_len + expand_right,
-        a_pos - expand_left,
-        a_pos + token_len + expand_right,
-    )
+    let mut start_d = d_pos - expand_left;
+    let mut end_d = d_pos + token_len + expand_right;
+    let mut start_a = a_pos - expand_left;
+    let mut end_a = a_pos + token_len + expand_right;
+
+    // Do not slice across alphanumeric word boundaries: if expanding left or
+    // right halted inside an alphanumeric token, roll back to the token boundary.
+    while start_d < d_pos
+        && start_d > 0
+        && del_str[..start_d]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        && del_str[start_d..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        let ch = del_str[start_d..].chars().next().unwrap();
+        start_d += ch.len_utf8();
+        start_a += ch.len_utf8();
+    }
+
+    while end_d > d_pos + token_len
+        && end_d < del_str.len()
+        && del_str[..end_d]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        && del_str[end_d..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        let ch = del_str[..end_d].chars().next_back().unwrap();
+        end_d -= ch.len_utf8();
+        end_a -= ch.len_utf8();
+    }
+
+    (start_d, end_d, start_a, end_a)
 }
 
 fn replace_span_in_run(

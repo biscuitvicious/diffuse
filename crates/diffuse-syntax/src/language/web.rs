@@ -75,11 +75,29 @@ pub const DECLARATIONS: &[&str] = &[
     "var",
 ];
 
+pub const BUILTIN_TYPES: &[&str] = &[
+    "any",
+    "bigint",
+    "boolean",
+    "never",
+    "number",
+    "object",
+    "string",
+    "symbol",
+    "undefined",
+    "unknown",
+    "void",
+];
+
+pub const OPERATOR_KEYWORDS: &[&str] = &["as", "in", "instanceof", "of", "typeof"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "web",
         keywords: KEYWORDS,
         literals: LITERALS,
+        builtin_types: BUILTIN_TYPES,
+        operator_keywords: OPERATOR_KEYWORDS,
         control_flow_keywords: CONTROL_FLOW,
         declaration_keywords: DECLARATIONS,
         line_comment: true,

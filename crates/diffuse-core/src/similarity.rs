@@ -130,7 +130,7 @@ impl TokenInterner {
         let static_token: &'static str = unsafe { mem::transmute(token) };
         if let Some(id) = self.symbols.get_id(&static_token) {
             let u = id.as_u32();
-            if profile.is_some_and(|p| p.is_keyword(token) || p.is_literal(token)) {
+            if profile.is_some_and(|p| p.is_non_salient(token)) {
                 self.salient[u as usize] = false;
             }
             return u;
@@ -139,7 +139,7 @@ impl TokenInterner {
         self.ws.push(token_is_ws(token));
         let is_al = token_is_alnum(token);
         self.alnum.push(is_al);
-        let is_non_salient = profile.is_some_and(|p| p.is_keyword(token) || p.is_literal(token));
+        let is_non_salient = profile.is_some_and(|p| p.is_non_salient(token));
         self.salient.push(is_al && !is_non_salient);
         self.char_lens.push(crate::lcs::char_len(token) as u32);
         id.as_u32()

@@ -21,6 +21,12 @@ pub struct LangProfile {
     /// Sorted literal token slice for `O(log n)` binary-search lookup (e.g.
     /// `true`, `false`, `nil`, `null`).
     pub literals: &'static [&'static str],
+    /// Sorted built-in type slice for `O(log n)` binary-search lookup (e.g.
+    /// `bool`, `f64`, `int`, `string`, `usize`).
+    pub builtin_types: &'static [&'static str],
+    /// Sorted operator keyword slice for `O(log n)` binary-search lookup (e.g.
+    /// `as`, `in`, `is`, `typeof`).
+    pub operator_keywords: &'static [&'static str],
     /// Sorted control-flow keyword slice for `O(log n)` binary-search lookup
     /// (e.g. `if`, `else`, `match`, `for`, `while`, `return`).
     pub control_flow_keywords: &'static [&'static str],
@@ -258,6 +264,30 @@ impl LangProfile {
     #[inline]
     pub fn is_literal(&self, word: &str) -> bool {
         self.literals.binary_search(&word).is_ok()
+    }
+
+    /// Whether the builtin types slice contains `word` (binary search on
+    /// sorted slice).
+    #[inline]
+    pub fn is_builtin_type(&self, word: &str) -> bool {
+        self.builtin_types.binary_search(&word).is_ok()
+    }
+
+    /// Whether the operator keyword slice contains `word` (binary search on
+    /// sorted slice).
+    #[inline]
+    pub fn is_operator_keyword(&self, word: &str) -> bool {
+        self.operator_keywords.binary_search(&word).is_ok()
+    }
+
+    /// Whether `word` represents a non-salient syntax token in this language
+    /// (keyword, literal, built-in type, or operator keyword).
+    #[inline]
+    pub fn is_non_salient(&self, word: &str) -> bool {
+        self.is_keyword(word)
+            || self.is_literal(word)
+            || self.is_builtin_type(word)
+            || self.is_operator_keyword(word)
     }
 
     /// Whether the control-flow keyword slice contains `word` (binary search on

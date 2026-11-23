@@ -979,10 +979,21 @@ fn test_token_is_salient_profile_literals_and_keywords() {
     let go = diffuse_syntax::registry::lang_profile("go");
     let rs = diffuse_syntax::registry::lang_profile("rs");
 
-    // Rust: keywords
+    // Rust: keywords, builtin types, and operator keywords
     assert!(!crate::lcs::token_is_salient("true", rs));
     assert!(!crate::lcs::token_is_salient("false", rs));
     assert!(!crate::lcs::token_is_salient("match", rs));
+    assert!(!crate::lcs::token_is_salient("as", rs));
+    assert!(!crate::lcs::token_is_salient("f64", rs));
+    assert!(!crate::lcs::token_is_salient("usize", rs));
+    assert!(!crate::lcs::token_is_salient("i32", rs));
+    assert!(!crate::lcs::token_is_salient("bool", rs));
+    assert!(!crate::lcs::line_has_salient_token("as f64", rs));
+    assert!(!crate::lcs::line_has_salient_token("as usize", rs));
+    assert!(crate::lcs::line_has_salient_token(
+        "let min_thumb = 42;",
+        rs
+    ));
     assert!(crate::lcs::token_is_salient("my_var", rs));
 
     // Go: literals vs keywords vs identifiers
