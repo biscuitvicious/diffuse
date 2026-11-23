@@ -1326,20 +1326,34 @@ fn apply_relocation_candidate(
                 continue;
             }
             let mut moved = false;
-            while contains_token(&slot_runs[src], RunKind::Del, token)
-                && contains_token(&slot_runs[tgt], RunKind::Add, token)
+            while let Some((d_run_idx, d_pos, a_run_idx, a_pos)) =
+                find_matching_pair(&slot_runs[src], &slot_runs[tgt], token)
             {
-                replace_first_occurrence(
-                    &mut slot_runs[src],
-                    RunKind::Del,
-                    RunKind::MovedSrc,
-                    token,
+                let (start_d, end_d, start_a, end_a) = expand_match(
+                    &slot_runs[src][d_run_idx].1,
+                    d_pos,
+                    &slot_runs[tgt][a_run_idx].1,
+                    a_pos,
+                    token.len(),
                 );
-                replace_first_occurrence(
+
+                let matched_text = slot_runs[src][d_run_idx].1[start_d..end_d].to_string();
+
+                replace_span_in_run(
+                    &mut slot_runs[src],
+                    d_run_idx,
+                    RunKind::MovedSrc,
+                    start_d,
+                    end_d,
+                    matched_text.clone(),
+                );
+                replace_span_in_run(
                     &mut slot_runs[tgt],
-                    RunKind::Add,
+                    a_run_idx,
                     RunKind::MovedTgt,
-                    token,
+                    start_a,
+                    end_a,
+                    matched_text,
                 );
                 moved = true;
             }
@@ -1350,40 +1364,90 @@ fn apply_relocation_candidate(
     }
 }
 
-fn contains_token(runs: &[(RunKind, String)], target_kind: RunKind, token: &str) -> bool {
-    runs.iter()
-        .any(|(k, s)| *k == target_kind && s.contains(token))
-}
-
-fn replace_first_occurrence(
-    runs: &mut Vec<(RunKind, String)>,
-    target_kind: RunKind,
-    replacement_kind: RunKind,
+fn find_matching_pair(
+    src_runs: &[(RunKind, String)],
+    tgt_runs: &[(RunKind, String)],
     token: &str,
-) -> bool {
-    for i in 0..runs.len() {
-        if runs[i].0 == target_kind && runs[i].1.contains(token) {
-            let full = runs[i].1.clone();
-            if let Some(idx) = full.find(token) {
-                let before = full[..idx].to_string();
-                let matched = full[idx..idx + token.len()].to_string();
-                let after = full[idx + token.len()..].to_string();
-
-                let mut new_pieces = Vec::new();
-                if !before.is_empty() {
-                    new_pieces.push((target_kind, before));
+) -> Option<(usize, usize, usize, usize)> {
+    for (d_i, (d_k, d_s)) in src_runs.iter().enumerate() {
+        if *d_k == RunKind::Del
+            && let Some(d_pos) = d_s.find(token)
+        {
+            for (a_i, (a_k, a_s)) in tgt_runs.iter().enumerate() {
+                if *a_k == RunKind::Add
+                    && let Some(a_pos) = a_s.find(token)
+                {
+                    return Some((d_i, d_pos, a_i, a_pos));
                 }
-                new_pieces.push((replacement_kind, matched));
-                if !after.is_empty() {
-                    new_pieces.push((target_kind, after));
-                }
-
-                runs.splice(i..=i, new_pieces);
-                return true;
             }
         }
     }
-    false
+    None
+}
+
+/// Expands a candidate token match naturally in both directions (including
+/// whitespace and delimiters).
+///
+/// Guard: does not expand backward into pure leading indentation of a line.
+fn expand_match(
+    del_str: &str,
+    d_pos: usize,
+    add_str: &str,
+    a_pos: usize,
+    token_len: usize,
+) -> (usize, usize, usize, usize) {
+    let before_d = &del_str[..d_pos];
+    let before_a = &add_str[..a_pos];
+    let mut expand_left = 0;
+    if !before_d.trim().is_empty() && !before_a.trim().is_empty() {
+        for (cd, ca) in before_d.chars().rev().zip(before_a.chars().rev()) {
+            if cd == ca {
+                expand_left += cd.len_utf8();
+            } else {
+                break;
+            }
+        }
+    }
+
+    let after_d = &del_str[d_pos + token_len..];
+    let after_a = &add_str[a_pos + token_len..];
+    let mut expand_right = 0;
+    for (cd, ca) in after_d.chars().zip(after_a.chars()) {
+        if cd == ca {
+            expand_right += cd.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    (
+        d_pos - expand_left,
+        d_pos + token_len + expand_right,
+        a_pos - expand_left,
+        a_pos + token_len + expand_right,
+    )
+}
+
+fn replace_span_in_run(
+    runs: &mut Vec<(RunKind, String)>,
+    run_idx: usize,
+    replacement_kind: RunKind,
+    start: usize,
+    end: usize,
+    matched_text: String,
+) {
+    let (target_kind, full) = &runs[run_idx];
+    let target_kind = *target_kind;
+    let mut new_pieces = Vec::with_capacity(3);
+    if start > 0 {
+        new_pieces.push((target_kind, full[..start].to_string()));
+    }
+    new_pieces.push((replacement_kind, matched_text));
+    if end < full.len() {
+        new_pieces.push((target_kind, full[end..].to_string()));
+    }
+
+    runs.splice(run_idx..=run_idx, new_pieces);
 }
 
 fn compute_slot_spans(runs: &[(RunKind, String)]) -> Spans {
@@ -1617,14 +1681,14 @@ mod tests {
         assert!(
             slot_runs[0]
                 .iter()
-                .any(|(k, t)| *k == RunKind::MovedSrc && t == "alpha"),
+                .any(|(k, t)| *k == RunKind::MovedSrc && t.contains("alpha")),
             "nearby Del token must relocate, got: {:?}",
             slot_runs[0]
         );
         assert!(
             slot_runs[1]
                 .iter()
-                .any(|(k, t)| *k == RunKind::MovedTgt && t == "alpha"),
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("alpha")),
             "nearby Add token must relocate, got: {:?}",
             slot_runs[1]
         );

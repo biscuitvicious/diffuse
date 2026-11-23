@@ -3629,7 +3629,35 @@ fn test_compound_mod_group_closure_reflow_assembly() {
         })
     ));
 
-    // Row 0 (288) must have |pat: &str| as MovedTgt
+    // Row 0 (288) must have |pat: &str| as MovedTgt including trailing space
+    assert!(
+        out[0]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedTgt && text == "|pat: &str| "),
+        "Seed Mod (288) must label received closure parameter with trailing space as MovedTgt, got: {:?}",
+        out[0].cached_runs()
+    );
+
+    // Row 1 (294) must have |pat: &str| as MovedSrc including trailing space, with
+    // NO struck trailing space
+    assert!(
+        out[1]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::MovedSrc && text == "|pat: &str| "),
+        "Grouped Mod (294) must label moved closure parameter with trailing space as MovedSrc, got: {:?}",
+        out[1].cached_runs()
+    );
+    assert!(
+        !out[1]
+            .cached_runs()
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::Del && text.trim().is_empty()),
+        "Grouped Mod (294) must not have struck trailing space in Del run, got: {:?}",
+        out[1].cached_runs()
+    );
+
     assert!(
         out[0]
             .cached_runs()

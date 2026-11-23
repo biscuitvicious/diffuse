@@ -1672,6 +1672,115 @@ fn test_scrollbar_grab_drag_blank_line_is_ctx() {
 }
 
 #[test]
+fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    let (fi, file) = state
+        .output
+        .files
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must be present");
+
+    // Check WireRow / OutputRow level:
+    // Row 288 (Add/Mod) must receive "|pat: &str| " as MovedTgt
+    let row_288 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.new_line == Some(288))
+        .expect("must find row 288 in dispatch.rs");
+
+    let moved_tgt_text: String = row_288
+        .runs
+        .iter()
+        .filter(|r| r.kind == diffuse_core::merge::RunKind::MovedTgt)
+        .map(|r| r.text.as_ref())
+        .collect();
+    assert_eq!(
+        moved_tgt_text, "|pat: &str| ",
+        "Row 288 must contain '|pat: &str| ' with trailing space as MovedTgt"
+    );
+
+    // Row 289 (Mod paired with old 294) must have MovedSrc "|pat: &str| " and NO
+    // Del whitespace
+    let row_289 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.new_line == Some(289))
+        .expect("must find row 289 in dispatch.rs");
+
+    assert!(
+        row_289
+            .runs
+            .iter()
+            .any(|r| r.kind == diffuse_core::merge::RunKind::MovedSrc && r.text == "|pat: &str| "),
+        "Row 289 must contain '|pat: &str| ' with trailing space as MovedSrc, got: {:?}",
+        row_289.runs
+    );
+
+    let has_struck_whitespace = row_289
+        .runs
+        .iter()
+        .any(|r| r.kind == diffuse_core::merge::RunKind::Del && r.text.trim().is_empty());
+    assert!(
+        !has_struck_whitespace,
+        "Row 289 must not have any struck whitespace Del runs"
+    );
+
+    // Now render in TUI buffer to ensure visual display does not strike out space
+    let target_idx = state.flat.iter().position(|it| {
+        it.file_idx == fi && state.row_of(it).is_some_and(|r| r.new_line == Some(289))
+    });
+    let target_idx = target_idx.expect("must find line 289 in flat list");
+    state.row_idx = target_idx;
+    state.vis_line = 0;
+
+    let (w, h) = (200, 80);
+    let buf = state.render_to_buffer(w, h);
+
+    // Inspect rendered lines around 288 and 289
+    let mut found_288 = false;
+    let mut found_289 = false;
+    for y in 0..h {
+        let mut line_str = String::new();
+        for x in 0..w {
+            line_str.push_str(buf[(x, y)].symbol());
+        }
+        if line_str.contains("let hit = |pat: &str| {") {
+            found_288 = true;
+        }
+        if line_str.contains("wrapped_glyph_hit") {
+            found_289 = true;
+            // The cells before wrapped_glyph_hit on this visual line must not have
+            // CROSSED_OUT modifier
+            let wgh_pos = line_str.find("wrapped_glyph_hit").unwrap();
+            for x in 0..wgh_pos {
+                let cell = &buf[(x as u16, y)];
+                assert!(
+                    !cell
+                        .modifier
+                        .contains(ratatui::style::Modifier::CROSSED_OUT),
+                    "No cell before wrapped_glyph_hit on row 289 should be struck out (CROSSED_OUT), found at col {x}: {cell:?}"
+                );
+            }
+        }
+    }
+    assert!(found_288, "must find line 288 in rendered buffer");
+    assert!(found_289, "must find line 289 in rendered buffer");
+}
+
+#[test]
 fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
