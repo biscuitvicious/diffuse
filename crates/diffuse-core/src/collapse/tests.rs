@@ -1528,6 +1528,54 @@ fn test_comment_lines_do_not_pair_with_code_lines() {
 }
 
 #[test]
+fn test_shared_head_with_shared_whole_word_still_pairs() {
+    // Control: the same compound head+adjacent shape keeps pairing when
+    // the shared whole-word salient token (`retry_count`, 11 chars)
+    // clears the matched-salient floor. `retry();` holds the factored
+    // group compound via its `retry` subword edge without contending for
+    // the add (no shared raw tokens, so its slot score is negative).
+    let h = hunk(vec![
+        row(RowKind::Del, "    if retry_count > 0 {", None, Some(10)),
+        row(RowKind::Del, "    retry();", None, Some(11)),
+        row(RowKind::Add, "    if retry_count > 1 {", Some(10), None),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, None, None, None);
+
+    let mods: Vec<_> = collapsed
+        .iter()
+        .filter(|r| r.kind() == RowKind::Mod)
+        .collect();
+    assert_eq!(
+        mods.len(),
+        1,
+        "exactly one Mod must form, got: {collapsed:?}"
+    );
+    assert_eq!(mods[0].old_line(), Some(10));
+    assert_eq!(mods[0].new_line(), Some(10));
+}
+
+#[test]
+fn test_lone_head_only_pair_does_not_pair() {
+    // Lone 1-del / 1-add version of the head-only case: `fn row() {`
+    // shares only the `fn` head with `fn total() {` and no salient
+    // token, so the 1×1 fast path must dissolve it to Del + Add.
+    let h = hunk(vec![
+        row(RowKind::Del, "    fn row() {", None, Some(10)),
+        row(RowKind::Add, "    fn total() {", Some(10), None),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, None, None, None);
+    assert!(
+        !collapsed.iter().any(|r| r.kind() == RowKind::Mod),
+        "head-only lone pair must stay Del + Add, got: {collapsed:?}"
+    );
+    assert_eq!(collapsed.len(), 2);
+    assert_eq!(collapsed[0].kind(), RowKind::Del);
+    assert_eq!(collapsed[1].kind(), RowKind::Add);
+}
+
+#[test]
 fn test_cross_context_pairing_is_forbidden() {
     let h = hunk(vec![
         // Cluster 0

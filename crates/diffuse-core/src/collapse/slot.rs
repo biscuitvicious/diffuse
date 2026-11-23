@@ -178,7 +178,15 @@ pub fn align_and_type_peer_group_with_content(
             let v_text = group_new[0].text();
             let (spans, runs) = word_spans_and_runs_with_profile(u_text, v_text, profile);
 
-            if !is_admissible_slot_pair(u_text, v_text, &spans, old_content, new_content, profile) {
+            if !is_admissible_slot_pair(
+                u_text,
+                v_text,
+                &spans,
+                old_content,
+                new_content,
+                profile,
+                true,
+            ) {
                 vec![(Some(&group_old[0]), None), (None, Some(&group_new[0]))]
             } else {
                 let u = &group_old[0];
@@ -277,7 +285,7 @@ pub fn align_and_type_peer_group_with_content(
 
     // 3. Cross-slot token relocation (when total_slots > 1)
     if total_slots > 1 {
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot);
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, profile);
     }
 
     // 4. Construct final AlignedSlotRow list
@@ -754,6 +762,40 @@ fn canonicalize_slot_order<'a>(
 /// Determines if a pair of deletion and addition lines is admissible for
 /// slot-level Mod pairing, checking wholesale bounds, declaration
 /// compatibility, and verbatim rivals.
+/// Statement heads weak enough to need a shared salient token when they
+/// are the only link between two lines (mirrors the micro-DP gate).
+const STATEMENT_HEADS: &[&str] = &[
+    "if", "fn", "let", "match", "for", "while", "return", "pub", "struct", "enum", "type", "use",
+    "impl",
+];
+
+/// Whether two trimmed lines share a statement head (`fn`/`let`/`pub`…)
+/// or an assignment key (`key = …`). Such a head alone must not anchor a
+/// pairing.
+fn shares_statement_head(u_trim: &str, v_trim: &str) -> bool {
+    if let (Some(u_eq), Some(v_eq)) = (u_trim.find('='), v_trim.find('=')) {
+        let u_key = u_trim[..u_eq].trim();
+        let v_key = v_trim[..v_eq].trim();
+        if !u_key.is_empty() && u_key == v_key {
+            return true;
+        }
+    }
+    match (
+        diffuse_syntax::prelude::first_word(u_trim),
+        diffuse_syntax::prelude::first_word(v_trim),
+    ) {
+        (Some(u_h), Some(v_h)) => u_h == v_h && STATEMENT_HEADS.contains(&u_h),
+        _ => false,
+    }
+}
+
+/// `enforce_head_gate` is true only for singleton (1×1) groups. In a
+/// compound group the DP argmax weighs shape and position evidence across
+/// competing candidates — a zero-overlap winner there is usually a rename
+/// (e.g. `let mut s = String::new();` → `let lines = …`), and vetoing it
+/// merely promotes a worse, coincidentally-overlapping rival (which can
+/// even collapse into a wholesale Mod). In a singleton group there is no
+/// competition, so a shared head with zero salient support dissolves.
 fn is_admissible_slot_pair(
     u_text: &str,
     v_text: &str,
@@ -761,6 +803,7 @@ fn is_admissible_slot_pair(
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
+    enforce_head_gate: bool,
 ) -> bool {
     let u_trim = u_text.trim();
     let v_trim = v_text.trim();
@@ -786,10 +829,35 @@ fn is_admissible_slot_pair(
             false
         };
 
-    !decl_has_rival
-        && !crate::merge::is_wholesale_replacement_spans(u_text, v_text, spans)
-        && (crate::cluster::dp::solver::is_admissible_mod_pair(u_text, v_text, profile)
-            || is_decl_compat)
+    if decl_has_rival || crate::merge::is_wholesale_replacement_spans(u_text, v_text, spans) {
+        return false;
+    }
+    if !(crate::cluster::dp::solver::is_admissible_mod_pair(u_text, v_text, profile)
+        || is_decl_compat)
+    {
+        return false;
+    }
+    // A shared statement head alone must not anchor a singleton pairing:
+    // the 1×1 fast path bypasses the micro-DP argmax, so without at least
+    // one shared salient token, `fn row() {` vs `fn total() {` dissolves
+    // to Del + Add. Pairs with aligned salient context keep the
+    // historical behavior; headless pairs are untouched here. A verbatim
+    // reindent (`return None` at a new indent) always pairs: there is no
+    // content difference for a salient token to witness.
+    if !enforce_head_gate || u_trim == v_trim || !shares_statement_head(u_trim, v_trim) {
+        return true;
+    }
+    let (_, runs) = crate::lcs::word_spans_and_runs_with_profile(u_text, v_text, profile);
+    let has_salient_ctx = runs.iter().any(|(kind, text)| {
+        *kind == crate::merge::RunKind::Ctx && text_has_salient_token(text, profile)
+    });
+    if has_salient_ctx {
+        return true;
+    }
+    let v_tokens: Vec<&str> = crate::lcs::tokenize_line(v_text).collect();
+    crate::lcs::tokenize_line(u_text)
+        .filter(|t| is_salient_token(t, profile))
+        .any(|t| v_tokens.contains(&t))
 }
 
 fn align_slots_micro_dp<'a>(
@@ -804,10 +872,6 @@ fn align_slots_micro_dp<'a>(
 
     let mut dp = vec![vec![(0i32, 0u8); m + 1]; n + 1];
     const GAP_PENALTY: i32 = 2;
-    const STATEMENT_HEADS: &[&str] = &[
-        "if", "fn", "let", "match", "for", "while", "return", "pub", "struct", "enum", "type",
-        "use", "impl",
-    ];
 
     for (i, row) in dp.iter_mut().enumerate().take(n + 1).skip(1) {
         row[0] = (-(i as i32) * GAP_PENALTY, 2);
@@ -868,7 +932,6 @@ fn align_slots_micro_dp<'a>(
 
             let indent_diff = (u_indent as i32 - v_indent as i32).abs();
             let diag_dist = ((i as i32) - (j as i32)).abs();
-
             let mut cached_runs: Option<Vec<crate::merge::Run<'a>>> = None;
             let mut match_score = if old_rows[i - 1].is_moved() || new_rows[j - 1].is_moved() {
                 -1000
@@ -898,6 +961,7 @@ fn align_slots_micro_dp<'a>(
                         old_content,
                         new_content,
                         profile,
+                        false,
                     ) {
                         -1000
                     } else {
@@ -1091,7 +1155,17 @@ fn align_slots_micro_dp<'a>(
     path
 }
 
-fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>], is_moved_slot: &[bool]) {
+/// Maximum slot distance a relocated token may travel. The candidate
+/// gather and the apply loop must honor the same window: otherwise a
+/// token gathered from a nearby pair (e.g. a lone `{`) is stamped as
+/// moved between arbitrarily distant slots.
+const CROSS_SLOT_WINDOW: i32 = 4;
+
+fn relocate_cross_slot_tokens(
+    slot_runs: &mut [Vec<(RunKind, String)>],
+    is_moved_slot: &[bool],
+    profile: Option<&LangProfile>,
+) {
     let mut candidates = Vec::new();
 
     // 1. Gather Del runs across slots
@@ -1123,7 +1197,7 @@ fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>], is_moved
     // 3. For each pair (src, tgt) with src != tgt, find common Ctx spans
     for (src, del_text) in &del_runs {
         for (tgt, add_text) in &add_runs {
-            if src == tgt || (*src as i32 - *tgt as i32).abs() > 4 {
+            if src == tgt || (*src as i32 - *tgt as i32).abs() > CROSS_SLOT_WINDOW {
                 continue;
             }
             let d_trim = del_text.trim();
@@ -1166,34 +1240,106 @@ fn relocate_cross_slot_tokens(slot_runs: &mut [Vec<(RunKind, String)>], is_moved
     candidates.sort_by_key(|a| std::cmp::Reverse(a.len()));
     candidates.dedup();
 
-    for token in candidates {
-        // Find a source slot with Del containing token and a target slot with Add
-        // containing token
-        let num_slots = slot_runs.len();
-        for src in 0..num_slots {
-            if is_moved_slot.get(src).copied().unwrap_or(false) {
+    // Salient candidates relocate freely within the window; delimiter-only
+    // candidates (bare punctuation such as `(`, `{`, `;`) travel only on
+    // related pairs: either the pair already exchanged salient content
+    // (the punctuation rides with its statement's move), or one side's
+    // whole line is bare punctuation (a reflowed `)` landing on its own
+    // `);` line). A bare bracket shared between two full, unrelated lines
+    // is coincidental punctuation reuse, not a move.
+    let (salient, bare): (Vec<_>, Vec<_>) = candidates
+        .into_iter()
+        .partition(|t| text_has_salient_token(t, profile));
+    let mut linked: Vec<(usize, usize)> = Vec::new();
+    for token in &salient {
+        apply_relocation_candidate(slot_runs, is_moved_slot, token, None, false, &mut linked);
+    }
+    for token in &bare {
+        apply_relocation_candidate(
+            slot_runs,
+            is_moved_slot,
+            token,
+            Some(&linked),
+            true,
+            &mut Vec::new(),
+        );
+    }
+}
+
+/// Whether a slot side carries nothing but punctuation/whitespace: every
+/// run of the given kind is free of alphanumeric characters and at least
+/// one run has non-whitespace content (a bare `);` or `{` line).
+fn slot_side_is_bare(runs: &[(RunKind, String)], kind: RunKind) -> bool {
+    let mut has_text = false;
+    for (k, t) in runs {
+        if *k != kind {
+            continue;
+        }
+        if t.chars().any(char::is_alphanumeric) {
+            return false;
+        }
+        if !t.trim().is_empty() {
+            has_text = true;
+        }
+    }
+    has_text
+}
+
+/// Relocates one candidate token from Del runs to Add runs across slot
+/// pairs within [`CROSS_SLOT_WINDOW`]. When `gate` is `Some`, only pairs
+/// in it may exchange the token — unless `allow_bare_lines` and one
+/// side's whole line is bare punctuation (see above). Pairs that actually
+/// exchange the token are appended to `linked`.
+fn apply_relocation_candidate(
+    slot_runs: &mut [Vec<(RunKind, String)>],
+    is_moved_slot: &[bool],
+    token: &str,
+    gate: Option<&[(usize, usize)]>,
+    allow_bare_lines: bool,
+    linked: &mut Vec<(usize, usize)>,
+) {
+    // Find a source slot with Del containing token and a target slot with Add
+    // containing token
+    let num_slots = slot_runs.len();
+    for src in 0..num_slots {
+        if is_moved_slot.get(src).copied().unwrap_or(false) {
+            continue;
+        }
+        for tgt in 0..num_slots {
+            if src == tgt || is_moved_slot.get(tgt).copied().unwrap_or(false) {
                 continue;
             }
-            for tgt in 0..num_slots {
-                if src == tgt || is_moved_slot.get(tgt).copied().unwrap_or(false) {
-                    continue;
-                }
-                while contains_token(&slot_runs[src], RunKind::Del, &token)
-                    && contains_token(&slot_runs[tgt], RunKind::Add, &token)
-                {
-                    replace_first_occurrence(
-                        &mut slot_runs[src],
-                        RunKind::Del,
-                        RunKind::MovedSrc,
-                        &token,
-                    );
-                    replace_first_occurrence(
-                        &mut slot_runs[tgt],
-                        RunKind::Add,
-                        RunKind::MovedTgt,
-                        &token,
-                    );
-                }
+            if (src as i32 - tgt as i32).abs() > CROSS_SLOT_WINDOW {
+                continue;
+            }
+            if let Some(g) = gate
+                && !g.contains(&(src, tgt))
+                && !(allow_bare_lines
+                    && (slot_side_is_bare(&slot_runs[src], RunKind::Del)
+                        || slot_side_is_bare(&slot_runs[tgt], RunKind::Add)))
+            {
+                continue;
+            }
+            let mut moved = false;
+            while contains_token(&slot_runs[src], RunKind::Del, token)
+                && contains_token(&slot_runs[tgt], RunKind::Add, token)
+            {
+                replace_first_occurrence(
+                    &mut slot_runs[src],
+                    RunKind::Del,
+                    RunKind::MovedSrc,
+                    token,
+                );
+                replace_first_occurrence(
+                    &mut slot_runs[tgt],
+                    RunKind::Add,
+                    RunKind::MovedTgt,
+                    token,
+                );
+                moved = true;
+            }
+            if moved && !linked.contains(&(src, tgt)) {
+                linked.push((src, tgt));
             }
         }
     }
@@ -1436,6 +1582,156 @@ mod tests {
             .any(|(k, s)| *k == RunKind::MovedTgt && s.contains("finalize"));
         assert!(has_moved_src, "Expected MovedSrc in slot 2");
         assert!(has_moved_tgt, "Expected MovedTgt in slot 1");
+    }
+
+    #[test]
+    fn test_cross_slot_relocation_respects_distance_window() {
+        // The `alpha` candidate is legitimately shared by the adjacent
+        // slots 0/1, but slots 2 and 7 sit 5 apart: typing their token
+        // as a move steals it from far away. The apply loop must honor
+        // the same ±4 window the candidate gather uses.
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![
+                (RunKind::Del, "aaa alpha".to_string()),
+                (RunKind::Add, "bbb".to_string()),
+            ],
+            vec![
+                (RunKind::Del, "www".to_string()),
+                (RunKind::Add, "eee alpha".to_string()),
+            ],
+            vec![(RunKind::Del, "xxx alpha yyy".to_string())],
+            vec![(RunKind::Add, "kilo".to_string())],
+            vec![(RunKind::Add, "lima".to_string())],
+            vec![(RunKind::Del, "mike".to_string())],
+            vec![(RunKind::Del, "november".to_string())],
+            vec![(RunKind::Add, "zzz alpha www".to_string())],
+        ];
+        let is_moved_slot = vec![false; 8];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        // The nearby pair still relocates.
+        assert!(
+            slot_runs[0]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedSrc && t == "alpha"),
+            "nearby Del token must relocate, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            slot_runs[1]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t == "alpha"),
+            "nearby Add token must relocate, got: {:?}",
+            slot_runs[1]
+        );
+        // The far pair must not: distance 5 exceeds the window.
+        assert!(
+            slot_runs[2].iter().all(|(k, _)| *k != RunKind::MovedSrc),
+            "far Del token must stay Del, got: {:?}",
+            slot_runs[2]
+        );
+        assert!(
+            slot_runs[7].iter().all(|(k, _)| *k != RunKind::MovedTgt),
+            "far Add token must stay Add, got: {:?}",
+            slot_runs[7]
+        );
+    }
+
+    #[test]
+    fn test_bare_delimiter_piggybacks_on_salient_exchange() {
+        // A bare `(` relocates between slots 0/1 because that pair also
+        // exchanges the salient `alpha` — but the same bracket shared by
+        // the unrelated slots 4/5 (no salient link) must stay Del/Add.
+        // This is the `self.on_scrollbar_click(row, col);` case: parens
+        // from a far-away, unrelated line must not render as moved.
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![
+                (RunKind::Del, "call alpha (x".to_string()),
+                (RunKind::Add, "nothing here".to_string()),
+            ],
+            vec![
+                (RunKind::Del, "other".to_string()),
+                (RunKind::Add, "use alpha (y".to_string()),
+            ],
+            vec![(RunKind::Del, "zzz ( qqq".to_string())],
+            vec![(RunKind::Add, "www ( vvv".to_string())],
+        ];
+        let is_moved_slot = vec![false; 4];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        // Salient exchange links slots 0/1, so the bracket travels with
+        // it (inside the shared `alpha (` span).
+        assert!(
+            slot_runs[0]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedSrc && t.contains('(')),
+            "linked Del bracket must relocate, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            slot_runs[1]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains('(')),
+            "linked Add bracket must relocate, got: {:?}",
+            slot_runs[1]
+        );
+        // No salient link between slots 2/3, and both lines carry real
+        // content: brackets stay put.
+        assert!(
+            slot_runs[2].iter().all(|(k, _)| *k != RunKind::MovedSrc),
+            "unrelated Del bracket must stay Del, got: {:?}",
+            slot_runs[2]
+        );
+        assert!(
+            slot_runs[3].iter().all(|(k, _)| *k != RunKind::MovedTgt),
+            "unrelated Add bracket must stay Add, got: {:?}",
+            slot_runs[3]
+        );
+    }
+
+    #[test]
+    fn test_bare_delimiter_may_land_on_bare_line() {
+        // A bare `[` may still travel without any salient link when the
+        // recipient line is itself bare punctuation (a reflowed bracket
+        // landing on its own line) — the `);` / `{`-line cases.
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(RunKind::Del, "qux = wod [ gamma".to_string())],
+            vec![(RunKind::Add, "[]".to_string())],
+        ];
+        let is_moved_slot = vec![false; 2];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        assert!(
+            slot_runs[0]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedSrc && t.contains('[')),
+            "donor bracket must relocate to bare line, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            slot_runs[1]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains('[')),
+            "bare recipient line must receive bracket, got: {:?}",
+            slot_runs[1]
+        );
+    }
+
+    #[test]
+    fn test_align_single_head_only_pair_dissolves() {
+        // The 1×1 fast path must apply the same head gate as the micro-DP:
+        // `fn row() {` shares only the `fn` head with `fn total() {` and no
+        // salient token, so it must dissolve to Del + Add, not pair as Mod.
+        let group = FactoredGroup {
+            id: GroupId(7),
+            old_range: 0..1,
+            new_range: 0..1,
+        };
+        let dels = vec![make_del(10, "fn row() {")];
+        let adds = vec![make_add(10, "fn total() {")];
+
+        let result = align_and_type_peer_group(&group, &dels, &adds, None);
+        assert_eq!(result.slots.len(), 2);
+        assert_eq!(result.slots[0].kind, RowKind::Del);
+        assert_eq!(result.slots[1].kind, RowKind::Add);
+        result.assert_token_conservation();
     }
 
     fn link_slot(runs: Vec<(RunKind, String)>) -> AlignedSlotRow {
