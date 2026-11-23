@@ -168,11 +168,64 @@ mod tests {
     /// Golden-driven: scrollbar-grab-drag dispatch.rs — old 353–367 must
     /// not strand as a Del run once the coincidental `}` barriers split.
     #[test]
+    fn test_dispatch_blank_line_context_preserved() {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let base = manifest.join("../../tests/golden/scrollbar-grab-drag");
+        let Ok(patch) = std::fs::read_to_string(base.join("fixture").join("diff.patch")) else {
+            return;
+        };
+        let old = std::fs::read_to_string(
+            base.join("fixture")
+                .join("old")
+                .join("crates/diffuse-tui/src/app/dispatch.rs"),
+        )
+        .expect("old snapshot must exist");
+        let new = std::fs::read_to_string(
+            base.join("fixture")
+                .join("new")
+                .join("crates/diffuse-tui/src/app/dispatch.rs"),
+        )
+        .expect("new snapshot must exist");
+
+        let files = crate::parse::parse_diff(&patch).unwrap();
+        let f = files
+            .into_iter()
+            .find(|f| f.path.contains("dispatch.rs"))
+            .expect("dispatch.rs must parse");
+        let out = crate::pipeline::process_single_diff_file(
+            f,
+            Some(new.as_str()),
+            Some(old.as_str()),
+            None,
+            &crate::pipeline::PipelineOptions::default(),
+        );
+
+        let rows: Vec<_> = out
+            .hunks
+            .iter()
+            .flat_map(|h| h.rows.iter())
+            .filter(|r| r.old_line == Some(262) || r.new_line == Some(257))
+            .collect();
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "should be exactly one row for line 262/257, got: {rows:?}"
+        );
+        assert_eq!(
+            rows[0].kind,
+            crate::parse::RowKind::Ctx,
+            "blank line must be Ctx"
+        );
+        assert_eq!(rows[0].old_line, Some(262));
+        assert_eq!(rows[0].new_line, Some(257));
+    }
+
+    #[test]
     fn test_dispatch_reindent_block_pairs() {
         let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let base = manifest.join("../../tests/golden/scrollbar-grab-drag");
         let Ok(patch) = std::fs::read_to_string(base.join("fixture").join("diff.patch")) else {
-            eprintln!("golden submodule missing; skipping");
             return;
         };
         let old = std::fs::read_to_string(

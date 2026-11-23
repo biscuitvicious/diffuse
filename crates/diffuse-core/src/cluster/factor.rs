@@ -397,6 +397,14 @@ pub fn factor_cluster_with_content(
             let can_expand_u = u_end - u_start < MAX_DELIM_EXPAND;
             let can_expand_v = v_end - v_start < MAX_DELIM_EXPAND;
 
+            if u_end < max_u
+                && v_end < max_v
+                && old_rows[u_end].text().trim().is_empty()
+                && new_rows[v_end].text().trim().is_empty()
+            {
+                break;
+            }
+
             let v_reduces_delta = can_expand_v
                 && u_end > u_start
                 && v_end > v_start
@@ -417,13 +425,15 @@ pub fn factor_cluster_with_content(
                 && old_depth > 0
                 && can_expand_u
                 && u_end < max_u
-                && !old_rows[u_end].is_moved();
+                && !old_rows[u_end].is_moved()
+                && !old_rows[u_end].text().trim().is_empty();
 
             let v_catches_up = diff < 0
                 && new_depth > 0
                 && can_expand_v
                 && v_end < max_v
-                && !new_rows[v_end].is_moved();
+                && !new_rows[v_end].is_moved()
+                && !new_rows[v_end].text().trim().is_empty();
 
             if v_reduces_delta {
                 v_end += 1;
@@ -800,6 +810,72 @@ mod tests {
         assert_eq!(groups[19].new_range, 1..2);
         assert_eq!(groups[20].old_range, 20..20);
         assert_eq!(groups[20].new_range, 2..3);
+    }
+
+    #[test]
+    fn test_factor_synchronized_blank_lines_separate_groups() {
+        let dels = vec![
+            make_del(248, "let row_in_viewport = row - header_offset;"),
+            make_del(
+                249,
+                "let target_vis = self.viewport_row_to_visual(row_in_viewport);",
+            ),
+            make_del(
+                250,
+                "let geo = self.cached_geometry(self.last_content_width);",
+            ),
+            make_del(251, "let starts = &geo.starts;"),
+            make_del(252, "let counts = &geo.counts;"),
+            make_del(253, "let nav_counts = &geo.nav_counts;"),
+            make_del(
+                254,
+                "let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {",
+            ),
+            make_del(255, "    HashMap::new()"),
+            make_del(256, "} else {"),
+            make_del(257, "    self.hunk_starts"),
+            make_del(258, "        .iter()"),
+            make_del(259, "        .map(|h| (h.flat, (h.file, h.hunk)))"),
+            make_del(260, "        .collect()"),
+            make_del(261, "};"),
+            make_del(262, ""),
+            make_del(263, "for (i, &s) in starts.iter().enumerate() {"),
+        ];
+        let adds = vec![
+            make_add(242, "if in_viewport {"),
+            make_add(243, "    let row_in_viewport = row - header_offset;"),
+            make_add(
+                244,
+                "    let target_vis = self.viewport_row_to_visual(row_in_viewport);",
+            ),
+            make_add(
+                245,
+                "    let geo = self.cached_geometry(self.last_content_width);",
+            ),
+            make_add(246, "    let starts = &geo.starts;"),
+            make_add(247, "    let counts = &geo.counts;"),
+            make_add(248, "    let nav_counts = &geo.nav_counts;"),
+            make_add(
+                249,
+                "    let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {",
+            ),
+            make_add(250, "        HashMap::new()"),
+            make_add(251, "    } else {"),
+            make_add(252, "        self.hunk_starts"),
+            make_add(253, "            .iter()"),
+            make_add(254, "            .map(|h| (h.flat, (h.file, h.hunk)))"),
+            make_add(255, "            .collect()"),
+            make_add(256, "    };"),
+            make_add(257, ""),
+            make_add(258, "    for (i, &s) in starts.iter().enumerate() {"),
+        ];
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        let groups = factor_cluster(&dels, &adds, profile);
+
+        assert_eq!(groups[0].old_range, 0..14, "pre-blank block old");
+        assert_eq!(groups[0].new_range, 0..15, "pre-blank block new");
+        assert_eq!(groups[1].old_range, 14..15, "blank line old");
+        assert_eq!(groups[1].new_range, 15..16, "blank line new");
     }
 
     #[test]

@@ -602,12 +602,6 @@ fn test_initial_screen_rendered_visual_frame() {
         screen_lines.push(line);
     }
 
-    println!("\n┌{}┐", "─".repeat(width));
-    for (y, l) in screen_lines.iter().enumerate() {
-        println!("│{:<width$}│ (row {y:02})", l, width = width);
-    }
-    println!("└{}┘\n", "─".repeat(width));
-
     // Row 0: Top Header Bar (repo + reviewed file count + global mod counts)
     assert!(screen_lines[0].starts_with(" diffuse 1 file +1 ~1"));
     assert!(screen_lines[0].contains("+1"));
@@ -697,12 +691,6 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
         }
         screen_lines.push(line);
     }
-
-    println!("\n┌{}┐", "─".repeat(width));
-    for (y, l) in screen_lines.iter().enumerate() {
-        println!("│{:<width$}│ (row {y:02})", l, width = width);
-    }
-    println!("└{}┘\n", "─".repeat(width));
 
     // Row 0: Header bar (repo + global counts, no file, no prefix)
     assert!(screen_lines[0].contains("diffuse"));
@@ -1612,6 +1600,75 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
         found_struck,
         "moved-out source token is_on_scrollbar must be struck out (CROSSED_OUT) on peer del row"
     );
+}
+
+#[test]
+fn test_scrollbar_grab_drag_blank_line_is_ctx() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    // Find dispatch.rs file index
+    let (fi, _) = state
+        .output
+        .files
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must be present");
+
+    let mut matching_rows = Vec::new();
+    for item in &state.flat {
+        if item.file_idx == fi
+            && let Some(r) = state.row_of(item)
+            && (r.old_line == Some(262) || r.new_line == Some(257))
+        {
+            matching_rows.push(r);
+        }
+    }
+
+    assert_eq!(
+        matching_rows.len(),
+        1,
+        "blank line between changes must not be split into separate Add and Del rows: {matching_rows:?}"
+    );
+    assert_eq!(matching_rows[0].kind, diffuse_core::parse::RowKind::Ctx);
+    assert_eq!(matching_rows[0].old_line, Some(262));
+    assert_eq!(matching_rows[0].new_line, Some(257));
+
+    let row_flat_idx = state
+        .flat
+        .iter()
+        .position(|it| {
+            it.file_idx == fi && state.row_of(it).is_some_and(|r| r.old_line == Some(262))
+        })
+        .expect("must find line 262 in flat");
+    state.row_idx = row_flat_idx;
+    state.vis_line = 0;
+    let (w, h) = (200, 40);
+    let buf = state.render_to_buffer(w, h);
+    for y in 0..h {
+        let mut line_str = String::new();
+        for x in 0..w {
+            line_str.push_str(buf[(x, y)].symbol());
+        }
+        if line_str.contains("257") || line_str.contains("262") {
+            assert!(
+                !line_str.contains("257~+"),
+                "must not render as 257~+: {line_str}"
+            );
+            assert!(
+                !line_str.contains("262 -"),
+                "must not render as 262 -: {line_str}"
+            );
+        }
+    }
 }
 
 #[test]
