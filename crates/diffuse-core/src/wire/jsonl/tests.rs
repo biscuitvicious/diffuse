@@ -711,7 +711,7 @@ fn test_compact_wire_run_and_row_serialization() {
         text: "hello world".into(),
     };
     let json_ctx = serde_json::to_string(&run_ctx).unwrap();
-    assert_eq!(json_ctx, r#""_hello world""#);
+    assert_eq!(json_ctx, r#"" hello world""#);
     let de_ctx: OutputRun = serde_json::from_str(&json_ctx).unwrap();
     assert_eq!(de_ctx.kind, RunKind::Ctx);
     assert_eq!(de_ctx.text, "hello world");
@@ -726,7 +726,7 @@ fn test_compact_wire_run_and_row_serialization() {
         text: "fn".into(),
     };
     let json_add = serde_json::to_string(&run_add).unwrap();
-    assert_eq!(json_add, r#"["+fn","kwd"]"#);
+    assert_eq!(json_add, r#"["+fn","kw"]"#);
     let de_add: OutputRun = serde_json::from_str(&json_add).unwrap();
     assert_eq!(de_add.kind, RunKind::Add);
     assert_eq!(de_add.text, "fn");
@@ -762,7 +762,7 @@ fn test_compact_wire_run_and_row_serialization() {
     assert_eq!(de_sgr.sgr, Some(4));
 
     // 5. null normalizes to TokenColor::Default on deserialize
-    let de_null: OutputRun = serde_json::from_str(r#"["_foo",null]"#).unwrap();
+    let de_null: OutputRun = serde_json::from_str(r#"[" foo",null]"#).unwrap();
     assert_eq!(de_null.color, TokenColor::Default);
 
     // 6. OutputRow serialization has no text, del_text, spans fields
@@ -791,7 +791,7 @@ fn test_compact_wire_run_and_row_serialization() {
     let row_json = serde_json::to_string(&row).unwrap();
     assert_eq!(
         row_json,
-        r#"["mod",10,12,["-old_call();",["+new_call();","kwd"]]]"#
+        r#"["mod",10,12,[["-","old_call();"],["+",["new_call();","kw"]]]]"#
     );
 
     // Dynamic reconstruction
@@ -799,6 +799,102 @@ fn test_compact_wire_run_and_row_serialization() {
     assert_eq!(de_row.old_text(), "old_call();");
     assert_eq!(de_row.new_text(), "new_call();");
     assert_eq!(de_row.text(), "new_call();");
+
+    // Blank row serializes as []
+    let blank_row = OutputRow {
+        kind: RowKind::Ctx,
+        mov_side: None,
+        old_line: Some(10),
+        new_line: Some(10),
+        runs: vec![],
+        wholesale: false,
+        group: None,
+    };
+    let blank_json = serde_json::to_string(&blank_row).unwrap();
+    assert_eq!(blank_json, r#"["ctx",10,10,[]]"#);
+    let de_blank: OutputRow = serde_json::from_str(&blank_json).unwrap();
+    assert_eq!(de_blank.runs.len(), 0);
+    assert_eq!(de_blank.text(), "");
+
+    // Multi-batch row with whitespace absorption and coalescing
+    let multi_run_row = OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        old_line: Some(10),
+        new_line: Some(10),
+        runs: vec![
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "    ".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Keyword,
+                sgr: None,
+                text: "let".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+                text: " ".into(),
+            },
+            OutputRun {
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "x".into(),
+            },
+            OutputRun {
+                kind: RunKind::Add,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "y".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+                text: " ".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Operator,
+                sgr: None,
+                text: "=".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+                text: " ".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Number,
+                sgr: None,
+                text: "17".into(),
+            },
+            OutputRun {
+                kind: RunKind::Ctx,
+                color: TokenColor::Operator,
+                sgr: None,
+                text: ";".into(),
+            },
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let multi_json = serde_json::to_string(&multi_run_row).unwrap();
+    assert_eq!(
+        multi_json,
+        r#"["mod",10,10,[[" ","    ",["let ","kw"]],["-","x"],["+","y"],[" ",[" = ","op"],["17","num"],[";","op"]]]]"#
+    );
+    let de_multi: OutputRow = serde_json::from_str(&multi_json).unwrap();
+    assert_eq!(de_multi.old_text(), "    let x = 17;");
+    assert_eq!(de_multi.new_text(), "    let y = 17;");
 
     // WireRecord::Line serializes identically to OutputRow (as a tuple)
     let line_rec = WireRecord::Line(row);

@@ -1434,8 +1434,25 @@ fn test_language_syntax_attributes_and_bypasses() {
 
 #[test]
 fn test_quote_and_fence_border_constants() {
-    assert_eq!(TokenColor::QuoteBorder.wire_code(), Some("qbo"));
-    assert_eq!(TokenColor::FenceBorder.wire_code(), Some("fbo"));
+    assert_eq!(TokenColor::QuoteBorder.wire_code(), Some("qbd"));
+    assert_eq!(TokenColor::FenceBorder.wire_code(), Some("fbd"));
+    assert_eq!(TokenColor::TableBorder.wire_code(), Some("tbd"));
+    assert_eq!(TokenColor::LinkBorder.wire_code(), Some("lbd"));
+    assert_eq!(TokenColor::Bold.wire_code(), Some("bold"));
+    assert_eq!(TokenColor::Keyword.wire_code(), Some("kw"));
+    assert_eq!(TokenColor::Function.wire_code(), Some("fn"));
+    assert_eq!(TokenColor::Operator.wire_code(), Some("op"));
+    assert_eq!(TokenColor::Type.wire_code(), Some("ty"));
+
+    assert_eq!(TokenColor::from_wire_code("qbd"), TokenColor::QuoteBorder);
+    assert_eq!(TokenColor::from_wire_code("fbd"), TokenColor::FenceBorder);
+    assert_eq!(TokenColor::from_wire_code("tbd"), TokenColor::TableBorder);
+    assert_eq!(TokenColor::from_wire_code("lbd"), TokenColor::LinkBorder);
+    assert_eq!(TokenColor::from_wire_code("bold"), TokenColor::Bold);
+    assert_eq!(TokenColor::from_wire_code("kw"), TokenColor::Keyword);
+    assert_eq!(TokenColor::from_wire_code("fn"), TokenColor::Function);
+    assert_eq!(TokenColor::from_wire_code("op"), TokenColor::Operator);
+    assert_eq!(TokenColor::from_wire_code("ty"), TokenColor::Type);
 }
 
 #[test]

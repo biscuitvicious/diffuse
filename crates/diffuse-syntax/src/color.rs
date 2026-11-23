@@ -18,13 +18,13 @@ pub enum TokenColor {
     Default,
 
     // --- Syntax Colors ---
-    /// Operator (`opr`)
+    /// Operator (`op`)
     Operator,
-    /// Keyword (`kwd`)
+    /// Keyword (`kw`)
     Keyword,
-    /// Function / method (`fun`)
+    /// Function / method (`fn`)
     Function,
-    /// Type / struct / enum (`typ`)
+    /// Type / struct / enum (`ty`)
     Type,
     /// String literal (`str`)
     String,
@@ -38,7 +38,7 @@ pub enum TokenColor {
     Comment,
 
     // --- Markdown & Structural Diff Colors ---
-    /// Bold text (`bld`)
+    /// Bold text (`bold`)
     Bold,
     /// Italic text (`ita`)
     Italic,
@@ -54,15 +54,15 @@ pub enum TokenColor {
     Strike,
     /// Inline code span (`cde`)
     Code,
-    /// Table border (`tbo`)
+    /// Table border (`tbd`)
     TableBorder,
     /// Table header (`thd`)
     TableHeader,
-    /// Link border / brackets (`lbo`)
+    /// Link border / brackets (`lbd`)
     LinkBorder,
-    /// Quote border / blockquote chevron (`qbo`)
+    /// Quote border / blockquote chevron (`qbd`)
     QuoteBorder,
-    /// Fence border / code block fence (`fbo`)
+    /// Fence border / code block fence (`fbd`)
     FenceBorder,
 }
 
@@ -73,21 +73,33 @@ impl TokenColor {
         matches!(self, Self::Default)
     }
 
-    /// The canonical 3-letter wire code, or `None` if `TokenColor::Default`.
+    /// Returns `true` if this token color can absorb trailing whitespace.
+    #[inline]
+    pub const fn allows_trailing_whitespace(self) -> bool {
+        matches!(self, Self::Keyword | Self::Operator | Self::Type)
+    }
+
+    /// Returns `true` if this token color can absorb leading whitespace.
+    #[inline]
+    pub const fn allows_leading_whitespace(self) -> bool {
+        matches!(self, Self::Operator)
+    }
+
+    /// The canonical wire code, or `None` if `TokenColor::Default`.
     #[inline]
     pub const fn wire_code(self) -> Option<&'static str> {
         match self {
             Self::Default => None,
-            Self::Operator => Some("opr"),
-            Self::Keyword => Some("kwd"),
-            Self::Function => Some("fun"),
-            Self::Type => Some("typ"),
+            Self::Operator => Some("op"),
+            Self::Keyword => Some("kw"),
+            Self::Function => Some("fn"),
+            Self::Type => Some("ty"),
             Self::String => Some("str"),
             Self::CharLiteral => Some("chr"),
             Self::Number => Some("num"),
             Self::Literal => Some("lit"),
             Self::Comment => Some("com"),
-            Self::Bold => Some("bld"),
+            Self::Bold => Some("bold"),
             Self::Italic => Some("ita"),
             Self::Link => Some("lnk"),
             Self::Url => Some("url"),
@@ -95,28 +107,27 @@ impl TokenColor {
             Self::Delimiter => Some("dlm"),
             Self::Strike => Some("stk"),
             Self::Code => Some("cde"),
-            Self::TableBorder => Some("tbo"),
+            Self::TableBorder => Some("tbd"),
             Self::TableHeader => Some("thd"),
-            Self::LinkBorder => Some("lbo"),
-            Self::QuoteBorder => Some("qbo"),
-            Self::FenceBorder => Some("fbo"),
+            Self::LinkBorder => Some("lbd"),
+            Self::QuoteBorder => Some("qbd"),
+            Self::FenceBorder => Some("fbd"),
         }
     }
 
-    /// Parse from a wire string. Handles legacy `"txt"` and empty `""`
-    /// gracefully as `Default`.
+    /// Parse from a wire string. Returns `Default` for unrecognized codes.
     pub fn from_wire_code(s: &str) -> Self {
         match s {
-            "opr" => Self::Operator,
-            "kwd" => Self::Keyword,
-            "fun" => Self::Function,
-            "typ" => Self::Type,
+            "op" => Self::Operator,
+            "kw" => Self::Keyword,
+            "fn" => Self::Function,
+            "ty" => Self::Type,
             "str" => Self::String,
             "chr" => Self::CharLiteral,
             "num" => Self::Number,
             "lit" => Self::Literal,
             "com" => Self::Comment,
-            "bld" => Self::Bold,
+            "bold" => Self::Bold,
             "ita" => Self::Italic,
             "lnk" => Self::Link,
             "url" => Self::Url,
@@ -124,11 +135,11 @@ impl TokenColor {
             "dlm" => Self::Delimiter,
             "stk" => Self::Strike,
             "cde" => Self::Code,
-            "tbo" => Self::TableBorder,
+            "tbd" => Self::TableBorder,
             "thd" => Self::TableHeader,
-            "lbo" => Self::LinkBorder,
-            "qbo" => Self::QuoteBorder,
-            "fbo" => Self::FenceBorder,
+            "lbd" => Self::LinkBorder,
+            "qbd" => Self::QuoteBorder,
+            "fbd" => Self::FenceBorder,
             _ => Self::Default,
         }
     }

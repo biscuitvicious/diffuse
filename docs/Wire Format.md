@@ -30,14 +30,14 @@ Records are disambiguated by their top-level JSON type:
 - **JSON Array (`[ ... ]`)**: Line rows within a hunk (`OutputRow`).
 
 ```
-+-------------------------------------------------------------+
-| {"t":"file_header", "path":"src/main.rs", ...}              | -> FileHeader
-|   {"t":"hunk_header", "oldStart":1, "newStart":1, ...}      | -> HunkHeader
-|     ["ctx", 1, 1, ["_fn main() {"]]                         | -> OutputRow (Line)
-|     ["mod", 2, 2, ["-    old();", ["+    new();", "kwd"]]]  | -> OutputRow (Line)
-|     ["ctx", 3, 3, ["_}"]]                                   | -> OutputRow (Line)
-|   {"t":"file_footer", "path":"src/main.rs", ...}            | -> FileFooter
-+-------------------------------------------------------------+
++-------------------------------------------------------------------------+
+| {"t":"file_header", "path":"src/main.rs", ...}                          | -> FileHeader
+|   {"t":"hunk_header", "oldStart":1, "newStart":1, ...}                  | -> HunkHeader
+|     ["ctx", 1, 1, [[" ", "fn main() {"]]]                               | -> OutputRow (Line)
+|     ["mod", 2, 2, [["-", "    old();"], ["+", ["    new();", "kwd"]]]]  | -> OutputRow (Line)
+|     ["ctx", 3, 3, [[" ", "}"]]]                                         | -> OutputRow (Line)
+|   {"t":"file_footer", "path":"src/main.rs", ...}                        | -> FileFooter
++-------------------------------------------------------------------------+
 ```
 
 ---
@@ -55,7 +55,7 @@ $$\text{RowTuple} = [\text{kind}, \text{old\_line}, \text{new\_line}, \text{runs
 | **0** | `kind` | `string` | Canonical row classification: `"ctx"`, `"add"`, `"del"`, `"mod"`, `"mov"`, `"file"`, `"sep"`. |
 | **1** | `old_line` | `integer \| null` | 1-based coordinate in pre-image file, or `null` for additions. |
 | **2** | `new_line` | `integer \| null` | 1-based coordinate in post-image file, or `null` for deletions. |
-| **3** | `runs` | `array` | Sequence of classified token runs (`OutputRun`). |
+| **3** | `runs` | `array` | Sequence of diff batches (`[sign, ...syntax_runs]`). Serialized as `[]` on blank lines. |
 | **4** | `flags` *(optional)* | `object` | Supplementary metadata flags. Omitted when empty. |
 
 ### 3.2 Supplementary Metadata Flags (`RowFlags`)
@@ -79,78 +79,92 @@ When a row exhibits special relocation or grouping characteristics, an optional 
 
 1. **Context Row**:
    ```json
-   ["ctx", 42, 42, ["_fn calculate() {"]]
+   ["ctx", 42, 42, [[" ", "fn calculate() {"]]]
    ```
-2. **Deletion Row**:
+2. **Blank Context Row**:
    ```json
-   ["del", 10, null, ["-    let count = 0;"]]
+   ["ctx", 43, 43, []]
    ```
-3. **Addition Row**:
+3. **Deletion Row**:
    ```json
-   ["add", null, 15, [["+    let mut count = 0;", "kwd"]]]
+   ["del", 10, null, [["-", "    let count = 0;"]]]
    ```
-4. **Modified Row with Subword Highlighting**:
+4. **Addition Row**:
    ```json
-   ["mod", 25, 27, ["_    let ", "-old_value", ["+new_value", "typ"], "_ = 1;"]]
+   ["add", null, 15, [["+", ["    let mut count = 0;", "kwd"]]]]
    ```
-5. **Relocated Block Destination**:
+5. **Modified Row with Subword Highlighting**:
    ```json
-   ["mov", null, 88, [["+pub fn helper() {}", "fun"]], {"movSide": "tgt"}]
+   ["mod", 25, 27, [[" ", "    let "], ["-", "old_value"], ["+", ["new_value", "typ"]], [" ", " = 1;"]]]
    ```
-6. **Grouped Peer Row**:
+6. **Relocated Block Destination**:
    ```json
-   ["add", null, 142, ["+    additional_field: true,"], {"group": {"role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3}}]
+   ["mov", null, 88, [["+", ["pub fn helper() {}", "fun"]]], {"movSide": "tgt"}]
+   ```
+7. **Grouped Peer Row**:
+   ```json
+   ["add", null, 142, [["+", "    additional_field: true,"]], {"group": {"role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3}}]
    ```
 
 ---
 
-## 4. Token Run Specification (`OutputRun`)
+## 4. Batched Token Run Specification (`OutputRun` & `Batch`)
 
-A token run represents a contiguous slice of text sharing identical diff change status (`kind`), semantic syntax coloring (`color`), and ANSI style attribute modifiers (`sgr`).
+Token runs are grouped into contiguous **batches** by diff classification (`RunKind`). Each batch is serialized as a variadic JSON array where the first element is the diff category sign, followed by zero or more syntax runs:
 
-### 4.1 Sign Prefix Encoding
+$$[\text{sign}, \text{syntax\_run}_1, \text{syntax\_run}_2, \dots]$$
 
-Every token run embeds its diff classification as a single-character ASCII prefix prepended directly to the run text:
+### 4.1 Diff Category Sign
 
-| Prefix | Change Kind | Semantic Representation |
+The first element of every batch identifies the diff category for all contained syntax runs:
+
+| Sign | Change Kind | Semantic Representation |
 | :---: | :--- | :--- |
-| `'_'` | Context (`Ctx`) | Unchanged text present in both pre- and post-image. |
-| `'-'` | Deletion (`Del`) | Text deleted from pre-image. |
-| `'+'` | Addition (`Add`) | Text added in post-image. |
+| `" "` | Context (`Ctx`) | Unchanged text present in both pre- and post-image. |
+| `"-"` | Deletion (`Del`) | Text deleted from pre-image. |
+| `"+"` | Addition (`Add`) | Text added in post-image. |
+| `"<"` | Moved Source (`MovedSrc`) | Reflow-moved source text that left this line. |
+| `">"` | Moved Target (`MovedTgt`) | Reflow-moved target text that entered this line. |
 
-### 4.2 Compact Run Representations
+### 4.2 Syntax Run Representations
 
-Runs serialize as either a string scalar or a compact array based on presence of styling:
+Individual syntax runs inside a batch carry text, syntax coloring, and optional SGR attributes without repeating the diff sign:
 
 1. **Unstyled / Default Text** *(scalar string)*:
-   $$\text{"<sign><text>"}$$
-   *Example*: `"_    let x = "` or `"-old_fn()"`
+   $$\text{"<text>"}$$
+   *Example*: `"    let x = "` or `"old_fn();"`
 2. **Syntax Highlighted Run** *(2-element array)*:
-   $$[\text{"<sign><text>"}, \text{"<color>" package}]$$
-   *Example*: `["+struct", "kwd"]` or `["_Point", "typ"]`
+   $$[\text{"<text>"}, \text{"<color>" package}]$$
+   *Example*: `["struct ", "kw"]` or `["Point", "ty"]`
 3. **Syntax Highlighted with SGR Emphasis** *(3-element array)*:
-   $$[\text{"<sign><text>"}, \text{"<color>" package}, \text{sgr}]$$
-   *Example*: `["_# Architecture", "dlm", 1]` (heading with SGR 1 bold)
+   $$[\text{"<text>"}, \text{"<color>" package \| null}, \text{sgr}]$$
+   *Example*: `["# Architecture", "dlm", 1]` (heading with SGR 1 bold)
 
-Default text color (`TokenColor::Default`) serializes to `null` (or is omitted entirely in scalar format when no SGR modifier is present).
+### 4.3 Compression & Delimiter Whitespace Absorption
+
+During serialization, contiguous runs within each batch are automatically optimized:
+1. **Style Coalescing**: Adjacent runs with identical `(color, sgr)` combine into a single text slice.
+2. **Whitespace Absorption**: Trailing delimiter spaces fold directly into preceding tokens (e.g. `["let ", "kw"]`), and surrounding spaces fold into operators (e.g. `[" = ", "op"]`).
+3. **Zero Overhead for Blank Lines**: Lines containing no text serialize with an empty batches handle `[]`.
 
 ---
 
 ## 5. Canonical Semantic Color Abbreviations
 
-The engine uses canonical 3-letter semantic color identifiers. Renderers map these identifiers to active terminal themes (`DiffuseTheme`).
+The engine uses canonical semantic color identifiers. Renderers map these identifiers to active terminal themes (`DiffuseTheme`).
 
 | Code | Semantic Category | Typical Highlight Description |
 | :---: | :--- | :--- |
-| **`opr`** | Syntax | Operators, punctuation, and structural symbols (`=`, `+`, `->`, `;`). |
-| **`kwd`** | Syntax | Control flow and language keywords (`fn`, `pub`, `match`, `return`). |
-| **`fun`** | Syntax | Function, method, and macro identifiers. |
-| **`typ`** | Syntax | Type names, structs, traits, and primitive types. |
+| **`op`** | Syntax | Operators, punctuation, and structural symbols (`=`, `+`, `->`, `;`). |
+| **`kw`** | Syntax | Control flow and language keywords (`fn`, `pub`, `match`, `return`). |
+| **`fn`** | Syntax | Function, method, and macro identifiers. |
+| **`ty`** | Syntax | Type names, structs, traits, and primitive types. |
 | **`str`** | Syntax | String literals. |
 | **`chr`** | Syntax | Single-character literals (e.g. `'c'`, `'\n'`). |
 | **`num`** | Syntax | Numeric literals (integers, floats, hex values). |
+| **`lit`** | Syntax | Literal values (`true`, `false`, `null`, `None`). |
 | **`com`** | Syntax | Source comments and unstyled doc-comment prose. |
-| **`bld`** | Markdown | Bold / strong emphasis text spans. |
+| **`bold`** | Markdown | Bold / strong emphasis text spans. |
 | **`ita`** | Markdown | Italic / emphasized text spans. |
 | **`stk`** | Markdown | Strikethrough text spans. |
 | **`cde`** | Markdown | Inline code spans (distinct from strings for visual separation). |
@@ -158,11 +172,11 @@ The engine uses canonical 3-letter semantic color identifiers. Renderers map the
 | **`url`** | Markdown | Link destination URL / target address. |
 | **`rul`** | Markdown | Horizontal thematic divider rules (`---`, `***`). |
 | **`dlm`** | Markdown | Delimiters, list bullets, heading hashes (`#`), blockquote bars (`>`). |
-| **`tbo`** | Markdown | Markdown table grid borders and column dividers (`\|`). |
+| **`tbd`** | Markdown | Markdown table grid borders and column dividers (`\|`). |
 | **`thd`** | Markdown | Markdown table header cells. |
-| **`lbo`** | Markdown | Markdown link formatting brackets (`[`, `]`, `(`, `)`). |
-| **`qbo`** | Markdown | Markdown blockquote vertical indent bars. |
-| **`fbo`** | Markdown | Fenced code block delimiters (```` ``` ````). |
+| **`lbd`** | Markdown | Markdown link formatting brackets (`[`, `]`, `(`, `)`). |
+| **`qbd`** | Markdown | Markdown blockquote vertical indent bars. |
+| **`fbd`** | Markdown | Fenced code block delimiters (```` ``` ````). |
 
 ---
 

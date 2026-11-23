@@ -741,14 +741,14 @@ fn profiled_unprofiled_merged_runs_diverge_on_comment_tail_numbers() {
 
 #[test]
 fn test_run_kind_sign_char_and_from_sign_char() {
-    assert_eq!(RunKind::Ctx.sign_char(), '_');
+    assert_eq!(RunKind::Ctx.sign_char(), ' ');
     assert_eq!(RunKind::Del.sign_char(), '-');
     assert_eq!(RunKind::Add.sign_char(), '+');
 
+    assert_eq!(RunKind::from_sign_char(' '), Some(RunKind::Ctx));
     assert_eq!(RunKind::from_sign_char('_'), Some(RunKind::Ctx));
     assert_eq!(RunKind::from_sign_char('-'), Some(RunKind::Del));
     assert_eq!(RunKind::from_sign_char('+'), Some(RunKind::Add));
-    assert_eq!(RunKind::from_sign_char(' '), None);
     assert_eq!(RunKind::from_sign_char('x'), None);
 }
 

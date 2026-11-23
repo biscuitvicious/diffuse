@@ -511,7 +511,7 @@ pub fn process_single_diff_file(
                 mov_side: None,
                 new_line: r.new_line(),
                 old_line: r.old_line(),
-                runs,
+                runs: crate::wire::run::canonicalize_runs(&runs),
                 wholesale: false,
                 group: r.group(),
             });

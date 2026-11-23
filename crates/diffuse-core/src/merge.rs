@@ -402,6 +402,7 @@ mod moved_src_tests {
         assert_eq!(RunKind::MovedTgt.sign_char(), '>');
         assert_eq!(RunKind::from_sign_char('>'), Some(RunKind::MovedTgt));
         // Existing sigils unaffected.
+        assert_eq!(RunKind::from_sign_char(' '), Some(RunKind::Ctx));
         assert_eq!(RunKind::from_sign_char('_'), Some(RunKind::Ctx));
         assert_eq!(RunKind::from_sign_char('-'), Some(RunKind::Del));
         assert_eq!(RunKind::from_sign_char('+'), Some(RunKind::Add));

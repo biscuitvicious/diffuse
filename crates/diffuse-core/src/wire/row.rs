@@ -142,7 +142,7 @@ impl Serialize for OutputRow {
         seq.serialize_element(&self.kind)?;
         seq.serialize_element(&self.old_line)?;
         seq.serialize_element(&self.new_line)?;
-        seq.serialize_element(&self.runs)?;
+        seq.serialize_element(&super::run::BatchedRunsRef(&self.runs))?;
         if !flags.is_empty() {
             seq.serialize_element(&flags)?;
         }
@@ -178,8 +178,9 @@ impl<'de> Deserialize<'de> for OutputRow {
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
                 let runs: Vec<OutputRun> = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                    .next_element::<super::run::BatchedRuns>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?
+                    .0;
                 let flags: Option<RowFlags> = seq.next_element()?;
 
                 let (mov_side, wholesale, group) = match flags {

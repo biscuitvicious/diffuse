@@ -986,12 +986,20 @@ index 6f6222d..4aa7a1d 100644
 }
 
 fn load_opt1_wire_output() -> PipelineOutput {
-    let wire_path = Path::new(concat!(
+    let base_dir = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/expect/wire.jsonl"
+        "/../../tests/golden/opt-1-cache-regex-window-slice"
     ));
+    let wire_path = base_dir.join("expect/wire.jsonl");
     let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
-    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let mut files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let fixture_new = base_dir.join("fixture/new");
+    for f in &mut files {
+        let p = fixture_new.join(&f.path);
+        if let Ok(content) = fs::read_to_string(&p) {
+            f.new_content = content.lines().map(String::from).collect();
+        }
+    }
     PipelineOutput {
         files,
         branch: String::new(),

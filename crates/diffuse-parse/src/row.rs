@@ -29,7 +29,7 @@ impl RunKind {
     #[inline]
     pub fn sign_char(self) -> char {
         match self {
-            RunKind::Ctx => '_',
+            RunKind::Ctx => ' ',
             RunKind::Del => '-',
             RunKind::Add => '+',
             RunKind::MovedSrc => '<',
@@ -40,7 +40,7 @@ impl RunKind {
     #[inline]
     pub fn from_sign_char(c: char) -> Option<Self> {
         match c {
-            '_' => Some(RunKind::Ctx),
+            ' ' | '_' => Some(RunKind::Ctx),
             '-' => Some(RunKind::Del),
             '+' => Some(RunKind::Add),
             '<' => Some(RunKind::MovedSrc),

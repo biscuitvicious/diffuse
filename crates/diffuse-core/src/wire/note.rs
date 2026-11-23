@@ -18,6 +18,10 @@ pub struct OutputNote {
     pub location: crate::notes::NoteLocation,
     pub text: String,
     pub created_at: u64,
+    #[serde(
+        serialize_with = "crate::wire::run::serialize_batched_runs",
+        deserialize_with = "crate::wire::run::deserialize_batched_runs"
+    )]
     pub runs: Vec<OutputRun>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<LineHash>,

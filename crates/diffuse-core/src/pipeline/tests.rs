@@ -1416,7 +1416,7 @@ fn test_markdown_file_rows_multiline_fences_and_syntax() {
         rows[10]
             .runs
             .iter()
-            .any(|r| r.color == TokenColor::Keyword && r.text == "if")
+            .any(|r| r.color == TokenColor::Keyword && r.text.starts_with("if"))
     );
 
     // Line 13: closing code fence ``` -> fbo
@@ -1579,7 +1579,7 @@ fn test_markdown_and_doc_comment_table_pipeline() {
     // headers table_header with SGR 14
     let rs_header_runs = &rs_rows[0].runs;
     assert_eq!(rs_header_runs[0].color, TokenColor::Comment);
-    assert_eq!(rs_header_runs[0].text.as_ref(), "///");
+    assert_eq!(rs_header_runs[0].text.as_ref(), "/// ");
     let rs_pipe_runs: Vec<_> = rs_header_runs
         .iter()
         .filter(|r| r.text.as_ref() == "|")
@@ -1599,9 +1599,8 @@ fn test_markdown_and_doc_comment_table_pipeline() {
     // dashes table borders
     let rs_align_runs = &rs_rows[1].runs;
     assert_eq!(rs_align_runs[0].color, TokenColor::Comment);
-    assert_eq!(rs_align_runs[0].text.as_ref(), "///");
-    assert_eq!(rs_align_runs[1].color, TokenColor::Comment);
-    for r in &rs_align_runs[2..] {
+    assert_eq!(rs_align_runs[0].text.as_ref(), "/// ");
+    for r in &rs_align_runs[1..] {
         assert_eq!(r.color, TokenColor::TableBorder);
     }
 

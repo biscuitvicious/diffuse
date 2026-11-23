@@ -90,14 +90,16 @@ pub fn colored_runs_with_next(
                 RunKind::Ctx
             };
             for_each_ctx_line_token(r.text(), new_line, next_line, profile, regions, |t| {
-                out.push(OutputRun {
-                    kind,
-                    color: t.color,
-                    sgr: t.sgr,
-                    text: token_cow(t.text),
-                });
+                if !t.text.is_empty() {
+                    out.push(OutputRun {
+                        kind,
+                        color: t.color,
+                        sgr: t.sgr,
+                        text: token_cow(t.text),
+                    });
+                }
             });
-        } else {
+        } else if !r.text().is_empty() {
             out.push(OutputRun {
                 kind: RunKind::Del,
                 color: TokenColor::Default,
@@ -363,14 +365,16 @@ pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> V
     let profile = lang_profile(ext);
     let mut runs = Vec::new();
     for_each_ctx_line_token(line_text, line_num, None, profile, &[], |tk| {
-        runs.push(OutputRun {
-            kind: crate::merge::RunKind::Ctx,
-            color: tk.color,
-            sgr: tk.sgr,
-            text: tk.text.to_string().into(),
-        });
+        if !tk.text.is_empty() {
+            runs.push(OutputRun {
+                kind: crate::merge::RunKind::Ctx,
+                color: tk.color,
+                sgr: tk.sgr,
+                text: tk.text.to_string().into(),
+            });
+        }
     });
-    runs
+    crate::wire::run::canonicalize_runs(&runs)
 }
 
 pub fn build_hunk_output_row(
@@ -389,7 +393,9 @@ pub fn build_hunk_output_row(
         mov_side,
         new_line,
         old_line,
-        runs: colored_runs_with_next(r, next_line, profile, regions),
+        runs: crate::wire::run::canonicalize_runs(&colored_runs_with_next(
+            r, next_line, profile, regions,
+        )),
         wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
         group: r.group(),
     }
