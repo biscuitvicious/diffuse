@@ -1,7 +1,6 @@
 //! Unit tests for syntax section classification and cluster partitioning.
 
 use std::{
-    io::Read,
     path::PathBuf,
     thread::{available_parallelism, spawn},
 };

@@ -149,67 +149,55 @@ fn topological_sort_cluster(rows: Vec<Row>) -> Vec<Row> {
         Ungrouped(Row),
     }
 
+    let mut rows_iter = rows.into_iter().peekable();
     let mut items: Vec<Item> = Vec::new();
-    let mut i = 0;
-    while i < rows.len() {
-        if let Some(gid) = rows[i].group().map(|g| g.id) {
-            let mut peer_rows = Vec::new();
-            while i < rows.len() && rows[i].group().map(|g| g.id) == Some(gid) {
-                peer_rows.push(rows[i].clone());
-                i += 1;
+    while let Some(row) = rows_iter.next() {
+        if let Some(gid) = row.group().map(|g| g.id) {
+            let mut peer_rows = vec![row];
+            while rows_iter.peek().and_then(|r| r.group().map(|g| g.id)) == Some(gid) {
+                peer_rows.push(rows_iter.next().unwrap());
             }
             items.push(Item::PeerGroup(peer_rows));
         } else {
-            items.push(Item::Ungrouped(rows[i].clone()));
-            i += 1;
+            items.push(Item::Ungrouped(row));
         }
     }
 
-    let mut out = Vec::with_capacity(rows.len());
-    let mut i = 0;
-    while i < items.len() {
-        let placed_pos = items[i..].iter().position(|it| match it {
-            Item::PeerGroup(_) => true,
-            Item::Ungrouped(r) => {
-                matches!(r, Row::Mod { .. } | Row::MovSrc { .. } | Row::MovTgt { .. })
-            }
-        });
-        let end = match placed_pos {
-            Some(p) => i + p,
-            None => items.len(),
-        };
+    let mut out = Vec::new();
+    let mut pending_dels = Vec::new();
+    let mut pending_adds = Vec::new();
+    let mut pending_others = Vec::new();
 
-        let mut ungrouped_dels = Vec::new();
-        let mut ungrouped_adds = Vec::new();
-        let mut ungrouped_others = Vec::new();
-        for it in &items[i..end] {
-            match it {
-                Item::PeerGroup(_) => unreachable!(),
-                Item::Ungrouped(r) => match r {
-                    Row::Del { .. } => {
-                        ungrouped_dels.push(r.clone());
-                    }
-                    Row::Add { .. } => {
-                        ungrouped_adds.push(r.clone());
-                    }
-                    _ => ungrouped_others.push(r.clone()),
-                },
+    for it in items {
+        match it {
+            Item::PeerGroup(group_rows) => {
+                out.append(&mut pending_dels);
+                out.append(&mut pending_adds);
+                out.append(&mut pending_others);
+                out.extend(group_rows);
             }
-        }
-        out.extend(ungrouped_dels);
-        out.extend(ungrouped_adds);
-        out.extend(ungrouped_others);
-
-        if end < items.len() {
-            match &items[end] {
-                Item::PeerGroup(g) => out.extend(g.clone()),
-                Item::Ungrouped(r) => out.push(r.clone()),
-            }
-            i = end + 1;
-        } else {
-            break;
+            Item::Ungrouped(row) => match row {
+                Row::Mod { .. } => {
+                    out.append(&mut pending_dels);
+                    out.append(&mut pending_adds);
+                    out.append(&mut pending_others);
+                    out.push(row);
+                }
+                Row::Del { .. } | Row::MovSrc { .. } => {
+                    pending_dels.push(row);
+                }
+                Row::Add { .. } | Row::MovTgt { .. } => {
+                    pending_adds.push(row);
+                }
+                _ => {
+                    pending_others.push(row);
+                }
+            },
         }
     }
+    out.append(&mut pending_dels);
+    out.append(&mut pending_adds);
+    out.append(&mut pending_others);
     out
 }
 

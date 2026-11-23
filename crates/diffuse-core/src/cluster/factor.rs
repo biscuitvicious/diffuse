@@ -1,5 +1,6 @@
 //! Macro cluster factorization into irreducible M-to-N peer reflow groups.
 
+use diffuse_algo::{DelimiterCategory, UniversalDelimiterClassifier};
 use diffuse_syntax::profile::LangProfile;
 
 use crate::parse::{GroupId, Row};
@@ -396,29 +397,56 @@ pub fn factor_cluster_with_content(
             let can_expand_u = u_end - u_start < MAX_DELIM_EXPAND;
             let can_expand_v = v_end - v_start < MAX_DELIM_EXPAND;
 
-            if can_expand_v
+            let v_reduces_delta = can_expand_v
                 && u_end > u_start
                 && v_end > v_start
                 && diff != 0
                 && v_end < max_v
                 && !new_rows[v_end].is_moved()
-                && (old_depth - (new_depth + new_deltas[v_end])).abs() < diff.abs()
-            {
-                v_end += 1;
-                changed = true;
-            } else if can_expand_u
+                && (old_depth - (new_depth + new_deltas[v_end])).abs() < diff.abs();
+
+            let u_reduces_delta = can_expand_u
+                && u_end > u_start
+                && v_end > v_start
+                && diff != 0
                 && u_end < max_u
                 && !old_rows[u_end].is_moved()
-                && ((u_end > u_start
-                    && v_end > v_start
-                    && diff != 0
-                    && ((old_depth + old_deltas[u_end]) - new_depth).abs() < diff.abs())
-                    || old_depth > 0)
-            {
+                && ((old_depth + old_deltas[u_end]) - new_depth).abs() < diff.abs();
+
+            let u_catches_up = diff > 0
+                && old_depth > 0
+                && can_expand_u
+                && u_end < max_u
+                && !old_rows[u_end].is_moved();
+
+            let v_catches_up = diff < 0
+                && new_depth > 0
+                && can_expand_v
+                && v_end < max_v
+                && !new_rows[v_end].is_moved();
+
+            if v_reduces_delta {
+                v_end += 1;
+                changed = true;
+            } else if u_reduces_delta || u_catches_up {
                 u_end += 1;
                 changed = true;
-            } else if can_expand_v && new_depth > 0 && v_end < max_v && !new_rows[v_end].is_moved()
+            } else if v_catches_up {
+                v_end += 1;
+                changed = true;
+            } else if diff == 0
+                && old_depth > 0
+                && new_depth > 0
+                && can_expand_u
+                && can_expand_v
+                && u_end < max_u
+                && v_end < max_v
+                && !old_rows[u_end].is_moved()
+                && !new_rows[v_end].is_moved()
+                && !is_comment_line(old_rows[u_end].text(), profile)
+                && !is_comment_line(new_rows[v_end].text(), profile)
             {
+                u_end += 1;
                 v_end += 1;
                 changed = true;
             }
@@ -513,14 +541,19 @@ pub(crate) fn robust_delim_delta(text: &str) -> i32 {
             i += 1;
             continue;
         }
-        match b {
-            b'{' | b'(' | b'[' => delta += 1,
-            b'}' | b')' | b']' => delta -= 1,
+        match UniversalDelimiterClassifier.classify_char(b as char) {
+            Some(DelimiterCategory::Open(_)) => delta += 1,
+            Some(DelimiterCategory::Close(_)) => delta -= 1,
             _ => {}
         }
         i += 1;
     }
     delta
+}
+
+#[inline]
+fn is_comment_line(line: &str, profile: Option<&LangProfile>) -> bool {
+    profile.is_some_and(|p| p.is_comment_line(line))
 }
 
 fn has_information_edge_with_words(
@@ -535,6 +568,11 @@ fn has_information_edge_with_words(
     let d_trim = del_text.trim();
     let a_trim = add_text.trim();
     if d_trim.is_empty() || a_trim.is_empty() {
+        return false;
+    }
+    let d_is_comment = is_comment_line(del_text, profile);
+    let a_is_comment = is_comment_line(add_text, profile);
+    if d_is_comment != a_is_comment {
         return false;
     }
     // 1. Exact trimmed match: form edge for identical code
@@ -610,8 +648,16 @@ fn has_information_edge_with_words(
         let add_salient: usize = a_words.iter().map(|w| w.len()).sum();
         let qualifies = if del_salient > 0 && add_salient > 0 {
             let min_salient = del_salient.min(add_salient);
-            (matched_salient >= 6 || (matched_salient >= 3 && matched_salient == min_salient))
-                && (matched_salient as f64 / min_salient as f64) >= 0.50
+            let del_ratio = matched_salient as f64 / del_salient as f64;
+            let add_ratio = matched_salient as f64 / add_salient as f64;
+            let has_min_salient =
+                matched_salient >= 6 || (matched_salient >= 3 && matched_salient == min_salient);
+            let is_full_containment = matched_salient == min_salient;
+            let is_bilateral_balance = del_ratio >= 0.40 && add_ratio >= 0.40;
+            let is_dominant_coverage =
+                (del_ratio >= 0.65 || add_ratio >= 0.65) && del_ratio >= 0.25 && add_ratio >= 0.25;
+
+            has_min_salient && (is_full_containment || is_bilateral_balance || is_dominant_coverage)
         } else {
             true
         };
@@ -636,6 +682,124 @@ mod tests {
 
     fn make_add(num: u32, text: &str) -> Row {
         Row::add(AddLine::new(num, text))
+    }
+
+    #[test]
+    fn test_scrollbar_reflow_does_not_group_unrelated_body() {
+        let dels = vec![
+            make_del(227, "                let scrollbar_seek = is_on_scrollbar;"),
+            make_del(228, "                if scrollbar_seek {"),
+            make_del(
+                229,
+                "                    // Click and drag share one exact mapping from pointer",
+            ),
+            make_del(230, "                    // row to scroll position."),
+            make_del(231, "                    //"),
+            make_del(
+                232,
+                "                    // The scrollbar widget spans the full terminal height",
+            ),
+            make_del(
+                233,
+                "                    // (screen_height), but the viewport it represents is",
+            ),
+            make_del(
+                234,
+                "                    // only `vh` rows tall. The mapping must therefore use",
+            ),
+            make_del(
+                235,
+                "                    // the viewport-relative row and the viewport height so",
+            ),
+            make_del(
+                236,
+                "                    // the pointer position on the track corresponds to the",
+            ),
+            make_del(
+                237,
+                "                    // visible content area, not the full screen.",
+            ),
+            make_del(
+                238,
+                "                    self.is_dragging_scrollbar = true;",
+            ),
+            make_del(
+                239,
+                "                    let (_starts, _counts, _seg, total_vis) =",
+            ),
+            make_del(
+                240,
+                "                        self.cached_geometry_tuple(self.last_content_width);",
+            ),
+            make_del(
+                241,
+                "                    let max_scroll = total_vis.saturating_sub(vh);",
+            ),
+            make_del(
+                242,
+                "                    let row_relative = row.saturating_sub(header_offset);",
+            ),
+            make_del(
+                243,
+                "                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);",
+            ),
+            make_del(
+                244,
+                "                    tracing::debug!(row, col, target_vis, max_scroll, \"scrollbar mousedown\");",
+            ),
+            make_del(
+                245,
+                "                    self.scroll_to_visual(target_vis);",
+            ),
+            make_del(246, "                } else if in_viewport {"),
+        ];
+        let adds = vec![
+            make_add(237, "                if is_on_scrollbar {"),
+            make_add(
+                238,
+                "                    self.on_scrollbar_click(row, col);",
+            ),
+            make_add(239, "                } else {"),
+        ];
+        let old_words: Vec<Vec<&str>> = dels.iter().map(|r| significant_words(r.text())).collect();
+        let new_words: Vec<Vec<&str>> = adds.iter().map(|r| significant_words(r.text())).collect();
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        let mut edge_count = 0;
+        for (u, d) in dels.iter().enumerate() {
+            for (v, a) in adds.iter().enumerate() {
+                if has_information_edge_with_words(
+                    d.text(),
+                    a.text(),
+                    &old_words[u],
+                    &new_words[v],
+                    None,
+                    None,
+                    profile,
+                ) {
+                    edge_count += 1;
+                    assert_eq!((u, v), (0, 0), "only header lines may have an edge");
+                }
+            }
+        }
+        assert_eq!(
+            edge_count, 1,
+            "exactly one edge exists for the header refactor"
+        );
+        let groups = factor_cluster(&dels, &adds, profile);
+        // Header refactor forms group 0
+        assert_eq!(groups[0].old_range, 0..2);
+        assert_eq!(groups[0].new_range, 0..1);
+
+        // Body deletions (lines 229-246, indices 2..20) must be pure deletions,
+        // never grouped with unrelated additions (lines 238-239, indices 1..3).
+        for g in &groups[1..19] {
+            assert_eq!(g.old_range.len(), 1);
+            assert!(g.new_range.is_empty());
+        }
+        assert_eq!(groups[19].old_range, 20..20);
+        assert_eq!(groups[19].new_range, 1..2);
+        assert_eq!(groups[20].old_range, 20..20);
+        assert_eq!(groups[20].new_range, 2..3);
     }
 
     #[test]
@@ -771,10 +935,12 @@ mod tests {
             make_add(2, "    ($x:expr) => {"),
         ];
         let groups = factor_cluster(&dels, &adds, None);
-        // Does not panic or hang; terminates cleanly
-        assert_eq!(groups.len(), 1);
+        // Does not panic or hang; terminates cleanly into balanced mod and pure add
+        assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].old_count(), 1);
-        assert_eq!(groups[0].new_count(), 2);
+        assert_eq!(groups[0].new_count(), 1);
+        assert_eq!(groups[1].old_count(), 0);
+        assert_eq!(groups[1].new_count(), 1);
     }
 
     #[test]

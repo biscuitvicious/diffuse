@@ -844,7 +844,12 @@ fn is_admissible_slot_pair(
     // historical behavior; headless pairs are untouched here. A verbatim
     // reindent (`return None` at a new indent) always pairs: there is no
     // content difference for a salient token to witness.
-    if !enforce_head_gate || u_trim == v_trim || !shares_statement_head(u_trim, v_trim) {
+    let is_cross_type_decl = is_decl_compat && u_decl_role != v_decl_role;
+    if !enforce_head_gate
+        || is_cross_type_decl
+        || u_trim == v_trim
+        || !shares_statement_head(u_trim, v_trim)
+    {
         return true;
     }
     let (_, runs) = crate::lcs::word_spans_and_runs_with_profile(u_text, v_text, profile);
