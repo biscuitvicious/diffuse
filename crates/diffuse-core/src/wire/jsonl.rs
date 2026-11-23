@@ -43,14 +43,6 @@ enum TaggedRecordRef<'a> {
     FileFooter(&'a FileFooter),
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
-enum TaggedRecordDe {
-    FileHeader(FileHeader),
-    HunkHeader(HunkHeader),
-    FileFooter(FileFooter),
-}
-
 impl Serialize for WireRecord {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -71,17 +63,20 @@ impl<'de> Deserialize<'de> for WireRecord {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(untagged)]
+        #[serde(tag = "t", rename_all = "snake_case")]
         enum WireRecordDe {
+            FileHeader(FileHeader),
+            HunkHeader(HunkHeader),
+            #[serde(rename = "row")]
             Line(OutputRow),
-            Tagged(TaggedRecordDe),
+            FileFooter(FileFooter),
         }
 
         match WireRecordDe::deserialize(deserializer)? {
             WireRecordDe::Line(row) => Ok(WireRecord::Line(row)),
-            WireRecordDe::Tagged(TaggedRecordDe::FileHeader(h)) => Ok(WireRecord::FileHeader(h)),
-            WireRecordDe::Tagged(TaggedRecordDe::HunkHeader(h)) => Ok(WireRecord::HunkHeader(h)),
-            WireRecordDe::Tagged(TaggedRecordDe::FileFooter(f)) => Ok(WireRecord::FileFooter(f)),
+            WireRecordDe::FileHeader(h) => Ok(WireRecord::FileHeader(h)),
+            WireRecordDe::HunkHeader(h) => Ok(WireRecord::HunkHeader(h)),
+            WireRecordDe::FileFooter(f) => Ok(WireRecord::FileFooter(f)),
         }
     }
 }

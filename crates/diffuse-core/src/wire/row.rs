@@ -4,7 +4,7 @@
 //! flags?]`), span derivation, and conversion back to structural AST `Row`
 //! nodes.
 
-use std::{fmt, ops::Not};
+use std::ops::Not;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,29 +14,47 @@ use crate::{
     parse::{AddLine, CtxLine, DelLine, PeerGroup, Row, RowKind, Spans},
 };
 
-/// Optional trailing metadata flags on a serialized compact row tuple.
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RowFlags {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mov_side: Option<MovSide>,
-    #[serde(default, skip_serializing_if = "Not::not")]
-    pub wholesale: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<PeerGroup>,
+#[derive(Serialize)]
+struct OutputRowWireRef<'a> {
+    t: &'static str,
+    k: RowKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ol: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nl: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    r: Option<super::run::BatchedRunsRef<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ms: Option<MovSide>,
+    #[serde(skip_serializing_if = "Not::not")]
+    ws: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    g: Option<PeerGroup>,
 }
 
-impl RowFlags {
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.mov_side.is_none() && !self.wholesale && self.group.is_none()
-    }
+#[derive(Deserialize)]
+struct OutputRowWireDe {
+    #[serde(rename = "t", default)]
+    _t: Option<String>,
+    k: RowKind,
+    #[serde(default)]
+    ol: Option<u32>,
+    #[serde(default)]
+    nl: Option<u32>,
+    #[serde(default)]
+    r: Option<super::run::BatchedRuns>,
+    #[serde(default)]
+    ms: Option<MovSide>,
+    #[serde(default)]
+    ws: bool,
+    #[serde(default)]
+    g: Option<PeerGroup>,
 }
 
 /// A row in the wire-contract output: the collapse row + its merged token runs.
 ///
-/// Serialized as a positional tuple: `[kind, old_line, new_line, runs,
-/// flags?]`.
+/// Serialized as a single-letter keyed dictionary:
+/// `{"t": "row", "k": "ctx", "ol"?: 17, "nl"?: 18, "r"?: [[" ", ...]], ...}`.
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct OutputRow {
     pub kind: RowKind,
@@ -131,22 +149,22 @@ impl Serialize for OutputRow {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeSeq;
-        let flags = RowFlags {
-            mov_side: self.mov_side,
-            wholesale: self.wholesale,
-            group: self.group,
+        let r_ref = if self.runs.is_empty() {
+            None
+        } else {
+            Some(super::run::BatchedRunsRef(&self.runs))
         };
-        let len = if flags.is_empty() { 4 } else { 5 };
-        let mut seq = serializer.serialize_seq(Some(len))?;
-        seq.serialize_element(&self.kind)?;
-        seq.serialize_element(&self.old_line)?;
-        seq.serialize_element(&self.new_line)?;
-        seq.serialize_element(&super::run::BatchedRunsRef(&self.runs))?;
-        if !flags.is_empty() {
-            seq.serialize_element(&flags)?;
-        }
-        seq.end()
+        let wire = OutputRowWireRef {
+            t: "row",
+            k: self.kind,
+            ol: self.old_line,
+            nl: self.new_line,
+            r: r_ref,
+            ms: self.mov_side,
+            ws: self.wholesale,
+            g: self.group,
+        };
+        wire.serialize(serializer)
     }
 }
 
@@ -155,52 +173,16 @@ impl<'de> Deserialize<'de> for OutputRow {
     where
         D: serde::Deserializer<'de>,
     {
-        struct OutputRowVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for OutputRowVisitor {
-            type Value = OutputRow;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a compact row array [kind, old_line, new_line, runs, flags?]")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let kind: RowKind = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let old_line: Option<u32> = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                let new_line: Option<u32> = seq
-                    .next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
-                let runs: Vec<OutputRun> = seq
-                    .next_element::<super::run::BatchedRuns>()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?
-                    .0;
-                let flags: Option<RowFlags> = seq.next_element()?;
-
-                let (mov_side, wholesale, group) = match flags {
-                    Some(f) => (f.mov_side, f.wholesale, f.group),
-                    None => (None, false, None),
-                };
-
-                Ok(OutputRow {
-                    kind,
-                    mov_side,
-                    new_line,
-                    old_line,
-                    runs,
-                    wholesale,
-                    group,
-                })
-            }
-        }
-
-        deserializer.deserialize_seq(OutputRowVisitor)
+        let wire = OutputRowWireDe::deserialize(deserializer)?;
+        Ok(OutputRow {
+            kind: wire.k,
+            mov_side: wire.ms,
+            new_line: wire.nl,
+            old_line: wire.ol,
+            runs: wire.r.map(|b| b.0).unwrap_or_default(),
+            wholesale: wire.ws,
+            group: wire.g,
+        })
     }
 }
 

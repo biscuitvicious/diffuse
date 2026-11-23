@@ -637,7 +637,7 @@ fn test_row_group_wire_serialization() {
     };
     let json_peer_add = serde_json::to_string(&row_peer_add).unwrap();
     assert!(
-        json_peer_add.contains(r#""group":{"id":7,"slot":2,"n":2,"m":3}"#),
+        json_peer_add.contains(r#""g":{"id":7,"slot":2,"n":2,"m":3}"#),
         "serialized OutputRow must contain peer group info: {json_peer_add}"
     );
     let de_row_peer_add: OutputRow = serde_json::from_str(&json_peer_add).unwrap();
@@ -660,8 +660,8 @@ fn test_row_group_wire_serialization() {
     };
     let json_none = serde_json::to_string(&row_none).unwrap();
     assert!(
-        !json_none.contains("group"),
-        "OutputRow with None group must omit group key entirely: {json_none}"
+        !json_none.contains("\"g\""),
+        "OutputRow with None group must omit g key entirely: {json_none}"
     );
     let de_row_none: OutputRow = serde_json::from_str(&json_none).unwrap();
     assert_eq!(de_row_none.group, None);
@@ -694,7 +694,7 @@ fn test_row_group_wire_serialization() {
     };
     let json_peer = serde_json::to_string(&row_peer).unwrap();
     assert!(
-        json_peer.contains(r#""group":{"id":42,"slot":1,"n":2,"m":3}"#),
+        json_peer.contains(r#""g":{"id":42,"slot":1,"n":2,"m":3}"#),
         "serialized OutputRow must contain peer group info: {json_peer}"
     );
     let de_row_peer: OutputRow = serde_json::from_str(&json_peer).unwrap();
@@ -791,7 +791,7 @@ fn test_compact_wire_run_and_row_serialization() {
     let row_json = serde_json::to_string(&row).unwrap();
     assert_eq!(
         row_json,
-        r#"["mod",10,12,[["-","old_call();"],["+",["new_call();","kw"]]]]"#
+        r#"{"t":"row","k":"mod","ol":10,"nl":12,"r":[["-","old_call();"],["+",["new_call();","kw"]]]}"#
     );
 
     // Dynamic reconstruction
@@ -800,7 +800,7 @@ fn test_compact_wire_run_and_row_serialization() {
     assert_eq!(de_row.new_text(), "new_call();");
     assert_eq!(de_row.text(), "new_call();");
 
-    // Blank row serializes as []
+    // Blank row omits "r"
     let blank_row = OutputRow {
         kind: RowKind::Ctx,
         mov_side: None,
@@ -811,7 +811,7 @@ fn test_compact_wire_run_and_row_serialization() {
         group: None,
     };
     let blank_json = serde_json::to_string(&blank_row).unwrap();
-    assert_eq!(blank_json, r#"["ctx",10,10,[]]"#);
+    assert_eq!(blank_json, r#"{"t":"row","k":"ctx","ol":10,"nl":10}"#);
     let de_blank: OutputRow = serde_json::from_str(&blank_json).unwrap();
     assert_eq!(de_blank.runs.len(), 0);
     assert_eq!(de_blank.text(), "");
@@ -890,7 +890,7 @@ fn test_compact_wire_run_and_row_serialization() {
     let multi_json = serde_json::to_string(&multi_run_row).unwrap();
     assert_eq!(
         multi_json,
-        r#"["mod",10,10,[[" ","    ",["let ","kw"]],["-","x"],["+","y"],[" ",[" = ","op"],["17","num"],[";","op"]]]]"#
+        r#"{"t":"row","k":"mod","ol":10,"nl":10,"r":[[" ","    ",["let ","kw"]],["-","x"],["+","y"],[" ",[" = ","op"],["17","num"],[";","op"]]]}"#
     );
     let de_multi: OutputRow = serde_json::from_str(&multi_json).unwrap();
     assert_eq!(de_multi.old_text(), "    let x = 17;");

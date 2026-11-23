@@ -25,85 +25,73 @@ A valid JSONL stream conforms to the following state grammar per file diff:
 
 $$\text{Stream} \to (\text{FileHeader} \cdot (\text{HunkHeader} \cdot \text{Row}^*)^* \cdot \text{FileFooter})^*$$
 
-Records are disambiguated by their top-level JSON type:
-- **JSON Object (`{ ... }`)**: Framing envelope records containing a tag field `"t"`.
-- **JSON Array (`[ ... ]`)**: Line rows within a hunk (`OutputRow`).
+Records are uniformly framed as JSON Objects (`{ ... }`) containing a type discriminator tag field `"t"`:
+- `"file_header"`: File-level diff metadata header.
+- `"hunk_header"`: Hunk boundary coordinates.
+- `"row"`: Line-level token rows (`OutputRow`).
+- `"file_footer"`: File summary statistics and review notes.
 
 ```
-+-------------------------------------------------------------------------+
-| {"t":"file_header", "path":"src/main.rs", ...}                          | -> FileHeader
-|   {"t":"hunk_header", "oldStart":1, "newStart":1, ...}                  | -> HunkHeader
-|     ["ctx", 1, 1, [[" ", "fn main() {"]]]                               | -> OutputRow (Line)
-|     ["mod", 2, 2, [["-", "    old();"], ["+", ["    new();", "kwd"]]]]  | -> OutputRow (Line)
-|     ["ctx", 3, 3, [[" ", "}"]]]                                         | -> OutputRow (Line)
-|   {"t":"file_footer", "path":"src/main.rs", ...}                        | -> FileFooter
-+-------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------------------------------------+
+| {"t":"file_header", "path":"src/main.rs", ...}                                                                       | -> FileHeader
+|   {"t":"hunk_header", "oldStart":1, "newStart":1, ...}                                                               | -> HunkHeader
+|     {"t":"row", "k":"ctx", "ol":1, "nl":1, "r":[[" ", "fn main() {"]]}                                              | -> OutputRow (Line)
+|     {"t":"row", "k":"mod", "ol":2, "nl":2, "r":[["-", "    old();"], ["+", ["    new();", "kw"]]]}                  | -> OutputRow (Line)
+|     {"t":"row", "k":"ctx", "ol":3, "nl":3, "r":[[" ", "}"]]}                                                        | -> OutputRow (Line)
+|   {"t":"file_footer", "path":"src/main.rs", ...}                                                                     | -> FileFooter
++----------------------------------------------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## 3. Row Record Specification (`OutputRow`)
 
-Every line within a diff hunk is serialized as an `OutputRow` tuple.
+Every line within a diff hunk is serialized as a single-letter keyed JSON dictionary record:
 
-### 3.1 Positional Tuple Schema
+$$\text{RowRecord} = \{\text{"t"}: \text{"row"}, \text{"k"}: \text{kind}, \dots\}$$
 
-$$\text{RowTuple} = [\text{kind}, \text{old\_line}, \text{new\_line}, \text{runs}, \text{flags}?]$$
+### 3.1 Keyed Dictionary Schema
 
-| Index | Field | JSON Type | Description |
+| Key | Field | JSON Type | Description |
 | :---: | :--- | :--- | :--- |
-| **0** | `kind` | `string` | Canonical row classification: `"ctx"`, `"add"`, `"del"`, `"mod"`, `"mov"`, `"file"`, `"sep"`. |
-| **1** | `old_line` | `integer \| null` | 1-based coordinate in pre-image file, or `null` for additions. |
-| **2** | `new_line` | `integer \| null` | 1-based coordinate in post-image file, or `null` for deletions. |
-| **3** | `runs` | `array` | Sequence of diff batches (`[sign, ...syntax_runs]`). Serialized as `[]` on blank lines. |
-| **4** | `flags` *(optional)* | `object` | Supplementary metadata flags. Omitted when empty. |
+| **`t`** | `type` | `string` | Record discriminator, always `"row"`. |
+| **`k`** | `kind` | `string` | Canonical row classification: `"ctx"`, `"add"`, `"del"`, `"mod"`, `"mov"`, `"file"`, `"sep"`. |
+| **`ol`** | `old_line` *(optional)* | `integer` | 1-based coordinate in pre-image file. Omitted when not present (e.g. additions). |
+| **`nl`** | `new_line` *(optional)* | `integer` | 1-based coordinate in post-image file. Omitted when not present (e.g. deletions). |
+| **`r`** | `runs` *(optional)* | `array` | Sequence of batched diff runs (`[sign, ...syntax_runs]`). **Omitted for blank rows** where runs are empty. |
+| **`ms`** | `mov_side` *(optional)* | `string` | Move side indicator: `"src"` (origin) or `"tgt"` (destination). Omitted when not a relocation row. |
+| **`ws`** | `wholesale` *(optional)* | `boolean` | `true` when subword alignment was bypassed due to low entropy/drastic rewrite. Omitted when `false`. |
+| **`g`** | `group` *(optional)* | `object` | Peer reflow group identity: `{"id": <u32>, "slot": <usize>, "n": <usize>, "m": <usize>}`. Omitted when not part of an N \u2192 M reflow group. |
 
-### 3.2 Supplementary Metadata Flags (`RowFlags`)
-
-When a row exhibits special relocation or grouping characteristics, an optional 5th element object is appended:
-
-```json
-{
-  "movSide": "src" | "tgt",
-  "wholesale": true,
-  "group": { "role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3 }
-}
-```
-
-- **`movSide`**: `"src"` indicates the row represents the origin site of a relocated block; `"tgt"` indicates the destination site.
-- **`wholesale`**: `true` indicates a modification block where the pre-image and post-image differ so completely that intra-line subword alignment is bypassed in favor of discrete deletion and addition blocks.
-- **`group`**: Identifies rows belonging to an (N \u2192 M) peer reflow group:
-  - `{"role": "peer", "id": <u32>, "slot": <usize>, "n": <usize>, "m": <usize>}`: `id` is the group identity shared by all member rows, `slot` is the member's position within the group, and `n` / `m` are the old-side / new-side row cardinalities.
-
-### 3.3 Concrete Row Examples
+### 3.2 Concrete Row Examples
 
 1. **Context Row**:
    ```json
-   ["ctx", 42, 42, [[" ", "fn calculate() {"]]]
+   {"t": "row", "k": "ctx", "ol": 42, "nl": 42, "r": [[" ", "fn calculate() {"]]}
    ```
-2. **Blank Context Row**:
+2. **Blank Context Row** *(omits `"r"`)*:
    ```json
-   ["ctx", 43, 43, []]
+   {"t": "row", "k": "ctx", "ol": 43, "nl": 43}
    ```
 3. **Deletion Row**:
    ```json
-   ["del", 10, null, [["-", "    let count = 0;"]]]
+   {"t": "row", "k": "del", "ol": 10, "r": [["-", "    let count = 0;"]]}
    ```
 4. **Addition Row**:
    ```json
-   ["add", null, 15, [["+", ["    let mut count = 0;", "kwd"]]]]
+   {"t": "row", "k": "add", "nl": 15, "r": [["+", ["    let mut count = 0;", "kw"]]]}
    ```
 5. **Modified Row with Subword Highlighting**:
    ```json
-   ["mod", 25, 27, [[" ", "    let "], ["-", "old_value"], ["+", ["new_value", "typ"]], [" ", " = 1;"]]]
+   {"t": "row", "k": "mod", "ol": 25, "nl": 27, "r": [[" ", "    let "], ["-", "old_value"], ["+", ["new_value", "ty"]], [" ", " = 1;"]]}
    ```
 6. **Relocated Block Destination**:
    ```json
-   ["mov", null, 88, [["+", ["pub fn helper() {}", "fun"]]], {"movSide": "tgt"}]
+   {"t": "row", "k": "mov", "nl": 88, "ms": "tgt", "r": [["+", ["pub fn helper() {}", "fn"]]]}
    ```
 7. **Grouped Peer Row**:
    ```json
-   ["add", null, 142, [["+", "    additional_field: true,"]], {"group": {"role": "peer", "id": 7, "slot": 2, "n": 2, "m": 3}}]
+   {"t": "row", "k": "add", "nl": 142, "r": [["+", "    additional_field: true,"]], "g": {"id": 7, "slot": 2, "n": 2, "m": 3}}
    ```
 
 ---
