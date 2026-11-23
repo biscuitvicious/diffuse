@@ -122,9 +122,13 @@ pub fn write_row_segment<W: Write>(
     // Fast-path conditions mirror `row_segment_spans`: plain deletion rows and
     // run-less rows render one body span with no trailing background.
     let is_mov_src = mov_side == Some(MovSide::Src);
-    let is_plain_del =
-        kind == RowKind::Del || (is_mov_src && !runs.iter().any(|t| t.kind == RunKind::Ctx));
-    let body_empty = if runs.iter().any(|tok| tok.kind == RunKind::MovedSrc) {
+    let has_moved_src = runs.iter().any(|t| t.kind == RunKind::MovedSrc);
+    let is_plain_del = (kind == RowKind::Del && !has_moved_src)
+        || ((is_mov_src || mod_side == Some(ModSide::Del))
+            && !runs
+                .iter()
+                .any(|t| t.kind == RunKind::Ctx || t.kind == RunKind::MovedSrc));
+    let body_empty = if kind != RowKind::Del && has_moved_src {
         runs.iter().all(|tok| tok.kind == RunKind::MovedSrc)
     } else {
         runs.is_empty()
@@ -332,6 +336,7 @@ pub fn row_segment_spans(
     let has_subwords =
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
     let is_expansion_add = kind == RowKind::Add && is_peer_row;
+    let has_moved_src = runs.iter().any(|t| t.kind == RunKind::MovedSrc);
 
     let filtered_runs: Vec<OutputRun>;
     let runs: &[OutputRun] = match (mov_side, mod_side) {
@@ -351,7 +356,7 @@ pub fn row_segment_spans(
                 .collect();
             &filtered_runs
         }
-        _ if runs.iter().any(|t| t.kind == RunKind::MovedSrc) => {
+        _ if kind != RowKind::Del && has_moved_src => {
             filtered_runs = runs
                 .iter()
                 .filter(|t| t.kind != RunKind::MovedSrc)
@@ -365,16 +370,28 @@ pub fn row_segment_spans(
     let base_bg = |tok_kind: RunKind| -> Option<Color> {
         if is_ctx {
             line_bg
-        } else if tok_kind == RunKind::Del || tok_kind == RunKind::MovedSrc {
+        } else if tok_kind == RunKind::Del {
+            if kind == RowKind::Del {
+                line_bg
+            } else {
+                del_bg
+            }
+        } else if tok_kind == RunKind::MovedSrc {
             del_bg
         } else if tok_kind == RunKind::Add
             && (is_mod_row || has_subwords || is_expansion_add || mod_side == Some(ModSide::Add))
         {
             word_bg
-        } else if matches!(tok_kind, RunKind::Ctx | RunKind::MovedTgt | RunKind::Add) {
-            line_bg
         } else {
-            unreachable!("moved-out runs are filtered before rendering")
+            line_bg
+        }
+    };
+
+    let is_struck_tok = |tok_kind: RunKind| -> bool {
+        if kind == RowKind::Del {
+            tok_kind == RunKind::MovedSrc
+        } else {
+            tok_kind == RunKind::Del || tok_kind == RunKind::MovedSrc
         }
     };
 
@@ -396,9 +413,11 @@ pub fn row_segment_spans(
     };
     let text = exp_text.as_ref();
 
-    let is_plain_del = kind == RowKind::Del
+    let is_plain_del = (kind == RowKind::Del && !has_moved_src)
         || ((is_mov_src || mod_side == Some(ModSide::Del))
-            && !runs.iter().any(|t| t.kind == RunKind::Ctx));
+            && !runs
+                .iter()
+                .any(|t| t.kind == RunKind::Ctx || t.kind == RunKind::MovedSrc));
     if is_plain_del {
         let body = if is_full_row {
             text.to_string()
@@ -439,7 +458,7 @@ pub fn row_segment_spans(
                 continue;
             }
             let bg = base_bg(tok.kind);
-            if tok.kind == RunKind::Del || tok.kind == RunKind::MovedSrc {
+            if is_struck_tok(tok.kind) {
                 spans.push(StyledSpan {
                     text: tok.text.to_string(),
                     fg: Some(del_fg),
@@ -496,7 +515,7 @@ pub fn row_segment_spans(
         }
 
         let bg = base_bg(tok.kind);
-        if tok.kind == RunKind::Del || tok.kind == RunKind::MovedSrc {
+        if is_struck_tok(tok.kind) {
             spans.push(StyledSpan {
                 text: sub_piece,
                 fg: Some(del_fg),

@@ -1242,6 +1242,96 @@ fn test_render_moved_src_run_skipped() {
 }
 
 #[test]
+fn test_peer_del_row_strikes_moved_src_only() {
+    let theme = DiffuseTheme::dark();
+    let text = "let scrollbar_seek = is_on_scrollbar;";
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "let scrollbar_seek = ".into(),
+        },
+        OutputRun {
+            kind: RunKind::MovedSrc,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "is_on_scrollbar".into(),
+        },
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: ";".into(),
+        },
+    ];
+
+    let line = row_segment_spans(
+        text,
+        true,
+        RowKind::Del,
+        None,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        vec![StyledSpan::plain(" 227~- ")],
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+
+    assert_eq!(line.spans.len(), 4);
+    assert_eq!(line.spans[1].text, "let scrollbar_seek = ");
+    assert!(!line.spans[1].strikethrough);
+    assert_eq!(line.spans[2].text, "is_on_scrollbar");
+    assert!(line.spans[2].strikethrough);
+    assert_eq!(line.spans[3].text, ";");
+    assert!(!line.spans[3].strikethrough);
+
+    let rendered = render_row_segment(
+        text,
+        true,
+        RowKind::Del,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        &[StyledSpan::plain(" 227~- ")],
+        false,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+
+    assert_eq!(
+        crate::ansi::strip_ansi(&rendered),
+        " 227~- let scrollbar_seek = is_on_scrollbar;"
+    );
+    assert!(
+        rendered.contains("\x1b[9m"),
+        "moved-out source text must have strikethrough escape: {rendered:?}"
+    );
+    let strike_start = rendered.find("\x1b[9m").unwrap();
+    let strike_end = rendered.find("\x1b[29m").unwrap();
+    let struck_sub = &rendered[strike_start..strike_end];
+    assert!(
+        struck_sub.contains("is_on_scrollbar"),
+        "strikethrough must span is_on_scrollbar: {struck_sub:?}"
+    );
+    assert!(
+        !struck_sub.contains("let scrollbar_seek = "),
+        "deletion head must not be struck out: {struck_sub:?}"
+    );
+}
+
+#[test]
 fn test_render_mov_tgt_with_add_row_bg() {
     let theme = DiffuseTheme::dark();
     let s_add = theme.row_style(RowKind::Add);

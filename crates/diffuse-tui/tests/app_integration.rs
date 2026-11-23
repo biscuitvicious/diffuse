@@ -1541,6 +1541,80 @@ fn test_compound_mod_group_side_by_side_moved_src_struck() {
 }
 
 #[test]
+fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    // Find row 227 in flat rows (file 3 app/dispatch.rs)
+    let mut target_idx = None;
+    for (idx, item) in state.flat.iter().enumerate() {
+        if let Some(r) = state.row_of(item)
+            && r.old_line == Some(227)
+        {
+            target_idx = Some(idx);
+            break;
+        }
+    }
+    let target_idx = target_idx.expect("must find old line 227 in flat list");
+    state.row_idx = target_idx;
+    state.vis_line = 0;
+
+    let (w, h) = (200, 40);
+    let buf = state.render_to_buffer(w, h);
+
+    // Locate the line containing let scrollbar_seek = is_on_scrollbar;
+    let mut found_line = false;
+    let mut found_struck = false;
+    let mut found_non_struck_head = false;
+    for y in 0..h {
+        let mut line_str = String::new();
+        for x in 0..w {
+            line_str.push_str(buf[(x, y)].symbol());
+        }
+        if line_str.contains("let scrollbar_seek = is_on_scrollbar;") {
+            found_line = true;
+            let seek_pos = line_str.find("let scrollbar_seek").unwrap();
+            let is_on_pos = line_str.find("is_on_scrollbar").unwrap();
+
+            // Head (let scrollbar_seek) must not have CROSSED_OUT
+            let head_cell = &buf[(seek_pos as u16, y)];
+            if !head_cell
+                .modifier
+                .contains(ratatui::style::Modifier::CROSSED_OUT)
+            {
+                found_non_struck_head = true;
+            }
+
+            // Moved-out token (is_on_scrollbar) must have CROSSED_OUT
+            let moved_cell = &buf[(is_on_pos as u16, y)];
+            if moved_cell
+                .modifier
+                .contains(ratatui::style::Modifier::CROSSED_OUT)
+            {
+                found_struck = true;
+            }
+            break;
+        }
+    }
+    assert!(found_line, "must find line 227 rendered in buffer");
+    assert!(
+        found_non_struck_head,
+        "deletion head let scrollbar_seek must not be struck out on peer del row"
+    );
+    assert!(
+        found_struck,
+        "moved-out source token is_on_scrollbar must be struck out (CROSSED_OUT) on peer del row"
+    );
+}
+
+#[test]
 fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
