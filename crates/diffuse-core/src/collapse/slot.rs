@@ -4,7 +4,7 @@
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
-    cluster::factor::FactoredGroup,
+    cluster::factor::{FactoredGroup, is_salient_word_match},
     lcs::{spans::word_spans_and_runs_with_profile, tokenize_line},
     merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
@@ -1242,7 +1242,15 @@ fn relocate_cross_slot_tokens(
         .partition(|t| text_has_salient_token(t, profile));
     let mut linked: Vec<(usize, usize)> = Vec::new();
     for token in &salient {
-        apply_relocation_candidate(slot_runs, is_moved_slot, token, None, false, &mut linked);
+        apply_relocation_candidate(
+            slot_runs,
+            is_moved_slot,
+            token,
+            None,
+            false,
+            &mut linked,
+            profile,
+        );
     }
     for token in &bare {
         apply_relocation_candidate(
@@ -1252,8 +1260,108 @@ fn relocate_cross_slot_tokens(
             Some(&linked),
             true,
             &mut Vec::new(),
+            profile,
         );
     }
+}
+
+/// Extracts text belonging to the pre-image (old side): Del, Ctx, and MovedSrc
+/// runs.
+fn slot_old_text(runs: &[(RunKind, String)]) -> String {
+    runs.iter()
+        .filter(|(k, _)| *k == RunKind::Del || *k == RunKind::Ctx || *k == RunKind::MovedSrc)
+        .map(|(_, t)| t.as_str())
+        .collect()
+}
+
+/// Extracts text belonging to the post-image (new side): Add, Ctx, and MovedTgt
+/// runs.
+fn slot_new_text(runs: &[(RunKind, String)]) -> String {
+    runs.iter()
+        .filter(|(k, _)| *k == RunKind::Add || *k == RunKind::Ctx || *k == RunKind::MovedTgt)
+        .map(|(_, t)| t.as_str())
+        .collect()
+}
+
+/// Whether a pre-image line terminates a statement or block (`);`, `{`, `}`).
+fn is_closed_statement_line(text: &str) -> bool {
+    let t = text.trim();
+    t.ends_with(';') || t.ends_with('{') || t.ends_with('}')
+}
+
+/// Extracts words of length >= 3 for contextual affinity scoring.
+fn contextual_words(text: &str) -> Vec<&str> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .map(str::trim)
+        .filter(|w| w.len() >= 3 && w.chars().any(char::is_alphabetic))
+        .collect()
+}
+
+/// Computes distance-decayed contextual affinity between source slot `src` and
+/// candidate target slot `tgt` for relocating `token`.
+fn compute_contextual_affinity(
+    src: usize,
+    tgt: usize,
+    token: &str,
+    slot_runs: &[Vec<(RunKind, String)>],
+    _profile: Option<&LangProfile>,
+) -> f64 {
+    let src_text = slot_old_text(&slot_runs[src]);
+    let tgt_text = slot_new_text(&slot_runs[tgt]);
+
+    let src_words = contextual_words(&src_text);
+    let tgt_words = contextual_words(&tgt_text);
+    let token_words = contextual_words(token);
+
+    // Direct shared salient characters outside of the relocated token
+    let direct_shared_chars: usize = src_words
+        .iter()
+        .filter(|sw| !token_words.iter().any(|tw| is_salient_word_match(sw, tw)))
+        .filter(|sw| tgt_words.iter().any(|tw| is_salient_word_match(sw, tw)))
+        .map(|w| w.len())
+        .sum();
+
+    // Adjacent operand bonus: if a neighboring pre-image line in the reflow block
+    // shares operands with the post-image target (e.g. multi-line expression
+    // whose operands precede or follow the line carrying the method
+    // call/token). The neighbor must be an unclosed continuation line (not
+    // terminated by `;`, `{`, or `}`).
+    let mut neighbor_shared_chars: usize = 0;
+    let num_slots = slot_runs.len();
+    let neighbors = [
+        src.checked_sub(1),
+        if src + 1 < num_slots {
+            Some(src + 1)
+        } else {
+            None
+        },
+    ];
+    for adj in neighbors.into_iter().flatten() {
+        let adj_text = slot_old_text(&slot_runs[adj]);
+        let is_continuation = if adj < src {
+            !is_closed_statement_line(&adj_text)
+        } else {
+            !is_closed_statement_line(&src_text)
+        };
+        if is_continuation {
+            let adj_words = contextual_words(&adj_text);
+            let shared: usize = adj_words
+                .iter()
+                .filter(|aw| !token_words.iter().any(|tw| is_salient_word_match(aw, tw)))
+                .filter(|aw| tgt_words.iter().any(|tw| is_salient_word_match(aw, tw)))
+                .map(|w| w.len())
+                .sum();
+            if shared > neighbor_shared_chars {
+                neighbor_shared_chars = shared;
+            }
+        }
+    }
+
+    let distance = (src as isize - tgt as isize).unsigned_abs() as f64;
+    let score =
+        token.len() as f64 + 2.0 * direct_shared_chars as f64 + 1.5 * neighbor_shared_chars as f64;
+    let distance_decay = 1.0 / (1.0 + 0.5 * distance);
+    score * distance_decay
 }
 
 /// Whether a slot side carries nothing but punctuation/whitespace: every
@@ -1287,14 +1395,15 @@ fn apply_relocation_candidate(
     gate: Option<&[(usize, usize)]>,
     allow_bare_lines: bool,
     linked: &mut Vec<(usize, usize)>,
+    profile: Option<&LangProfile>,
 ) {
-    // Find a source slot with Del containing token and a target slot with Add
-    // containing token
     let num_slots = slot_runs.len();
+
     for src in 0..num_slots {
         if is_moved_slot.get(src).copied().unwrap_or(false) {
             continue;
         }
+        let mut candidate_targets = Vec::new();
         for tgt in 0..num_slots {
             if src == tgt || is_moved_slot.get(tgt).copied().unwrap_or(false) {
                 continue;
@@ -1310,6 +1419,26 @@ fn apply_relocation_candidate(
             {
                 continue;
             }
+            if find_matching_pair(&slot_runs[src], &slot_runs[tgt], token).is_some() {
+                let affinity = compute_contextual_affinity(src, tgt, token, slot_runs, profile);
+                candidate_targets.push((tgt, affinity));
+            }
+        }
+
+        // Sort candidate targets by descending contextual affinity.
+        // In case of ties, prefer closer distance, then lower tgt index.
+        candidate_targets.sort_by(|&(t1, a1), &(t2, a2)| {
+            a2.partial_cmp(&a1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    let d1 = (src as isize - t1 as isize).unsigned_abs();
+                    let d2 = (src as isize - t2 as isize).unsigned_abs();
+                    d1.cmp(&d2)
+                })
+                .then_with(|| t1.cmp(&t2))
+        });
+
+        for (tgt, _) in candidate_targets {
             let mut moved = false;
             while let Some((d_run_idx, d_pos, a_run_idx, a_pos)) =
                 find_matching_pair(&slot_runs[src], &slot_runs[tgt], token)
@@ -1872,5 +2001,45 @@ mod tests {
     fn test_has_salient_moved_link_keyword_excluded() {
         let rows = link_rows(vec![vec![(RunKind::MovedSrc, "let".to_string())]]);
         assert!(!has_salient_moved_link(&rows, None));
+    }
+
+    #[test]
+    fn test_competing_destination_affinity_relocates_to_highest_context_recipient() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(
+                RunKind::Del,
+                "((vh as f64 / total_vis_lines as f64) * track_h as f64)".to_string(),
+            )],
+            vec![(RunKind::Del, "    .round()".to_string())],
+            vec![(
+                RunKind::Add,
+                "let min_thumb = ((track_h as f64 * Self::SCROLLBAR_MIN_PERCENT).round() as usize)"
+                    .to_string(),
+            )],
+            vec![(
+                RunKind::Add,
+                "let prop_thumb = ((vh as f64 / total_vis_lines as f64) * track_h as f64).round() as usize;"
+                    .to_string(),
+            )],
+        ];
+        let is_moved_slot = vec![false; 4];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, profile);
+
+        assert!(
+            !slot_runs[2]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("round")),
+            "min_thumb at slot 2 must NOT steal .round() due to lower affinity, got: {:?}",
+            slot_runs[2]
+        );
+
+        assert!(
+            slot_runs[3]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("round")),
+            "prop_thumb at slot 3 must receive .round() due to higher contextual affinity, got: {:?}",
+            slot_runs[3]
+        );
     }
 }

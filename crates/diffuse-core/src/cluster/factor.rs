@@ -612,7 +612,7 @@ const COMMON_KEYWORDS: &[&str] = &[
     "crate", "self", "super", "async", "await", "while", "loop",
 ];
 
-fn significant_words<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<&'a str> {
+pub(crate) fn significant_words<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<&'a str> {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
         .map(str::trim)
         .filter(|w| {
@@ -688,7 +688,7 @@ pub(crate) fn robust_delim_delta(text: &str) -> i32 {
 }
 
 #[inline]
-fn is_salient_word_match(w1: &str, w2: &str) -> bool {
+pub(crate) fn is_salient_word_match(w1: &str, w2: &str) -> bool {
     w1 == w2
         || (w2.len() >= 4 && w1.split('_').any(|s| s == w2))
         || (w1.len() >= 4 && w2.split('_').any(|s| s == w1))
