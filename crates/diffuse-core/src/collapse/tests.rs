@@ -6,10 +6,11 @@ use std::time::Instant;
 
 use super::*;
 use crate::{
+    cluster::factor::FactoredGroup,
     collapse::collapse_hunk_rows,
     merge::{RunKind, merged_runs},
     moves::mark_moves,
-    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, Row, RowKind},
+    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, GroupId, Hunk, Row, RowKind},
 };
 use diffuse_syntax::registry::lang_profile;
 
@@ -3675,5 +3676,318 @@ fn test_compound_mod_group_closure_reflow_assembly() {
             .any(|(kind, text)| *kind == RunKind::MovedSrc && text.contains("pat")),
         "Grouped Mod (294) must label moved closure parameter as MovedSrc, got: {:?}",
         out[1].cached_runs()
+    );
+}
+
+// ---- Phase 4: multi-line expression collapse & expansion in micro-DP ----
+
+fn micro_dp_group(id: u32, n: usize, m: usize) -> FactoredGroup {
+    FactoredGroup {
+        id: GroupId(id),
+        old_range: 0..n,
+        new_range: 0..m,
+    }
+}
+
+#[test]
+fn test_phase4_collapse_two_to_one_inside_multi_row_group() {
+    let profile = lang_profile("rust");
+    let group = micro_dp_group(40, 2, 2);
+    let dels = vec![
+        Row::del(DelLine::new(
+            100,
+            "let thumb = ((vh as f64 - min_v) / (max_v - min_v)",
+        )),
+        Row::del(DelLine::new(101, ".round() as usize;")),
+    ];
+    let adds = vec![
+        Row::add(AddLine::new(
+            200,
+            "let thumb = ((vh as f64 - min_v) / (max_v - min_v)).round() as usize;",
+        )),
+        Row::add(AddLine::new(201, "let pad = 4;")),
+    ];
+    let res = align_and_type_peer_group(&group, &dels, &adds, profile);
+    assert_eq!(
+        res.slots.len(),
+        3,
+        "expected Mod + grouped Del + Add, got: {:?}",
+        res.slots
+    );
+    let s0 = &res.slots[0];
+    assert_eq!(s0.kind, RowKind::Mod);
+    assert_eq!(s0.old_line, Some(100));
+    assert_eq!(s0.new_line, Some(200));
+    // Joined alignment absorbs `.round()` into shared context: the Mod must
+    // not retain it as Add-bait for cross-slot scavenging.
+    assert!(
+        !s0.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::Add && t.contains("round")),
+        "absorbed `.round()` must not remain an Add run in the Mod, got: {:?}",
+        s0.runs
+    );
+    let s1 = &res.slots[1];
+    assert_eq!(s1.kind, RowKind::Del);
+    assert_eq!(s1.old_line, Some(101));
+    assert_eq!(s1.new_line, None);
+    assert!(
+        s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedSrc && t.contains("round")),
+        "continuation Del must carry absorbed `.round()` as MovedSrc, got: {:?}",
+        s1.runs
+    );
+    let s2 = &res.slots[2];
+    assert_eq!(s2.kind, RowKind::Add);
+    assert_eq!(s2.old_line, None);
+    assert_eq!(s2.new_line, Some(201));
+    res.assert_token_conservation();
+}
+
+#[test]
+fn test_phase4_expansion_one_to_two_inside_multi_row_group() {
+    let profile = lang_profile("rust");
+    let group = micro_dp_group(41, 2, 3);
+    let dels = vec![
+        Row::del(DelLine::new(
+            100,
+            "fn render(&self) -> String { return self.name.clone(); }",
+        )),
+        Row::del(DelLine::new(101, "let done = false;")),
+    ];
+    let adds = vec![
+        Row::add(AddLine::new(200, "fn render(&self) -> String {")),
+        Row::add(AddLine::new(201, "    return self.name.clone(); }")),
+        Row::add(AddLine::new(202, "let done = true;")),
+    ];
+    let res = align_and_type_peer_group(&group, &dels, &adds, profile);
+    assert_eq!(
+        res.slots.len(),
+        3,
+        "expected Mod + grouped Add + Mod, got: {:?}",
+        res.slots
+    );
+    let s0 = &res.slots[0];
+    assert_eq!(s0.kind, RowKind::Mod);
+    assert_eq!(s0.old_line, Some(100));
+    assert_eq!(s0.new_line, Some(200));
+    // The shared body is donated to the continuation line (MovedSrc), never
+    // struck: no Del run may contain it.
+    assert!(
+        s0.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedSrc && t.contains("name")),
+        "expanded Mod must donate shared body as MovedSrc, got: {:?}",
+        s0.runs
+    );
+    assert!(
+        !s0.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::Del && t.contains("name")),
+        "expanded Mod must not strike the shared body, got: {:?}",
+        s0.runs
+    );
+    let s1 = &res.slots[1];
+    assert_eq!(s1.kind, RowKind::Add);
+    assert_eq!(s1.old_line, None);
+    assert_eq!(s1.new_line, Some(201));
+    // The whole continuation line is absorbed: construction stamps the full
+    // tail, leaving at most whitespace reindent glue as Add. Token-by-token
+    // scavenging always leaves content glue behind as Add.
+    assert!(
+        !s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::Add && !t.trim().is_empty()),
+        "continuation Add must be fully absorbed (no content Add runs), got: {:?}",
+        s1.runs
+    );
+    assert!(
+        s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("name")),
+        "continuation Add must carry absorbed expression as MovedTgt, got: {:?}",
+        s1.runs
+    );
+    let s2 = &res.slots[2];
+    assert_eq!(s2.kind, RowKind::Mod);
+    assert_eq!(s2.old_line, Some(101));
+    assert_eq!(s2.new_line, Some(202));
+    res.assert_token_conservation();
+}
+
+#[test]
+fn test_phase4_expansion_grouped_add_keeps_moved_runs_below_scavenge_floor() {
+    let profile = lang_profile("rust");
+    let group = micro_dp_group(42, 2, 3);
+    let dels = vec![
+        Row::del(DelLine::new(100, "let w = call(a, b);")),
+        Row::del(DelLine::new(101, "let z = 0;")),
+    ];
+    let adds = vec![
+        Row::add(AddLine::new(200, "let w = call(a,")),
+        Row::add(AddLine::new(201, "b, cccc, dddd, eeee, ffff);")),
+        Row::add(AddLine::new(202, "let z = 1;")),
+    ];
+    let res = align_and_type_peer_group(&group, &dels, &adds, profile);
+    assert_eq!(
+        res.slots.len(),
+        3,
+        "expected Mod + grouped Add + Mod, got: {:?}",
+        res.slots
+    );
+    let s1 = &res.slots[1];
+    assert_eq!(s1.kind, RowKind::Add);
+    assert_eq!(s1.new_line, Some(201));
+    // The shared `b` fragment covers far less than the 35% anti-scavenging
+    // floor of its long continuation line, but it is grouped expression
+    // content — not scavenged scraps — so the floor must not revert it.
+    assert!(
+        s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t == "b"),
+        "grouped continuation Add must retain MovedTgt below the scavenge floor, got: {:?}",
+        s1.runs
+    );
+    res.assert_token_conservation();
+}
+
+#[test]
+fn test_phase4_expansion_absorbs_weak_token_relocation_refuses() {
+    // `None` is a weak generic subtoken: cross-slot relocation gates it
+    // behind a mutual anchor it does not have here, so without the DP
+    // transition the continuation line strands as a pure Add. Joined
+    // alignment absorbs it by construction.
+    let profile = lang_profile("rust");
+    let group = micro_dp_group(44, 2, 3);
+    let dels = vec![
+        Row::del(DelLine::new(100, "let widget = lookup(idx, None);")),
+        Row::del(DelLine::new(101, "let z = 0;")),
+    ];
+    let adds = vec![
+        Row::add(AddLine::new(200, "let widget = lookup(idx,")),
+        Row::add(AddLine::new(201, "None);")),
+        Row::add(AddLine::new(202, "let z = 1;")),
+    ];
+    let res = align_and_type_peer_group(&group, &dels, &adds, profile);
+    assert_eq!(
+        res.slots.len(),
+        3,
+        "expected Mod + grouped Add + Mod, got: {:?}",
+        res.slots
+    );
+    let s1 = &res.slots[1];
+    assert_eq!(s1.kind, RowKind::Add);
+    assert_eq!(s1.new_line, Some(201));
+    assert!(
+        s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("None")),
+        "continuation Add must carry absorbed `None` as MovedTgt, got: {:?}",
+        s1.runs
+    );
+    assert!(
+        !s1.runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::Add && !t.trim().is_empty()),
+        "continuation Add must be fully absorbed (no content Add runs), got: {:?}",
+        s1.runs
+    );
+    res.assert_token_conservation();
+}
+
+#[test]
+fn test_phase4_open_continuation_without_coverage_does_not_collapse() {
+    let profile = lang_profile("rust");
+    let group = micro_dp_group(43, 2, 2);
+    let dels = vec![
+        Row::del(DelLine::new(100, "let x = foo(a,")),
+        Row::del(DelLine::new(101, "bar);")),
+    ];
+    let adds = vec![
+        Row::add(AddLine::new(200, "let x = quux(z);")),
+        Row::add(AddLine::new(201, "let w = 9;")),
+    ];
+    let res = align_and_type_peer_group(&group, &dels, &adds, profile);
+    assert_eq!(
+        res.slots.len(),
+        3,
+        "expected Mod + Del + Add, got: {:?}",
+        res.slots
+    );
+    let s1 = &res.slots[1];
+    assert_eq!(s1.kind, RowKind::Del);
+    assert_eq!(s1.old_line, Some(101));
+    // Continuation evidence alone (open paren) is not sufficient: low joined
+    // coverage must reject the collapse, leaving an honest orphan Del.
+    assert!(
+        s1.runs.iter().all(|(k, _)| *k == RunKind::Del),
+        "independent continuation must stay a pure Del, got: {:?}",
+        s1.runs
+    );
+    assert!(
+        !res.slots.iter().any(|s| s
+            .runs
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("bar"))),
+        "unrelated `bar` must not be absorbed anywhere, got: {:?}",
+        res.slots
+    );
+    res.assert_token_conservation();
+}
+
+// Primary integration test: the expansion shape driven through the full
+// collapse pipeline (factoring + micro-DP + relocation). The shared
+// `render` vocabulary forces a single multi-row group so the 1-to-2
+// transition — not the whole-group path — must fire.
+#[test]
+fn test_phase4_pipeline_expansion_absorbs_continuation_line() {
+    let profile = lang_profile("rust");
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "fn render(&self) -> String { return self.name.clone(); }",
+            None,
+            Some(100),
+        ),
+        row(RowKind::Del, "let mode = render(false);", None, Some(101)),
+        row(
+            RowKind::Add,
+            "fn render(&self) -> String {",
+            Some(200),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "    return self.name.clone(); }",
+            Some(201),
+            None,
+        ),
+        row(RowKind::Add, "let mode = render(true);", Some(202), None),
+    ]);
+    let res = collapse_hunk_rows(&h, None, None, profile);
+    assert_eq!(res.len(), 3, "expected Mod + Add + Mod, got: {:?}", res);
+    assert_eq!(res[0].old_line(), Some(100));
+    assert_eq!(res[0].new_line(), Some(200));
+    assert_eq!(res[1].old_line(), None);
+    assert_eq!(res[1].new_line(), Some(201));
+    assert_eq!(res[2].old_line(), Some(101));
+    assert_eq!(res[2].new_line(), Some(202));
+    // The whole continuation line is absorbed: construction stamps the full
+    // tail, leaving at most whitespace reindent glue as Add.
+    let cont_runs = merged_runs(&res[1]);
+    assert!(
+        cont_runs
+            .iter()
+            .all(|r| r.kind != RunKind::Add || r.text.trim().is_empty()),
+        "continuation Add must be fully absorbed (no content Add runs), got: {:?}",
+        cont_runs
+    );
+    assert!(
+        cont_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedTgt && r.text.contains("name")),
+        "continuation Add must carry absorbed expression as MovedTgt, got: {:?}",
+        cont_runs
     );
 }

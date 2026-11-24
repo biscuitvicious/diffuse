@@ -695,7 +695,7 @@ pub(crate) fn is_salient_word_match(w1: &str, w2: &str) -> bool {
 }
 
 #[inline]
-fn is_open_continuation_line(line: &str) -> bool {
+pub(crate) fn is_open_continuation_line(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {
         return false;

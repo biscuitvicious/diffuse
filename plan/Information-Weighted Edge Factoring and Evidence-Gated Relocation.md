@@ -4,7 +4,7 @@
 - [x] Phase 1 — Information-Theoretic Edge Weighting & Fragile Edge Pruning in Cluster Factoring (`crates/diffuse-core/src/cluster/factor.rs`)
 - [x] Phase 2 — Competing Destination Affinity in Token Relocation (`crates/diffuse-core/src/collapse/slot.rs`)
 - [x] Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows (`crates/diffuse-core/src/collapse/slot.rs`)
-- [ ] Phase 4 — Multi-Line Expression Collapse in Micro-DP Reflow (`crates/diffuse-core/src/collapse/slot.rs`)
+- [x] Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow (`crates/diffuse-core/src/collapse/slot.rs`)
 - [ ] Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off (`tests/golden/`)
 
 ---
@@ -70,7 +70,7 @@ flowchart TD
 1. [Phase 1 — Information-Theoretic Edge Weighting & Fragile Edge Pruning in Cluster Factoring](#1-phase-1--information-theoretic-edge-weighting--fragile-edge-pruning-in-cluster-factoring)
 2. [Phase 2 — Competing Destination Affinity in Token Relocation](#2-phase-2--competing-destination-affinity-in-token-relocation)
 3. [Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows](#3-phase-3--evidence-gated-cross-slot-relocation--anti-scavenging-floor-on-add-rows)
-4. [Phase 4 — Multi-Line Expression Collapse in Micro-DP Reflow](#4-phase-4--multi-line-expression-collapse-in-micro-dp-reflow)
+4. [Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow](#4-phase-4--multi-line-expression-collapse--expansion-in-micro-dp-reflow)
 5. [Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off](#5-phase-5--golden-corpus-calibration-asymmetric-drift-audit--final-sign-off)
 
 ---
@@ -211,23 +211,40 @@ In `crates/diffuse-core/src/collapse/slot.rs`:
 
 ---
 
-### 4. Phase 4 — Multi-Line Expression Collapse in Micro-DP Reflow
+### 4. Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow
 
 #### Problem
 In `crates/diffuse-core/src/collapse/slot.rs`:
-- The micro-DP solver operates strictly on 1-to-1 line slot alignments.
+- The micro-DP solver (`align_slots_micro_dp`) operates strictly on 1-to-1 line slot alignments (diag/up/left transitions only).
 - When an old 2-line expression (`u1: ((vh as f64...` + `u2: .round()`) collapses into a single line (`v2: let prop_thumb = ((vh as f64...).round() as usize;`), the 1-to-1 solver matches `u1 ↔ v2` and strands `u2` as an orphan deletion.
 - This orphaned deletion is what triggers downstream cross-slot relocation to hunt for a home.
+- Symmetrically, when a single old line expands across two new lines (e.g. a long call reflowed onto a continuation line), the solver pairs one side and strands the other as an orphan addition, which then acts as scavenging bait.
+
+#### Design Notes (from Phase 4 analysis + implementation)
+- **Whole-group n-to-1 / 1-to-m already exists**: `align_collapse_n_to_1` and `align_expansion_1_to_m` handle groups with exactly `m == 1` / `n == 1`. The gap — and this phase's scope — is strictly **inside multi-row groups** (`n > 1 && m > 1`), where only the micro-DP runs. Do not rebuild the whole-group paths; reuse their `\n`-joined run-splitting logic (`distribute_collapse_runs` / `distribute_expansion_runs`) so struck/filled runs attribute to the correct constituent line.
+- **Post-DP absorption, not in-DP transitions (pivot during implementation)**: letting a joined pair compete in the micro-DP argmax was tried first and abandoned. It perturbs the global path: the joined candidate absorbs a line whose rightful 1-to-1 partner then strands elsewhere, tripping DBC invariants and 15+ lib tests. Repairing the already-chosen alignment instead — only ever converting (Mod + honest orphan) into (Mod + grouped continuation) — cannot steal partners: slot structure is invariant, only run typing changes. The DP, canonicalization, and relocation stages run untouched.
+- **Gating (all required for a fold)**:
+  1. *Adjacency + line consecutiveness*: the orphan must immediately follow its Mod with consecutive old/new line numbers.
+  2. *Substance*: orphan trim length $\ge 3$ **and** contains an ASCII letter. Single-punctuation orphans (`,`, `;`, `)]}`) always "cover" trivially and their shared glyph double-attributes (struck in the Mod *and* moved into it).
+  3. *Continuation evidence (necessary, not sufficient)*: head open (`delim > 0`, `is_open_continuation_line`, trailing `,`/`&&`/`||`) or tail starting with `.`/`&&`/`||`.
+  4. *Unilateral coverage $\ge 0.85$* of the joined side plus full `is_admissible_slot_pair` (keeps Phase 0/1 salient-context and wholesale-bound protections).
+  5. *Bilateral coverage $\ge 0.60$ when the head evidence is weak* (balanced line ending in `{`/`,`/`&&`/`||`): a trailing comma may merely separate siblings (next struct field, next arg), so the other side must be substantially explained too. Strong heads (unclosed `(`/`[`, open endings) are exempt.
+- **Projection guard (abstain on garbled runs)**: the distribute+combine machinery assumes a clean split at the join boundary; cross-boundary shared text (a `len` tail living on both the old line and the joined new lines) can scramble the Mod's run order. Each fold verifies its runs project back to the slot texts (mirroring the group DBC `slots_project_to_text`) and abstains otherwise — a garbled fold would trip the group check and dissolve the whole group into raw rows (observed once: a `highlight_path_matches` expansion group lost its Mod until the guard was added; with the guard the group keeps its relocation-built grouping). Join-newline artifacts are stripped from distributed runs first.
+- **No anti-scavenging floor change**: an `is_pure_add` exemption for folded slots was tried and removed as a no-op — the floor only reverts runs listed in relocation `exchanges`, and precomputed fold runs are never exchanged.
+- **Interactions verified**: closed-economy conservation holds by construction (`MovedSrc`/`MovedTgt` emitted pairwise; `assert_token_conservation` in every Phase-4 test); relocation gathering skips `MovedSrc`/`MovedTgt`, so folded slots neither donate nor attract scavenging beyond residual glue runs.
+- **Golden impact (agent review, pending human sign-off)**: 6 failures across 3 fixtures (`row-groups-contrast`, `theme-light-toggle`, `theme-scrollbar-palette`), all run-typing-only (same row kinds, line numbers, group metadata — only `Del`/`Add` vs `MovedSrc`/`MovedTgt` run typing differs). Categorized: strictly better (preserved arg lists like `(del_line.num, del_line.text.clone())` now marked moved instead of struck+refilled; `_themed` suffix struck while the surviving path prefix is marked moved) vs equivalent noise (surviving `)`/keyword fragments in comments and scaffolding marked moved). No dissolved pairings, no new orphans, no row-count changes.
 
 #### Implementation Steps
-1. **Multi-Line Expression Merging in Micro-DP**:
-   - In the DP solver, detect contiguous expression chaining across line breaks (lines starting with `.` or binary operators, or open delimiter continuation).
-   - Permit $2 \to 1$ collapse transitions where $u_i + u_{i+1}$ matches $v_j$ with high character coverage.
-   - Spliced runs automatically absorb the chained method call directly into the modification row without entering cross-slot relocation.
-2. **Tests**:
-   - Unit test in `crates/diffuse-core/src/collapse/tests.rs`:
-     - Multi-line chained call collapsing into a single line pairs naturally as a unified reflow row.
-3. **Golden Drift Validation Check**:
+1. **Multi-Line Expression Collapse ($2 \to 1$) as post-DP fold** (`fold_collapse_window`):
+   - After canonicalization, scan adjacent `(Mod(u, v), Del(u'))` slot pairs; when `u'` directly continues `u` (consecutive lines + evidence gates above) and the joined text covers `v`, recompute the Mod runs from the joined alignment (`distribute_collapse_runs` + `combine_mod_runs_collapse`) and mark the orphan Del grouped (`MovedSrc`, never struck bait).
+2. **Single-Line Expression Expansion ($1 \to 2$) as post-DP fold** (`fold_expansion_window`, symmetric opposite of step 1):
+   - Scan adjacent `(Mod(u, v), Add(v'))` pairs; when `v'` continues `v` and the joined new text covers `u`, recompute via `distribute_expansion_runs` + `combine_mod_runs_expansion` so `Ctx`/`MovedTgt` runs land on the correct new line.
+3. **Tests**:
+   - Unit tests in `crates/diffuse-core/src/collapse/tests.rs`:
+     - Multi-line chained call collapsing into a single line pairs naturally as a unified reflow row (the `prop_thumb` shape: no orphan Del, token conservation holds, runs attributed per old line).
+     - Single-line call expanding onto a continuation line pairs as a unified reflow row (no orphan Add bait).
+     - Negative control: two independent statements do not collapse; `canonicalize_slot_order` keeps Del-Mod-Add order around a 2-to-1 slot.
+4. **Golden Drift Validation Check**:
    - Verify that multi-line expression reflows assemble cleanly into single compound rows rather than fracturing into Del + Add runs.
 
 ---

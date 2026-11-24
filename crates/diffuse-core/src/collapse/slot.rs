@@ -141,13 +141,16 @@ pub fn align_and_type_peer_group_with_content(
     let m = group_new.len();
 
     // 1. Monotonic micro-DP slot alignment
-    let aligned_pairs: Vec<(Option<&Row>, Option<&Row>)> = if n == 0 {
-        group_new.iter().map(|r| (None, Some(r))).collect()
+    let mut aligned_pairs: Vec<SlotPair<'_>> = if n == 0 {
+        group_new.iter().map(|r| (None, Some(r), None)).collect()
     } else if m == 0 {
-        group_old.iter().map(|r| (Some(r), None)).collect()
+        group_old.iter().map(|r| (Some(r), None, None)).collect()
     } else if n == 1 && m == 1 {
         if group_old[0].is_moved() || group_new[0].is_moved() {
-            vec![(Some(&group_old[0]), None), (None, Some(&group_new[0]))]
+            vec![
+                (Some(&group_old[0]), None, None),
+                (None, Some(&group_new[0]), None),
+            ]
         } else if group_old[0].text() == group_new[0].text() {
             let u = &group_old[0];
             let v = &group_new[0];
@@ -187,7 +190,10 @@ pub fn align_and_type_peer_group_with_content(
                 profile,
                 true,
             ) {
-                vec![(Some(&group_old[0]), None), (None, Some(&group_new[0]))]
+                vec![
+                    (Some(&group_old[0]), None, None),
+                    (None, Some(&group_new[0]), None),
+                ]
             } else {
                 let u = &group_old[0];
                 let v = &group_new[0];
@@ -243,19 +249,29 @@ pub fn align_and_type_peer_group_with_content(
         return align_collapse_n_to_1(group, group_old, &group_new[0], profile);
     }
 
+    // Phase-4 post-DP absorption: fold stranded continuation orphans into
+    // adjacent Mods without re-routing the DP alignment.
+    fold_tail_orphans(&mut aligned_pairs, old_content, new_content, profile);
+
     let total_slots = aligned_pairs.len();
 
     // 2. Intra-slot word diff and initial runs
     let mut slot_runs: Vec<Vec<(RunKind, String)>> = Vec::with_capacity(total_slots);
     let is_moved_slot: Vec<bool> = aligned_pairs
         .iter()
-        .map(|(old_opt, new_opt)| {
+        .map(|(old_opt, new_opt, _)| {
             old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }))
                 || new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }))
         })
         .collect();
 
-    for (old_opt, new_opt) in &aligned_pairs {
+    for (old_opt, new_opt, pre_runs) in &aligned_pairs {
+        // Phase-4 multi-line slots carry their `\n`-split runs directly:
+        // shared text is already `MovedSrc`/`MovedTgt`, never bare bait.
+        if let Some(runs) = pre_runs {
+            slot_runs.push(runs.clone());
+            continue;
+        }
         match (old_opt, new_opt) {
             (Some(u), Some(v)) => {
                 if u.text() == v.text() {
@@ -287,14 +303,15 @@ pub fn align_and_type_peer_group_with_content(
     if total_slots > 1 {
         let is_pure_add: Vec<bool> = aligned_pairs
             .iter()
-            .map(|(old_opt, new_opt)| old_opt.is_none() && new_opt.is_some())
+            .map(|(old_opt, new_opt, _)| old_opt.is_none() && new_opt.is_some())
             .collect();
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
     // 4. Construct final AlignedSlotRow list
     let mut slots = Vec::with_capacity(total_slots);
-    for (idx, ((old_opt, new_opt), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate() {
+    for (idx, ((old_opt, new_opt, _), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate()
+    {
         let spans = if let Some(Row::MovSrc { spans, .. }) = old_opt {
             spans.clone()
         } else if let Some(Row::MovTgt { spans, .. }) = new_opt {
@@ -403,18 +420,15 @@ fn combine_mod_runs_expansion(
     out
 }
 
-fn align_expansion_1_to_m(
-    group: &FactoredGroup,
-    old_row: &Row,
-    new_rows: &[Row],
-    profile: Option<&LangProfile>,
-) -> PeerGroupRows {
-    let m = new_rows.len();
-    let u = old_row.text();
-    let v_texts: Vec<&str> = new_rows.iter().map(Row::text).collect();
-    let joined = v_texts.join("\n");
-    let (_, full_runs) = word_spans_and_runs_with_profile(u, &joined, profile);
-
+/// Splits `\n`-joined expansion runs back across the `m` constituent new
+/// lines. Line-0 overlap stays `Ctx` on both sides; later-line overlap
+/// becomes `MovedSrc` (Mod) / `MovedTgt` (continuation Add) pairs, which
+/// keeps the closed economy balanced by construction and hides the shared
+/// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
+fn distribute_expansion_runs(
+    full_runs: &[(RunKind, String)],
+    m: usize,
+) -> (Vec<(RunKind, String)>, Vec<Vec<(RunKind, String)>>) {
     let mut u_runs: Vec<(RunKind, String)> = Vec::new();
     let mut v_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); m];
     let mut current_line = 0usize;
@@ -436,7 +450,7 @@ fn align_expansion_1_to_m(
     for (kind, text) in full_runs {
         match kind {
             RunKind::Del => {
-                push(&mut u_runs, RunKind::Del, &text);
+                push(&mut u_runs, RunKind::Del, text.as_str());
             }
             RunKind::Add => {
                 if current_line == 0 {
@@ -458,12 +472,12 @@ fn align_expansion_1_to_m(
             RunKind::Ctx => {
                 if current_line == 0 {
                     if line_0_had_add {
-                        u_runs.push((RunKind::Ctx, text.to_string()));
+                        u_runs.push((RunKind::Ctx, text.clone()));
                         line_0_had_add = false;
                     } else {
-                        push(&mut u_runs, RunKind::Ctx, &text);
+                        push(&mut u_runs, RunKind::Ctx, text.as_str());
                     }
-                    push(&mut v_runs[0], RunKind::Ctx, &text);
+                    push(&mut v_runs[0], RunKind::Ctx, text.as_str());
                 } else {
                     u_runs.push((RunKind::MovedSrc, text.clone()));
                     if current_line < m {
@@ -474,6 +488,23 @@ fn align_expansion_1_to_m(
             _ => {}
         }
     }
+
+    (u_runs, v_runs)
+}
+
+fn align_expansion_1_to_m(
+    group: &FactoredGroup,
+    old_row: &Row,
+    new_rows: &[Row],
+    profile: Option<&LangProfile>,
+) -> PeerGroupRows {
+    let m = new_rows.len();
+    let u = old_row.text();
+    let v_texts: Vec<&str> = new_rows.iter().map(Row::text).collect();
+    let joined = v_texts.join("\n");
+    let (_, full_runs) = word_spans_and_runs_with_profile(u, &joined, profile);
+
+    let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, m);
 
     let slot_0_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
     let mut slots = Vec::with_capacity(m);
@@ -576,18 +607,15 @@ fn combine_mod_runs_collapse(
     out
 }
 
-fn align_collapse_n_to_1(
-    group: &FactoredGroup,
-    old_rows: &[Row],
-    new_row: &Row,
-    profile: Option<&LangProfile>,
-) -> PeerGroupRows {
-    let n = old_rows.len();
-    let v = new_row.text();
-    let u_texts: Vec<&str> = old_rows.iter().map(Row::text).collect();
-    let joined = u_texts.join("\n");
-    let (_, full_runs) = word_spans_and_runs_with_profile(&joined, v, profile);
-
+/// Splits `\n`-joined collapse runs back across the `n` constituent old
+/// lines. Line-0 overlap stays `Ctx` on both sides; later-line overlap
+/// becomes `MovedSrc` (continuation Del) / `MovedTgt` (Mod) pairs, which
+/// keeps the closed economy balanced by construction and hides the shared
+/// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
+fn distribute_collapse_runs(
+    full_runs: &[(RunKind, String)],
+    n: usize,
+) -> (Vec<Vec<(RunKind, String)>>, Vec<(RunKind, String)>) {
     let mut u_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); n];
     let mut v_runs: Vec<(RunKind, String)> = Vec::new();
     let mut current_line = 0usize;
@@ -609,7 +637,7 @@ fn align_collapse_n_to_1(
     for (kind, text) in full_runs {
         match kind {
             RunKind::Add => {
-                push(&mut v_runs, RunKind::Add, &text);
+                push(&mut v_runs, RunKind::Add, text.as_str());
             }
             RunKind::Del => {
                 if current_line == 0 {
@@ -630,12 +658,12 @@ fn align_collapse_n_to_1(
             }
             RunKind::Ctx => {
                 if current_line == 0 {
-                    push(&mut u_runs[0], RunKind::Ctx, &text);
+                    push(&mut u_runs[0], RunKind::Ctx, text.as_str());
                     if line_0_had_del {
-                        v_runs.push((RunKind::Ctx, text.to_string()));
+                        v_runs.push((RunKind::Ctx, text.clone()));
                         line_0_had_del = false;
                     } else {
-                        push(&mut v_runs, RunKind::Ctx, &text);
+                        push(&mut v_runs, RunKind::Ctx, text.as_str());
                     }
                 } else {
                     if current_line < n {
@@ -647,6 +675,23 @@ fn align_collapse_n_to_1(
             _ => {}
         }
     }
+
+    (u_runs, v_runs)
+}
+
+fn align_collapse_n_to_1(
+    group: &FactoredGroup,
+    old_rows: &[Row],
+    new_row: &Row,
+    profile: Option<&LangProfile>,
+) -> PeerGroupRows {
+    let n = old_rows.len();
+    let v = new_row.text();
+    let u_texts: Vec<&str> = old_rows.iter().map(Row::text).collect();
+    let joined = u_texts.join("\n");
+    let (_, full_runs) = word_spans_and_runs_with_profile(&joined, v, profile);
+
+    let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, n);
 
     let slot_0_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
     let mut slots = Vec::with_capacity(n);
@@ -718,9 +763,7 @@ pub(crate) fn has_salient_moved_link(
     })
 }
 
-fn canonicalize_slot_order<'a>(
-    pairs: Vec<(Option<&'a Row>, Option<&'a Row>)>,
-) -> Vec<(Option<&'a Row>, Option<&'a Row>)> {
+fn canonicalize_slot_order<'a>(pairs: Vec<SlotPair<'a>>) -> Vec<SlotPair<'a>> {
     let mut out = Vec::with_capacity(pairs.len());
     let mut pending_dels = Vec::new();
     let mut pending_adds = Vec::new();
@@ -851,13 +894,347 @@ fn is_admissible_slot_pair(
         .any(|(_, t)| v_tokens.contains(t))
 }
 
+/// Evidence that `head` opens a multi-line construct continued on a later
+/// line: unclosed delimiters or an open operator ending (mirrors the
+/// cluster-factoring continuation guard). Block openers (`{`) count too:
+/// a flattened `fn f() { body(); }` is a genuine 2-to-1 collapse, and the
+/// coverage gate — not this pre-filter — rejects merged independents.
+fn is_expression_head_open(trim: &str, delim: i32) -> bool {
+    delim > 0
+        || crate::cluster::factor::is_open_continuation_line(trim)
+        || trim.ends_with(',')
+        || trim.ends_with("&&")
+        || trim.ends_with("||")
+}
+
+/// Evidence that a line is the tail of a multi-line expression, using the
+/// Invariant-2 continuation vocabulary: `&&`, `||`, or a chaining `.`
+/// (which can never start a standalone statement).
+fn is_expression_tail(trim: &str) -> bool {
+    trim.starts_with("&&")
+        || trim.starts_with("||")
+        || (trim.starts_with('.') && !trim.starts_with(".."))
+}
+
+/// Strong expression-head evidence: an unclosed `(`/`[` (block `{`
+/// openers start a new unit — see below) or an open operator ending.
+/// A structurally open head proves continuation on its own; weaker
+/// evidence (trailing `{`/`,`/`&&`/`||` on balanced lines) needs the
+/// bilateral crutch: the other side must be substantially explained too,
+/// otherwise a sibling line (next struct field, next arg) gets absorbed.
+fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
+    (delim > 0 && !trim.ends_with('{')) || crate::cluster::factor::is_open_continuation_line(trim)
+}
+
+/// Gates a `\n`-joined multi-line side against a single-line side for
+/// post-DP absorption. Mirrors the diag scorer's gates (token-overlap
+/// floor, admissibility, salient minimum) plus the Phase-4 coverage gate:
+/// the joined side must be substantially explained, otherwise two
+/// independent statements would merge into a Frankenstein Mod. Returns
+/// the matched and other-side character counts for the bilateral check.
+fn joined_alignment(
+    joined: &str,
+    other: &str,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) -> Option<(usize, usize)> {
+    let joined_trim = joined.trim();
+    let other_trim = other.trim();
+    if joined_trim.is_empty() || other_trim.is_empty() {
+        return None;
+    }
+    let joined_tokens: Vec<&str> = tokenize_line(joined).collect();
+    let other_tokens: Vec<&str> = tokenize_line(other).collect();
+    let shared_bound: usize = joined_tokens
+        .iter()
+        .filter(|t| !t.trim().is_empty() && other_tokens.contains(t))
+        .map(|t| t.chars().count())
+        .sum();
+    if shared_bound < 3 {
+        return None;
+    }
+    let spans = crate::lcs::word_spans(joined, other);
+    if !is_admissible_slot_pair(
+        joined,
+        other,
+        &spans,
+        old_content,
+        new_content,
+        profile,
+        false,
+    ) {
+        return None;
+    }
+    let runs = crate::merge::merged_runs_from_texts(joined, other, &spans);
+    let matched_chars: usize = runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::Ctx && !r.text.trim().is_empty())
+        .map(|r| r.text.chars().count())
+        .sum();
+    if matched_chars < 3 {
+        return None;
+    }
+    let joined_chars = joined_trim.chars().count();
+    let other_chars = other_trim.chars().count();
+    let coverage = matched_chars as f64 / joined_chars.max(1) as f64;
+    // Strict bar: a wrongly-folded orphan is worse than the honest orphan
+    // it replaced (its text would be double-attributed and then scavenged).
+    // Only near-complete reflows may fold; partial overlaps stay 1-to-1
+    // for the evidence-gated relocation stages to handle. The bar sits
+    // below 1.0 to tolerate single-char tokenizer noise on delimiters.
+    if coverage < 0.85 {
+        return None;
+    }
+    Some((matched_chars, other_chars))
+}
+
+/// A micro-DP aligned pair plus optional precomputed runs for Phase-4
+/// post-DP folds: absorbed 2-to-1 collapse and 1-to-2 expansion slots carry
+/// their `\n`-split runs (shared text as `MovedSrc`/`MovedTgt`, never bare
+/// `Del`/`Add` bait), while 1-to-1 slots carry `None` and compute runs from
+/// their paired texts in the slot-typing pass.
+///
+/// Fold runs must never contain the `\n` join artifact: per-line runs feed
+/// `slots_project_to_text`, and a stray newline breaks the projection and
+/// dissolves the whole group into raw rows. The join side's unmatched text
+/// can straddle the boundary inside an `Add` (expansion) or `Del`
+/// (collapse) run, so the folds strip it after distributing.
+type SlotPair<'a> = (
+    Option<&'a Row>,
+    Option<&'a Row>,
+    Option<Vec<(RunKind, String)>>,
+);
+
+/// Removes the `\n` join artifact from distributed fold runs (see
+/// `SlotPair`): unmatched join-side text can straddle the line boundary
+/// inside one run, and the newline is not part of any real line. Runs left
+/// empty are dropped and same-kind neighbors re-coalesced.
+fn strip_join_newlines(runs: &mut Vec<Vec<(RunKind, String)>>) {
+    for line_runs in runs.iter_mut() {
+        let mut clean = Vec::with_capacity(line_runs.len());
+        for (kind, text) in line_runs.drain(..) {
+            let stripped: String = text.chars().filter(|c| *c != '\n').collect();
+            if !stripped.is_empty() {
+                clean.push((kind, stripped));
+            }
+        }
+        coalesce_runs(&mut clean);
+        *line_runs = clean;
+    }
+}
+
+/// Verifies folded runs project back to their slot texts, mirroring the
+/// group DBC `slots_project_to_text`: the distribute+combine machinery
+/// assumes a clean split at the join boundary, and cross-boundary shared
+/// text can scramble the Mod's run order (see the `len,` expansion case).
+/// A garbled fold abstains instead of tripping the group check, which
+/// would dissolve the whole group into raw rows.
+fn folded_runs_project(
+    runs: &[(RunKind, String)],
+    old_text: Option<&str>,
+    new_text: Option<&str>,
+) -> bool {
+    let old_proj: String = runs
+        .iter()
+        .filter(|(k, _)| !k.is_add_like())
+        .map(|(_, t)| t.as_str())
+        .collect();
+    let new_proj: String = runs
+        .iter()
+        .filter(|(k, _)| !k.is_del_like())
+        .map(|(_, t)| t.as_str())
+        .collect();
+    match (old_text, new_text) {
+        (Some(o), Some(n)) => old_proj == o && new_proj == n,
+        (Some(o), None) => old_proj == o,
+        (None, Some(n)) => new_proj == n,
+        (None, None) => true,
+    }
+}
+
+/// Phase-4 post-DP absorption: folds a stranded continuation orphan into
+/// an adjacent Mod slot without re-routing the DP alignment.
+///
+/// In-DP multi-line transitions were tried and abandoned: letting a joined
+/// pair compete in the argmax perturbs the global path, stranding lines
+/// whose rightful partners were absorbed elsewhere (and tripping DBC
+/// invariants downstream). Repairing the already-chosen alignment instead
+/// — only ever converting (Mod + honest orphan) into (Mod + grouped
+/// continuation) — cannot steal partners, and keeps the closed economy
+/// balanced by construction (shared text becomes `MovedSrc`/`MovedTgt`).
+fn fold_tail_orphans(
+    pairs: &mut [SlotPair<'_>],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) {
+    let mut idx = 0;
+    while idx + 1 < pairs.len() {
+        // Each fold consumes its two slots; advance past them either way so
+        // a continuation line folds into exactly one Mod.
+        idx += if fold_window(&mut pairs[idx..idx + 2], old_content, new_content, profile) {
+            2
+        } else {
+            1
+        };
+    }
+}
+
+/// Attempts the collapse and expansion folds on one adjacent slot pair.
+fn fold_window(
+    window: &mut [SlotPair<'_>],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) -> bool {
+    fold_collapse_window(window, old_content, new_content, profile)
+        || fold_expansion_window(window, old_content, new_content, profile)
+}
+
+/// Folds `(Mod(u, v), Del(u'))` into a joined Mod when `u'` directly
+/// continues `u`'s expression and `v` covers the joined text.
+fn fold_collapse_window(
+    window: &mut [SlotPair<'_>],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) -> bool {
+    if window.len() != 2 || window[0].2.is_some() || window[1].2.is_some() {
+        return false;
+    }
+    let (Some(u), Some(v)) = (window[0].0, window[0].1) else {
+        return false;
+    };
+    let (Some(up), None) = (window[1].0, window[1].1) else {
+        return false;
+    };
+    if u.is_moved() || up.is_moved() || v.is_moved() {
+        return false;
+    }
+    // The orphan must continue the Mod's old line directly.
+    if up.old_line() != u.old_line().map(|n| n + 1) {
+        return false;
+    }
+    let u_text = u.text();
+    let up_text = up.text();
+    let v_text = v.text();
+    let u_trim = u_text.trim();
+    let up_trim = up_text.trim();
+    // Delimiter-soup orphans (`,`, `;`, `}],`) always "cover" trivially
+    // and their shared glyphs double-attribute (struck in the Mod and
+    // moved into it). Only lexical continuations may fold.
+    if up_trim.chars().count() < 3 || !up_trim.chars().any(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    let u_delim = crate::cluster::factor::robust_delim_delta(u_trim);
+    if !(is_expression_head_open(u_trim, u_delim) || is_expression_tail(up_trim)) {
+        return false;
+    }
+    let joined = format!("{u_text}\n{up_text}");
+    let Some((matched, other_chars)) =
+        joined_alignment(&joined, v_text, old_content, new_content, profile)
+    else {
+        return false;
+    };
+    // Weak head evidence (a balanced line ending in `{`/`,`/`&&`/`||`)
+    // may merely separate siblings: demand the other side be
+    // substantially explained too.
+    if !is_strong_expression_head(u_trim, u_delim)
+        && (matched as f64 / other_chars.max(1) as f64) < 0.60
+    {
+        return false;
+    }
+    let (_, full_runs) = word_spans_and_runs_with_profile(&joined, v_text, profile);
+    let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, 2);
+    strip_join_newlines(&mut u_runs);
+    let mod_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
+    if !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
+        || !folded_runs_project(&u_runs[1], Some(up_text), None)
+    {
+        return false;
+    }
+    let cont_runs = u_runs[1].clone();
+    window[0].2 = Some(mod_runs);
+    window[1].2 = Some(cont_runs);
+    true
+}
+
+/// Folds `(Mod(u, v), Add(v'))` into a joined Mod when `v'` directly
+/// continues `v`'s expression and the joined text covers `u`.
+fn fold_expansion_window(
+    window: &mut [SlotPair<'_>],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) -> bool {
+    if window.len() != 2 || window[0].2.is_some() || window[1].2.is_some() {
+        return false;
+    }
+    let (Some(u), Some(v)) = (window[0].0, window[0].1) else {
+        return false;
+    };
+    let (None, Some(vp)) = (window[1].0, window[1].1) else {
+        return false;
+    };
+    if u.is_moved() || v.is_moved() || vp.is_moved() {
+        return false;
+    }
+    // The orphan must continue the Mod's new line directly.
+    if vp.new_line() != v.new_line().map(|n| n + 1) {
+        return false;
+    }
+    let u_text = u.text();
+    let v_text = v.text();
+    let vp_text = vp.text();
+    let v_trim = v_text.trim();
+    let vp_trim = vp_text.trim();
+    // Delimiter-soup orphans (`,`, `;`, `}],`) always "cover" trivially
+    // and their shared glyphs double-attribute (struck in the Mod and
+    // moved into it). Only lexical continuations may fold.
+    if vp_trim.chars().count() < 3 || !vp_trim.chars().any(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    let v_delim = crate::cluster::factor::robust_delim_delta(v_trim);
+    if !(is_expression_head_open(v_trim, v_delim) || is_expression_tail(vp_trim)) {
+        return false;
+    }
+    let joined_new = format!("{v_text}\n{vp_text}");
+    let Some((matched, other_chars)) =
+        joined_alignment(u_text, &joined_new, old_content, new_content, profile)
+    else {
+        return false;
+    };
+    // Weak head evidence (a balanced line ending in `{`/`,`/`&&`/`||`)
+    // may merely separate siblings: demand the other side be
+    // substantially explained too.
+    if !is_strong_expression_head(v_trim, v_delim)
+        && (matched as f64 / other_chars.max(1) as f64) < 0.60
+    {
+        return false;
+    }
+    let (_, full_runs) = word_spans_and_runs_with_profile(u_text, &joined_new, profile);
+    let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, 2);
+    strip_join_newlines(&mut v_runs);
+    let mod_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
+    if !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
+        || !folded_runs_project(&v_runs[1], None, Some(vp_text))
+    {
+        return false;
+    }
+    let cont_runs = v_runs[1].clone();
+    window[0].2 = Some(mod_runs);
+    window[1].2 = Some(cont_runs);
+    true
+}
+
 fn align_slots_micro_dp<'a>(
     old_rows: &'a [Row],
     new_rows: &'a [Row],
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
-) -> Vec<(Option<&'a Row>, Option<&'a Row>)> {
+) -> Vec<SlotPair<'a>> {
     let n = old_rows.len();
     let m = new_rows.len();
 
@@ -1117,28 +1494,28 @@ fn align_slots_micro_dp<'a>(
         let dir = dp[i][j].1;
         match dir {
             1 => {
-                path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1])));
+                path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1]), None));
                 i -= 1;
                 j -= 1;
             }
             2 => {
-                path.push((Some(&old_rows[i - 1]), None));
+                path.push((Some(&old_rows[i - 1]), None, None));
                 i -= 1;
             }
             3 => {
-                path.push((None, Some(&new_rows[j - 1])));
+                path.push((None, Some(&new_rows[j - 1]), None));
                 j -= 1;
             }
             _ => {
                 if i > 0 && j > 0 {
-                    path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1])));
+                    path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1]), None));
                     i -= 1;
                     j -= 1;
                 } else if i > 0 {
-                    path.push((Some(&old_rows[i - 1]), None));
+                    path.push((Some(&old_rows[i - 1]), None, None));
                     i -= 1;
                 } else {
-                    path.push((None, Some(&new_rows[j - 1])));
+                    path.push((None, Some(&new_rows[j - 1]), None));
                     j -= 1;
                 }
             }
