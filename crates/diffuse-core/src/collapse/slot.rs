@@ -285,7 +285,11 @@ pub fn align_and_type_peer_group_with_content(
 
     // 3. Cross-slot token relocation (when total_slots > 1)
     if total_slots > 1 {
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, profile);
+        let is_pure_add: Vec<bool> = aligned_pairs
+            .iter()
+            .map(|(old_opt, new_opt)| old_opt.is_none() && new_opt.is_some())
+            .collect();
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
     // 4. Construct final AlignedSlotRow list
@@ -1154,8 +1158,10 @@ const CROSS_SLOT_WINDOW: i32 = 4;
 fn relocate_cross_slot_tokens(
     slot_runs: &mut [Vec<(RunKind, String)>],
     is_moved_slot: &[bool],
+    is_pure_add: &[bool],
     profile: Option<&LangProfile>,
 ) {
+    let num_slots = slot_runs.len();
     let mut candidates = Vec::new();
 
     // 1. Gather Del runs across slots
@@ -1241,10 +1247,16 @@ fn relocate_cross_slot_tokens(
         .into_iter()
         .partition(|t| text_has_salient_token(t, profile));
     let mut linked: Vec<(usize, usize)> = Vec::new();
+    let mut donors_for_tgt = vec![Vec::<usize>::new(); num_slots];
+    let mut exchanges = Vec::<(usize, usize, String)>::new();
+
     for token in &salient {
         apply_relocation_candidate(
             slot_runs,
             is_moved_slot,
+            is_pure_add,
+            &mut donors_for_tgt,
+            &mut exchanges,
             token,
             None,
             false,
@@ -1256,12 +1268,54 @@ fn relocate_cross_slot_tokens(
         apply_relocation_candidate(
             slot_runs,
             is_moved_slot,
+            is_pure_add,
+            &mut donors_for_tgt,
+            &mut exchanges,
             token,
             Some(&linked),
             true,
             &mut Vec::new(),
             profile,
         );
+    }
+
+    // 4. Anti-scavenging coverage floor on pure Add rows:
+    // Pure Add rows must not scavenge minor scraps (< 35% coverage) that turn
+    // clean addition lines into pseudo-modified rows.
+    for tgt in 0..num_slots {
+        if !is_pure_add.get(tgt).copied().unwrap_or(false) {
+            continue;
+        }
+        let total_new_len: usize = slot_new_text(&slot_runs[tgt]).trim().len();
+        if total_new_len == 0 {
+            continue;
+        }
+        let moved_tgt_len: usize = slot_runs[tgt]
+            .iter()
+            .filter(|(k, _)| *k == RunKind::MovedTgt)
+            .map(|(_, t)| t.len())
+            .sum();
+        let coverage = moved_tgt_len as f64 / total_new_len as f64;
+        if coverage < 0.35 && moved_tgt_len > 0 {
+            let mut affected_donors = Vec::new();
+            for (src_idx, tgt_idx, text) in exchanges.iter() {
+                if *tgt_idx == tgt {
+                    replace_run_kind(&mut slot_runs[tgt], RunKind::MovedTgt, RunKind::Add, text);
+                    replace_run_kind(
+                        &mut slot_runs[*src_idx],
+                        RunKind::MovedSrc,
+                        RunKind::Del,
+                        text,
+                    );
+                    affected_donors.push(*src_idx);
+                }
+            }
+            coalesce_runs(&mut slot_runs[tgt]);
+            for src_idx in affected_donors {
+                coalesce_runs(&mut slot_runs[src_idx]);
+            }
+            linked.retain(|&(_, t)| t != tgt);
+        }
     }
 }
 
@@ -1383,14 +1437,100 @@ fn slot_side_is_bare(runs: &[(RunKind, String)], kind: RunKind) -> bool {
     has_text
 }
 
+/// Whether a candidate token is a generic sub-token (primitive type, common
+/// short method call <= 8 chars, common literal, or short keyword construct).
+/// Generic sub-tokens require explicit contextual evidence (a mutual anchor or
+/// paired Mod alignment) to travel beyond immediate neighbor slots.
+fn is_generic_subtoken(token: &str, profile: Option<&LangProfile>) -> bool {
+    let t = token.trim();
+    if t.is_empty() {
+        return true;
+    }
+    // Method call <= 8 chars without underscore: e.g. .round(), .len(), .clone()
+    if t.starts_with('.') && t.len() <= 8 && !t.contains('_') {
+        return true;
+    }
+    const PRIMITIVES_AND_LITERALS: &[&str] = &[
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+        "f32",
+        "f64",
+        "bool",
+        "char",
+        "str",
+        "String",
+        "int",
+        "float",
+        "None",
+        "Some",
+        "Ok",
+        "Err",
+        "true",
+        "false",
+        "null",
+        "nil",
+        "undefined",
+    ];
+    let words = contextual_words(t);
+    if words.is_empty() {
+        return true;
+    }
+    words.iter().all(|&w| {
+        crate::lcs::tokenizer::COMMON_KEYWORDS.contains(&w)
+            || PRIMITIVES_AND_LITERALS.contains(&w)
+            || profile.is_some_and(|p| p.is_non_salient(w))
+            || (w.len() <= 4 && !w.contains('_'))
+    })
+}
+
+fn replace_run_kind(runs: &mut [(RunKind, String)], from: RunKind, to: RunKind, text: &str) {
+    for (k, t) in runs.iter_mut() {
+        if *k == from && t == text {
+            *k = to;
+            break;
+        }
+    }
+}
+
+fn coalesce_runs(runs: &mut Vec<(RunKind, String)>) {
+    if runs.len() <= 1 {
+        return;
+    }
+    let mut coalesced: Vec<(RunKind, String)> = Vec::with_capacity(runs.len());
+    for (k, t) in runs.drain(..) {
+        if let Some((last_k, last_t)) = coalesced.last_mut()
+            && *last_k == k
+        {
+            last_t.push_str(&t);
+        } else {
+            coalesced.push((k, t));
+        }
+    }
+    *runs = coalesced;
+}
+
 /// Relocates one candidate token from Del runs to Add runs across slot
 /// pairs within [`CROSS_SLOT_WINDOW`]. When `gate` is `Some`, only pairs
 /// in it may exchange the token — unless `allow_bare_lines` and one
 /// side's whole line is bare punctuation (see above). Pairs that actually
 /// exchange the token are appended to `linked`.
+#[allow(clippy::too_many_arguments)]
 fn apply_relocation_candidate(
     slot_runs: &mut [Vec<(RunKind, String)>],
     is_moved_slot: &[bool],
+    is_pure_add: &[bool],
+    donors_for_tgt: &mut [Vec<usize>],
+    exchanges: &mut Vec<(usize, usize, String)>,
     token: &str,
     gate: Option<&[(usize, usize)]>,
     allow_bare_lines: bool,
@@ -1398,6 +1538,7 @@ fn apply_relocation_candidate(
     profile: Option<&LangProfile>,
 ) {
     let num_slots = slot_runs.len();
+    let is_weak = is_generic_subtoken(token, profile);
 
     for src in 0..num_slots {
         if is_moved_slot.get(src).copied().unwrap_or(false) {
@@ -1408,9 +1549,7 @@ fn apply_relocation_candidate(
             if src == tgt || is_moved_slot.get(tgt).copied().unwrap_or(false) {
                 continue;
             }
-            if (src as i32 - tgt as i32).abs() > CROSS_SLOT_WINDOW {
-                continue;
-            }
+            // Bare candidate gating:
             if let Some(g) = gate
                 && !g.contains(&(src, tgt))
                 && !(allow_bare_lines
@@ -1419,6 +1558,51 @@ fn apply_relocation_candidate(
             {
                 continue;
             }
+
+            // Evidence and travel radius check for salient candidates:
+            if gate.is_none() {
+                let has_linked_anchor = linked.iter().any(|&(s, t)| {
+                    t == tgt && (s == src || (s as isize - src as isize).abs() <= 1)
+                });
+                let is_paired_mod = !is_pure_add.get(tgt).copied().unwrap_or(false);
+                let has_mutual_salient_anchor = {
+                    let src_text = slot_old_text(&slot_runs[src]);
+                    let tgt_text = slot_new_text(&slot_runs[tgt]);
+                    let src_words = contextual_words(&src_text);
+                    let tgt_words = contextual_words(&tgt_text);
+                    let token_words = contextual_words(token);
+                    src_words.iter().any(|sw| {
+                        crate::lcs::token_is_salient(sw, profile)
+                            && !token_words.iter().any(|tw| is_salient_word_match(sw, tw))
+                            && tgt_words.iter().any(|tw| is_salient_word_match(sw, tw))
+                    })
+                };
+                let has_evidence = has_linked_anchor || is_paired_mod || has_mutual_salient_anchor;
+
+                let max_distance = if !is_weak || has_evidence {
+                    CROSS_SLOT_WINDOW
+                } else {
+                    1
+                };
+                if (src as i32 - tgt as i32).abs() > max_distance {
+                    continue;
+                }
+            } else if (src as i32 - tgt as i32).abs() > CROSS_SLOT_WINDOW {
+                continue;
+            }
+
+            // Single-donor rule on pure Add rows:
+            if is_pure_add.get(tgt).copied().unwrap_or(false) {
+                let existing_donors = &donors_for_tgt[tgt];
+                if !existing_donors.is_empty()
+                    && !existing_donors
+                        .iter()
+                        .any(|&d| (src as isize - d as isize).abs() <= 1)
+                {
+                    continue;
+                }
+            }
+
             if find_matching_pair(&slot_runs[src], &slot_runs[tgt], token).is_some() {
                 let affinity = compute_contextual_affinity(src, tgt, token, slot_runs, profile);
                 candidate_targets.push((tgt, affinity));
@@ -1467,8 +1651,14 @@ fn apply_relocation_candidate(
                     RunKind::MovedTgt,
                     start_a,
                     end_a,
-                    matched_text,
+                    matched_text.clone(),
                 );
+                exchanges.push((src, tgt, matched_text));
+                if is_pure_add.get(tgt).copied().unwrap_or(false)
+                    && !donors_for_tgt[tgt].contains(&src)
+                {
+                    donors_for_tgt[tgt].push(src);
+                }
                 moved = true;
             }
             if moved && !linked.contains(&(src, tgt)) {
@@ -1824,7 +2014,8 @@ mod tests {
             vec![(RunKind::Add, "zzz alpha www".to_string())],
         ];
         let is_moved_slot = vec![false; 8];
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        let is_pure_add = vec![false; 8];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
         // The nearby pair still relocates.
         assert!(
             slot_runs[0]
@@ -1873,7 +2064,8 @@ mod tests {
             vec![(RunKind::Add, "www ( vvv".to_string())],
         ];
         let is_moved_slot = vec![false; 4];
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        let is_pure_add = vec![false; 4];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
         // Salient exchange links slots 0/1, so the bracket travels with
         // it (inside the shared `alpha (` span).
         assert!(
@@ -1914,7 +2106,8 @@ mod tests {
             vec![(RunKind::Add, "[]".to_string())],
         ];
         let is_moved_slot = vec![false; 2];
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, None);
+        let is_pure_add = vec![false, true];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
         assert!(
             slot_runs[0]
                 .iter()
@@ -2024,7 +2217,8 @@ mod tests {
             )],
         ];
         let is_moved_slot = vec![false; 4];
-        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, profile);
+        let is_pure_add = vec![false; 4];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
 
         assert!(
             !slot_runs[2]
@@ -2039,6 +2233,104 @@ mod tests {
                 .iter()
                 .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("round")),
             "prop_thumb at slot 3 must receive .round() due to higher contextual affinity, got: {:?}",
+            slot_runs[3]
+        );
+    }
+
+    #[test]
+    fn test_weak_salient_token_cannot_jump_across_unrelated_distant_slots() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        // Slot 0 (Del): old_var = None;
+        // Slot 1 (Del): middle_line();
+        // Slot 2 (Del): other_stuff();
+        // Slot 3 (Add): new_line = None;
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(RunKind::Del, "let old_var = None;".to_string())],
+            vec![(RunKind::Del, "middle_line();".to_string())],
+            vec![(RunKind::Del, "other_stuff();".to_string())],
+            vec![(RunKind::Add, "let new_feature = None;".to_string())],
+        ];
+        let is_moved_slot = vec![false; 4];
+        let is_pure_add = vec![false, false, false, true];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
+
+        assert!(
+            !slot_runs[3]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("None")),
+            "distant weak token 'None' must NOT relocate across 3 unrelated slots, got: {:?}",
+            slot_runs[3]
+        );
+    }
+
+    #[test]
+    fn test_pure_add_row_anti_scavenging_floor_rejects_minor_scraps() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        // Slot 0 (Del): let x = calculate();
+        // Slot 1 (Add): let very_long_brand_new_statement_with_many_tokens_and_args =
+        // calculate();
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(RunKind::Del, "let x = calculate();".to_string())],
+            vec![(
+                RunKind::Add,
+                "let very_long_brand_new_statement_with_many_tokens_and_args = calculate();"
+                    .to_string(),
+            )],
+        ];
+        let is_moved_slot = vec![false; 2];
+        let is_pure_add = vec![false, true];
+        // calculate() is ~11 chars out of 76 chars (14% < 35% threshold)
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
+
+        assert!(
+            !slot_runs[1]
+                .iter()
+                .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("calculate")),
+            "pure Add row with only 14% coverage must reject minor scrap, got: {:?}",
+            slot_runs[1]
+        );
+    }
+
+    #[test]
+    fn test_pure_add_row_single_donor_rule_rejects_disjoint_donors() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        // Slot 0 (Del): let alpha = compute_alpha_channel_value();
+        // Slot 1 (Del): unrelated_middle_line();
+        // Slot 2 (Del): let beta = compute_beta_channel_value();
+        // Slot 3 (Add): let combined = compute_alpha_channel_value() +
+        // compute_beta_channel_value();
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(
+                RunKind::Del,
+                "let alpha = compute_alpha_channel_value();".to_string(),
+            )],
+            vec![(RunKind::Del, "unrelated_middle_line();".to_string())],
+            vec![(
+                RunKind::Del,
+                "let beta = compute_beta_channel_value();".to_string(),
+            )],
+            vec![(
+                RunKind::Add,
+                "let combined = compute_alpha_channel_value() + compute_beta_channel_value();"
+                    .to_string(),
+            )],
+        ];
+        let is_moved_slot = vec![false; 4];
+        let is_pure_add = vec![false, false, false, true];
+        relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
+
+        // Under single-donor rule: pure Add slot 3 cannot accept tokens from both slot
+        // 0 and slot 2 (which are disjoint). It may accept from slot 0 OR slot
+        // 2, but NOT both!
+        let has_alpha = slot_runs[3]
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("compute_alpha"));
+        let has_beta = slot_runs[3]
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("compute_beta"));
+        assert!(
+            !(has_alpha && has_beta),
+            "pure Add slot 3 must not scavenge from disjoint donors (slot 0 and slot 2), got: {:?}",
             slot_runs[3]
         );
     }

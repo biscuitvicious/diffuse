@@ -1781,6 +1781,60 @@ fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
 }
 
 #[test]
+fn test_scrollbar_grab_drag_geometry_lines_241_242_are_pure_add() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let file = out
+        .files
+        .iter()
+        .find(|f| f.path.contains("geometry.rs"))
+        .expect("geometry.rs must be present");
+
+    let row_241 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.new_line == Some(241))
+        .expect("must find row 241 in geometry.rs");
+    assert_eq!(
+        row_241.kind,
+        diffuse_tui::core::parse::RowKind::Add,
+        "Row 241 (min_thumb) must be a pure Add row, got: {:?}",
+        row_241.kind
+    );
+    assert!(
+        !row_241
+            .runs
+            .iter()
+            .any(|r| r.kind == diffuse_tui::core::merge::RunKind::MovedTgt),
+        "Row 241 must not contain MovedTgt runs, got: {:?}",
+        row_241.runs
+    );
+
+    let row_242 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.new_line == Some(242))
+        .expect("must find row 242 in geometry.rs");
+    assert_eq!(
+        row_242.kind,
+        diffuse_tui::core::parse::RowKind::Add,
+        "Row 242 (.clamp) must be a pure Add row, got: {:?}",
+        row_242.kind
+    );
+    assert!(
+        !row_242
+            .runs
+            .iter()
+            .any(|r| r.kind == diffuse_tui::core::merge::RunKind::MovedTgt),
+        "Row 242 must not contain MovedTgt runs, got: {:?}",
+        row_242.runs
+    );
+}
+
+#[test]
 fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let a = 1;\n+    let a = 10;\n }\n";
     let output = run_pipeline_full(diff, None, None, PipelineOptions::default());
