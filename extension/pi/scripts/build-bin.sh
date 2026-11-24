@@ -9,7 +9,7 @@ set -e
 cd "$(dirname "$(readlink -f "$0")")/../../.." # the workspace root
 PROFILE="${PROFILE:-release}"
 TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
-if [ -n "$TOOLCHAIN" ]; then
+if [ -n "$TOOLCHAIN" ] && command -v rustup >/dev/null 2>&1; then
   CARGO="cargo +$TOOLCHAIN"
 else
   CARGO=cargo

@@ -34,7 +34,7 @@ echo "Target platform: ${TARGET:-$HOST_TARGET (cargo default)} (host: $HOST_TARG
 ensure_toolchain_and_target "$TARGET" false
 
 CARGO=(cargo)
-if [ -n "$PINNED_TOOLCHAIN" ]; then
+if [ -n "$PINNED_TOOLCHAIN" ] && command -v rustup >/dev/null 2>&1; then
   CARGO=(cargo "+$PINNED_TOOLCHAIN")
 fi
 

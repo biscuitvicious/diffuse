@@ -52,8 +52,8 @@ impl<const K: usize> BitVector<K> {
         let full_words = len / 64;
         let rem_bits = len % 64;
         let mut total = 0u32;
-        for k in 0..full_words.min(K) {
-            total += self.words[k].count_ones();
+        for &word in self.words.iter().take(full_words.min(K)) {
+            total += word.count_ones();
         }
         if rem_bits > 0 && full_words < K {
             let mask = (1u64 << rem_bits) - 1;

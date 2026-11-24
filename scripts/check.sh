@@ -106,9 +106,13 @@ if [ "$fmt_mode" != "no" ]; then
     echo
     echo "-----{ FORMAT: CHECK & APPLY (NIGHTLY) }-----"
     t_start=$(date +%s%N)
-    if ! cargo +nightly fmt --all -- --check 2>&1; then
+    FMT_CMD=(cargo fmt)
+    if command -v rustup >/dev/null 2>&1; then
+        FMT_CMD=(cargo +nightly fmt)
+    fi
+    if ! "${FMT_CMD[@]}" --all -- --check 2>&1; then
         echo "-----{ FORMAT: CHANGES DETECTED, APPLYING }-----"
-        cargo +nightly fmt --all
+        "${FMT_CMD[@]}" --all
     fi
     t_end=$(date +%s%N)
     echo "-----{ FORMAT: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"

@@ -222,11 +222,7 @@ impl ReviewTarget {
                 }
             }
 
-            if file_clean.ends_with(&format!("/{spec_clean}")) {
-                return true;
-            }
-
-            false
+            file_clean.ends_with(&format!("/{spec_clean}"))
         })
     }
 

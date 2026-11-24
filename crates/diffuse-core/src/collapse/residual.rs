@@ -70,10 +70,7 @@ pub(crate) fn are_roles_compatible(role1: &str, role2: &str) -> bool {
         return true;
     }
     let is_var_decl = |r: &str| matches!(r, "const" | "static");
-    if is_var_decl(role1) && is_var_decl(role2) {
-        return true;
-    }
-    false
+    is_var_decl(role1) && is_var_decl(role2)
 }
 
 /// Whether the line is an import / dependency declaration.
