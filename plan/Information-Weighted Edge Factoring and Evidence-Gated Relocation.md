@@ -5,7 +5,7 @@
 - [x] Phase 2 — Competing Destination Affinity in Token Relocation (`crates/diffuse-core/src/collapse/slot.rs`)
 - [x] Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows (`crates/diffuse-core/src/collapse/slot.rs`)
 - [x] Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow (`crates/diffuse-core/src/collapse/slot.rs`)
-- [ ] Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off (`tests/golden/`)
+- [·] Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off (`tests/golden/`)
 
 ---
 
