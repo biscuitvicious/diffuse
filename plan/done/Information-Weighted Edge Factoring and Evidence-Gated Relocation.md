@@ -5,7 +5,8 @@
 - [x] Phase 2 — Competing Destination Affinity in Token Relocation (`crates/diffuse-core/src/collapse/slot.rs`)
 - [x] Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows (`crates/diffuse-core/src/collapse/slot.rs`)
 - [x] Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow (`crates/diffuse-core/src/collapse/slot.rs`)
-- [·] Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off (`tests/golden/`)
+- [x] Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off (`tests/golden/`)
+- [x] Phase 6 — Leftover-LCS Frame Completion with Dyck Container Disambiguation (`crates/diffuse-core/src/collapse/slot.rs`, `crates/diffuse-algo/src/dyck/`)
 
 ---
 
@@ -72,6 +73,7 @@ flowchart TD
 3. [Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows](#3-phase-3--evidence-gated-cross-slot-relocation--anti-scavenging-floor-on-add-rows)
 4. [Phase 4 — Multi-Line Expression Collapse & Expansion in Micro-DP Reflow](#4-phase-4--multi-line-expression-collapse--expansion-in-micro-dp-reflow)
 5. [Phase 5 — Golden Corpus Calibration, Asymmetric Drift Audit & Final Sign-Off](#5-phase-5--golden-corpus-calibration-asymmetric-drift-audit--final-sign-off)
+6. [Phase 6 — Leftover-LCS Frame Completion with Dyck Container Disambiguation](#6-phase-6--leftover-lcs-frame-completion-with-dyck-container-disambiguation)
 
 ---
 
@@ -266,3 +268,71 @@ In `crates/diffuse-core/src/collapse/slot.rs`:
 3. **Pre-Commit Review & User Sign-Off**:
    - Prepare structured report of all golden diffs with before/after comparisons.
    - Pause for user inspection and explicit sign-off before committing.
+
+---
+
+### 6. Phase 6 — Leftover-LCS Frame Completion with Dyck Container Disambiguation
+
+#### Problem
+In `scrollbar-grab-drag` group 6 (`n=5`, `m=4`, slots 0–6) the expression frame survives but is not recognized:
+- Slot 0 `Del` old231 `Some(` is stranded; slot 5 `Mod` old234↔new244 has an unassigned `Add` prefix `Some(`. Verbatim candidate gathering misses it because source→target distance (0→5) exceeds `CROSS_SLOT_WINDOW = 4` for a weak token (`Some` is generic per `is_generic_subtoken`).
+- Slot 5 `Mod` carries an unassigned `Del` suffix ` as usize,` while slot 3 `Mod` old232↔new243 carries an unassigned `Add` suffix ` as usize;`. Verbatim containment gathering (`del_text.contains(a_trim)` / `find_matching_pair` on whole-run substrings) never proposes the common subsequence because the terminators differ (`,` vs `;`). Affinity routing therefore never sees the `as`/`usize` correspondence.
+- Slot 6 `Del` old235 `)` is the outer `Some(` closer; new244 ends in `))` (inner `clamp(` closer + outer `Some(` closer). Token identity alone is ambiguous — there are two `)` recipients — so pure information matching must be disambiguated structurally.
+
+Phase 3 machinery is correct for these same tokens in their ambiguous roles (`.round()` 1→2, stray `)` reuse, pure-`Add` rows 241/242 must stay pure `+`) and must not be weakened: no wider window, no weaker `is_generic_subtoken` gate, no terminator normalization (`as usize,` ≉ `as usize;` by fiat — `,` ≠ `;` must stay unmatched `Del`/`Add`).
+
+#### Design: leftover LCS, not language tactics
+No separator trimming, no opener/closer vocabulary, no head/tail special-casing. After `relocate_cross_slot_tokens` + `fold_tail_orphans` in `align_and_type_peer_group_with_content` (`crates/diffuse-core/src/collapse/slot.rs`), run one group-local pass over *stranded* runs only:
+1. **Leftover pools**: collect unassigned `Del` subtoken sequences (source pool) and unassigned `Add` subtoken sequences (target pool) in group slot order. Tokenize with the existing subtokenizer (same word/punct/whitespace splitting used for `word_spans`), preserving order. Pure-information input: exact token identity, no normalization.
+2. **Group-local LCS** over the two leftover sequences proposes common subsequences in their correct places. `as`, ` `, `usize` align as a contiguous block; `,` vs `;` naturally stay `Del`/`Add` — the correct output, with no language-specific rule.
+3. **Dyck disambiguation for delimiter-only matches**: when the proposed block is delimiter-only (`(`/`)`/`[`/`]`/`{`/`}`), compute per-side delimiter partners and nesting depths with `crates/diffuse-algo/src/dyck/` (`compute_delimiter_partners`, `track_nesting_depths_*`, `UniversalDelimiterClassifier` over the group-old / group-new concatenated token stream). Require same-depth, partner-consistent correspondence: old235 `)` (partner = old231 `Some(` at depth 0) matches the new244 final `)` (partner = new244 `Some(` at depth 0), not the inner `clamp(` closer. If depths/partners are ambiguous or unbalanced, abstain.
+4. **Pure-information gates (all required; Phase-3 protection is structural)**:
+   - *Rarity in the leftover pool*: kept token occurs frequency-1 (or below a low-frequency floor) on both sides. `Some(`, `as`, `usize` pass; `)`, `(`, `.` fail unless Dyck-disambiguated as above.
+   - *Mod-anchored recipient*: target slot is an already-paired `Mod`, never a pure `Add`. Rows 241/242 are unreachable by construction.
+   - *Anchor adjacency*: the kept block sits adjacent to an already-anchored correspondence (same paired `Mod` or a `linked` pair from relocation). Unanchored scraps in pure-`Add` rows cannot match.
+   - *Order-consistent contiguous block*: kept matches form a contiguous run in both pools (the `as␣usize` block), not scattered glyph reuse.
+   - *Single eligible recipient*: exactly one target slot holds the normalized-identity block at the required depth; two or more → abstain and let affinity own it.
+   - *Closed economy + projection*: retype pairwise `Del→MovedSrc` / `Add→MovedTgt`, verify `slots_project_to_text` and conservation (`MovedSrc` multiset == `MovedTgt` multiset); call `repair_unmatched_moves` semantics on failure (abstain rather than emit lone marks).
+5. **Ordering**: runs strictly last (after relocation, anti-scavenging floor, and folds). It only consumes leftovers the earlier passes stranded; it never re-routes `.round()` (already placed by Phase-2 affinity) and never donates to pure Adds. `CROSS_SLOT_WINDOW` is not widened — group-order LCS replaces distance for unique anchored frames.
+
+Expected effect on group 6: slot 0 `Some(` → `MovedSrc` paired with slot 5 `Some(` → `MovedTgt`; slot 5 ` as usize` (`as`, ` `, `usize`) → `MovedSrc` block paired with slot 3 ` as usize` → `MovedTgt` block while `,`/`;` stay `Del`/`Add`; slot 6 `)` → `MovedSrc` paired with the Dyck-outermost `)` of new244 → `MovedTgt`. Row kinds, line numbers, and slots 1–2 (pure `+`) are unchanged.
+
+#### Implementation Notes (as built; golden signed off and committed 2026-11-24)
+
+`relocate_leftover_frames(slot_runs, is_moved_slot, is_pure_add, profile)` in `crates/diffuse-core/src/collapse/slot.rs`, called immediately after `relocate_cross_slot_tokens` in `align_and_type_peer_group_with_content`. It rebuilds leftover token pools from the surviving `Del`/`Add` runs each round and accepts the longest admissible block, then repeats (bounded to 16 rounds) so crossed orders settle one block at a time. Deviations from the sketch above, all forced by the real corpus:
+
+- **Terminator normalization was not needed and was not implemented.** Matching on exact token identity already leaves `,` vs `;` outside the common block (` as usize` matches, the separator does not). No separator stripping exists anywhere in the pass.
+- **Contiguity is slot-level, not run-level.** The word diff splits ` as usize;` into ` ``/`as `/`usize`/`;` runs, so a frame block legitimately spans runs; retyping is applied per run with byte offsets verified before any mutation.
+- **Uniqueness is block-level.** Per-token frequency would reject ` as usize` because `as` also occurs in ` as f64`; the joined block occurs exactly once per side and exactly one slot per side holds it.
+- **Jurisdiction gate (not in the sketch).** A bracketed block within `CROSS_SLOT_WINDOW` is relocation's call: verbatim whole-run matching already proposed it, and declining it was deliberate. The pass only completes what verbatim matching could not see — glue with a differing terminator, or a frame beyond the window.
+- **Distance exemption requires bracket *external* evidence.** Beyond the window, a block must be bracket-unbalanced on at least one side (an opener whose closer lives elsewhere), so a balanced far fragment is not treated as a frame.
+- **Structural frame gate.** On each side the block holds a bracket, or its nearest non-whitespace neighbour in the slot projection does (` as usize` follows `)`). Separators never count, which is what keeps `,`/`;` glued to their own side.
+- **Donor exhaustion replaces the symmetric test.** The stranded `Del` fragment must carry the frame alone; the recipient is exempt because its remainder is genuine addition content (`Some(` out of the glued `Some(prop_thumb`). Requiring recipient exhaustion refused every glued addition.
+- **Stranded-donor rule.** A donor whose old side already donated (`MovedSrc`) was adjudicated by relocation; its leftovers belong to that exchange. Receiving (`MovedTgt`) does not disqualify a donor — group 6's slot 5 hosts the moved `)` and still owns ` as usize`.
+- **Dyck partner matching was not required.** In the live pipeline the stray `)` of old235/new244 is already relocated by Phase 3 before this pass runs, so no delimiter-only block ever reached it. `UniversalDelimiterClassifier` is used for the bracket test, the externals test, and the neighbour scan; a partner/depth pass would be dead code until a corpus exercises it.
+
+Tests added in `crates/diffuse-core/src/collapse/slot.rs`: `test_leftover_frame_completes_scrollbar_group_6` (the group-6 runs transcribed from the golden wire, so it also runs when the golden submodule is absent), `test_leftover_frame_two_candidate_weak_token_abstains`, and `test_leftover_frame_bracketed_within_window_abstains`.
+
+Gate state at sign-off: `./scripts/check.sh` FORMAT/CLIPPY/BUILD all clear; after regenerating the three drifted rows, all 45 golden legs pass and the full gate exits 0.
+
+Golden impact (signed off line-by-line; regenerated and committed): `scrollbar-grab-drag` only, three rows, run typing and spans only — no row-kind, line-number, group, or slot changes.
+- old231 slot 0: `        Some(` becomes `Del(\"        \")` + `MovedSrc(\"Some(\")`.
+- new243 slot 3: ` as usize` becomes `MovedTgt` (the moved `()` run absorbs the space), `;` stays `Add`.
+- new244 slot 5: `Some(` becomes `MovedTgt`; ` as usize` becomes `MovedSrc`; `,` stays `Del`.
+- Pure additions (new241/242), the relocated `.round()` (slot 4) and `)` (slot 6), and every other corpus are unchanged.
+
+#### Implementation Steps
+1. **Leftover-pool LCS + gating** (`crates/diffuse-core/src/collapse/slot.rs`):
+   - Add `relocate_leftover_frames(slot_runs, is_moved_slot, is_pure_add, linked, profile)` called after `relocate_cross_slot_tokens` (and after `fold_tail_orphans` output flows through), operating only on `RunKind::Del`/`RunKind::Add` runs that survived relocation.
+   - Build ordered leftover token streams with slot/run/offset provenance; compute LCS on exact token identity; filter through the six gates above; expand to run spans with the existing `expand_match` word-boundary discipline; retype via `replace_span_in_run`; record `exchanges`/`linked` so the existing pure-`Add` coverage floor and `repair_unmatched_moves` continue to hold.
+2. **Dyck partner/depth check** (`crates/diffuse-algo/src/dyck/partners.rs`, `containers.rs`; call from `slot.rs`):
+   - For delimiter-only candidate blocks, compute `compute_delimiter_partners` + nesting depths over the group-old and group-new token streams with the language-agnostic ASCII/universal classifier already in the tree. Match outermost-to-outermost (depth-0 `Some(` pair) for old235↔new244-final-`)`; abstain on depth mismatch, multiple same-depth candidates, or unbalanced input.
+3. **Tests (test-first, all in `crates/diffuse-core/src/collapse/tests.rs` unless noted)**:
+   - Opener travels despite window: stranded `Some(` orphan → paired-`Mod` recipient becomes `MovedSrc`/`MovedTgt`, conservation holds.
+   - Terminator block: ` as usize,` vs ` as usize;` yields `Moved` block for `as`/` `/`usize` while `,`/`;` remain `Del`/`Add`.
+   - Dyck disambiguation: two-`)` recipient resolves to the outermost partner; same-depth duplicate closers abstain.
+   - Negative controls (Phase-3 preservation): ambiguous `)` does not travel; pure-`Add` row never receives; two-candidate weak token abstains; coverage floor still reverts scavenged pure Adds.
+   - Confirm initial failure (stranded `Del`/`Add` before the fix), then minimal implementation; combined primary + edge tests must cover 100% of new branches; unit tests `< 0.5s`.
+4. **Verification gate**:
+   - `./scripts/check.sh` green (nightly `fmt`, `clippy -- -D warnings`, workspace tests).
+   - `cargo test -p diffuse --test golden`: expect surgical drift confined to `scrollbar-grab-drag` group 6 run-typing (`Del`/`Add` → `MovedSrc`/`MovedTgt` on the frame blocks above; `,`/`;` untouched; row kinds/line numbers unchanged) and zero drift elsewhere. Apply the asymmetric rule (+3 per eliminated spurious match, −1 per dissolved acceptable pairing); any Validated Golden regression needs line-by-line justification and human sign-off before committing.

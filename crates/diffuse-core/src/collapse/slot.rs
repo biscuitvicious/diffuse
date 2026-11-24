@@ -10,6 +10,12 @@ use crate::{
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
 };
 
+/// One styled run of a slot's text: a kind plus its exact source text.
+type Runs = Vec<(RunKind, String)>;
+
+/// A slot's runs split across several lines, one entry per line.
+type LineRuns = Vec<Runs>;
+
 /// An aligned slot within a peer reflow group.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlignedSlotRow {
@@ -306,6 +312,11 @@ pub fn align_and_type_peer_group_with_content(
             .map(|(old_opt, new_opt, _)| old_opt.is_none() && new_opt.is_some())
             .collect();
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
+        // Phase 6: leftover frame completion runs strictly last, over the
+        // stranded runs the earlier passes left behind. Pure-Add coverage
+        // repair below still applies to `relocate_cross_slot_tokens`
+        // exchanges only; leftover retypes are pairwise by construction.
+        relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
     // 4. Construct final AlignedSlotRow list
@@ -425,10 +436,7 @@ fn combine_mod_runs_expansion(
 /// becomes `MovedSrc` (Mod) / `MovedTgt` (continuation Add) pairs, which
 /// keeps the closed economy balanced by construction and hides the shared
 /// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
-fn distribute_expansion_runs(
-    full_runs: &[(RunKind, String)],
-    m: usize,
-) -> (Vec<(RunKind, String)>, Vec<Vec<(RunKind, String)>>) {
+fn distribute_expansion_runs(full_runs: &[(RunKind, String)], m: usize) -> (Runs, LineRuns) {
     let mut u_runs: Vec<(RunKind, String)> = Vec::new();
     let mut v_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); m];
     let mut current_line = 0usize;
@@ -612,10 +620,7 @@ fn combine_mod_runs_collapse(
 /// becomes `MovedSrc` (continuation Del) / `MovedTgt` (Mod) pairs, which
 /// keeps the closed economy balanced by construction and hides the shared
 /// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
-fn distribute_collapse_runs(
-    full_runs: &[(RunKind, String)],
-    n: usize,
-) -> (Vec<Vec<(RunKind, String)>>, Vec<(RunKind, String)>) {
+fn distribute_collapse_runs(full_runs: &[(RunKind, String)], n: usize) -> (LineRuns, Runs) {
     let mut u_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); n];
     let mut v_runs: Vec<(RunKind, String)> = Vec::new();
     let mut current_line = 0usize;
@@ -1010,7 +1015,7 @@ type SlotPair<'a> = (
 /// `SlotPair`): unmatched join-side text can straddle the line boundary
 /// inside one run, and the newline is not part of any real line. Runs left
 /// empty are dropped and same-kind neighbors re-coalesced.
-fn strip_join_newlines(runs: &mut Vec<Vec<(RunKind, String)>>) {
+fn strip_join_newlines(runs: &mut [Runs]) {
     for line_runs in runs.iter_mut() {
         let mut clean = Vec::with_capacity(line_runs.len());
         for (kind, text) in line_runs.drain(..) {
@@ -1531,6 +1536,428 @@ fn align_slots_micro_dp<'a>(
 /// token gathered from a nearby pair (e.g. a lone `{`) is stamped as
 /// moved between arbitrarily distant slots.
 const CROSS_SLOT_WINDOW: i32 = 4;
+
+/// One leftover token with provenance into its run string.
+#[derive(Clone, Debug)]
+struct LeftoverTok {
+    slot: usize,
+    run: usize,
+    start: usize,
+    end: usize,
+    text: String,
+}
+
+/// Tokenize a run string with the shared line subtokenizer, preserving
+/// byte offsets for later span retyping.
+fn tokenize_run_spans(text: &str) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    for tok in tokenize_line(text) {
+        // `LineTokenizer` yields borrowed slices of `text`: recover byte
+        // offsets via pointer arithmetic (same string, same lifetime).
+        let start = (tok.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+        out.push((start, start + tok.len(), tok.to_string()));
+    }
+    out
+}
+
+/// Groups a contiguous token block into per-run byte spans, verifying each
+/// covered run carries the expected kind. Returns `None` when the block
+/// reaches a run of another kind (the tokens are then not a clean frame
+/// slice of the projection).
+fn run_spans_of(
+    toks: &[LeftoverTok],
+    runs: &[(RunKind, String)],
+    kind: RunKind,
+) -> Option<Vec<(usize, usize, usize)>> {
+    let mut spans: Vec<(usize, usize, usize)> = Vec::new();
+    for t in toks {
+        if runs.get(t.run).map(|(k, _)| *k) != Some(kind) {
+            return None;
+        }
+        match spans.last_mut() {
+            Some(last) if last.0 == t.run => last.2 = t.end,
+            Some(last) if t.run < last.0 => return None,
+            _ => spans.push((t.run, t.start, t.end)),
+        }
+    }
+    Some(spans)
+}
+
+/// Collects the leftover tokens of one kind, in slot order, with provenance
+/// into their run strings.
+///
+/// Moved slots were adjudicated elsewhere, and pure `Add` rows are barred
+/// from both pools: as recipients that keeps an addition row from being
+/// scavenged into a faux modification, and as donors they hold no `Del` text
+/// anyway.
+fn leftover_pool(
+    slot_runs: &[Vec<(RunKind, String)>],
+    is_moved_slot: &[bool],
+    is_pure_add: &[bool],
+    want: RunKind,
+) -> Vec<LeftoverTok> {
+    let mut toks = Vec::new();
+    for (slot, runs) in slot_runs.iter().enumerate() {
+        if is_moved_slot.get(slot).copied().unwrap_or(false)
+            || is_pure_add.get(slot).copied().unwrap_or(false)
+        {
+            continue;
+        }
+        for (run, (kind, text)) in runs.iter().enumerate() {
+            if *kind != want || text.trim().is_empty() {
+                continue;
+            }
+            for (start, end, text) in tokenize_run_spans(text) {
+                toks.push(LeftoverTok {
+                    slot,
+                    run,
+                    start,
+                    end,
+                    text,
+                });
+            }
+        }
+    }
+    toks
+}
+
+/// Completes stranded expression frames from the leftovers of the earlier
+/// passes (Phase 6).
+///
+/// `relocate_cross_slot_tokens` only proposes verbatim whole-run matches
+/// within [`CROSS_SLOT_WINDOW`], so two kinds of frame part survive it:
+/// openers or closers whose partner lives beyond the window (`Some(` at
+/// distance 5), and glue whose counterpart run ends in a different
+/// terminator (` as usize,` vs ` as usize;`). Both are recovered here by
+/// matching leftover tokens by exact identity: `,` and `;` simply never
+/// enter a common block, so they stay `Del`/`Add` with no terminator
+/// normalization and no language-specific rule.
+///
+/// Runs strictly last, over the runs the earlier passes stranded, and is
+/// gated so Phase-3 adjudications are never second-guessed:
+/// - *generic frame vocabulary only*: blocks that carry a domain identifier
+///   (`AddLine::with_spans(`, `spans.clone`) stay with affinity/coverage;
+/// - *bracket structure on both sides*: the block holds a bracket, or its
+///   nearest non-whitespace neighbour in the slot projection does (` as usize`
+///   follows `)`);
+/// - *jurisdiction*: a bracketed block within relocation's window is
+///   relocation's call, declined deliberately;
+/// - *distance exemption*: beyond the window only a bracket-unbalanced block
+///   (an opener whose closer must live elsewhere) may travel;
+/// - *stranded donor*: a donor whose old side already donated belongs to that
+///   exchange, not here;
+/// - *donor exhaustion*: the `Del` fragment carries the frame alone, with no
+///   leftover words beside it;
+/// - *uniqueness*: the block occurs exactly once per side, and exactly one slot
+///   on each side holds it;
+/// - *Mod-anchored recipient*: pure `Add` rows never enter the target pool, so
+///   an addition row cannot be scavenged into a faux modification.
+fn relocate_leftover_frames(
+    slot_runs: &mut [Vec<(RunKind, String)>],
+    is_moved_slot: &[bool],
+    is_pure_add: &[bool],
+    profile: Option<&LangProfile>,
+) {
+    // Per-slot projections of each side, with each run's byte offset into
+    // its slot projection. Retyping never alters slot texts, so these are
+    // computed once; they locate a frame block's neighbours exactly.
+    use diffuse_algo::dyck::{
+        DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier,
+    };
+    let dyck_classifier = UniversalDelimiterClassifier;
+    let is_bracket = |c: char| {
+        matches!(
+            dyck_classifier.classify(&c),
+            Some(DelimiterCategory::Open(_)) | Some(DelimiterCategory::Close(_))
+        )
+    };
+    let project = |side: [RunKind; 3]| -> (Vec<String>, Vec<Vec<Option<usize>>>) {
+        let mut projs = Vec::with_capacity(slot_runs.len());
+        let mut offs = Vec::with_capacity(slot_runs.len());
+        for runs in slot_runs.iter() {
+            let mut proj = String::new();
+            let mut run_off = vec![None; runs.len()];
+            for (r, (k, t)) in runs.iter().enumerate() {
+                if side.contains(k) {
+                    run_off[r] = Some(proj.len());
+                    proj.push_str(t);
+                }
+            }
+            projs.push(proj);
+            offs.push(run_off);
+        }
+        (projs, offs)
+    };
+    let (old_proj, old_run_off) = project([RunKind::Del, RunKind::Ctx, RunKind::MovedSrc]);
+    let (new_proj, new_run_off) = project([RunKind::Add, RunKind::Ctx, RunKind::MovedTgt]);
+    // Iterative longest-common-substring: each accepted block leaves the
+    // pools (by retyping) before the next search, so crossed orders (opener
+    // early on one side, terminator early on the other) settle one block per
+    // round.
+    for _ in 0..16 {
+        // Rebuilt every round because retyping shifts byte offsets.
+        let src = leftover_pool(slot_runs, is_moved_slot, is_pure_add, RunKind::Del);
+        let tgt = leftover_pool(slot_runs, is_moved_slot, is_pure_add, RunKind::Add);
+        if src.is_empty() || tgt.is_empty() {
+            return;
+        }
+        // Concatenated leftover texts for block-level uniqueness: the
+        // joined block must occur exactly once per side. Per-token
+        // frequency would reject ` as usize` because `as` also occurs in
+        // ` as f64`; the block as a unit is still unique.
+        let src_all: String = src.iter().map(|t| t.text.as_str()).collect();
+        let tgt_all: String = tgt.iter().map(|t| t.text.as_str()).collect();
+        // Candidate longest common contiguous runs sharing one src slot
+        // and one tgt slot. Contiguity is slot-level, not run-level: the
+        // word diff splits ` as usize;` into ` `, `as `, `usize`, `;`
+        // runs (color boundaries), and the frame block spans them.
+        // Same-slot pairs are skipped — intra-slot leftovers were already
+        // aligned by the word diff. Longest first so the frame block wins
+        // over glyph reuse; failed candidates are skipped, not fatal, so
+        // a rejected long block (e.g. non-unique) still lets a shorter
+        // unique frame (e.g. `Some(`) apply in a later round.
+        let mut candidates: Vec<(usize, usize, usize)> = Vec::new();
+        for i in 0..src.len() {
+            for j in 0..tgt.len() {
+                if src[i].text != tgt[j].text || src[i].slot == tgt[j].slot {
+                    continue;
+                }
+                // Extend leftward so every candidate is maximal: a block
+                // that can grow backward by one shared token (`Some(` →
+                // ` Some(`) would otherwise be recorded only as its
+                // shorter suffix and duplicate its parent.
+                let mut si = i;
+                let mut sj = j;
+                while si > 0
+                    && sj > 0
+                    && src[si - 1].text == tgt[sj - 1].text
+                    && src[si - 1].slot == src[i].slot
+                    && tgt[sj - 1].slot == tgt[j].slot
+                {
+                    si -= 1;
+                    sj -= 1;
+                }
+                let mut k = i - si;
+                while si + k < src.len()
+                    && sj + k < tgt.len()
+                    && src[si + k].text == tgt[sj + k].text
+                    && src[si + k].slot == src[si].slot
+                    && tgt[sj + k].slot == tgt[sj].slot
+                {
+                    k += 1;
+                }
+                if k >= 2 {
+                    candidates.push((si, sj, k));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            b.2.cmp(&a.2).then_with(|| {
+                let la: usize = src[a.0..a.0 + a.2].iter().map(|t| t.text.len()).sum();
+                let lb: usize = src[b.0..b.0 + b.2].iter().map(|t| t.text.len()).sum();
+                lb.cmp(&la)
+            })
+        });
+        candidates.dedup();
+        // Accept the longest admissible block, then restart with fresh pools
+        // so crossed orders (opener early on one side, terminator early on
+        // the other) settle one block per round. A rejected candidate is
+        // skipped rather than fatal: a non-unique long block must not
+        // suppress a shorter unique frame such as `Some(`.
+        let mut applied = false;
+        for (bi, bj, blen) in candidates {
+            let block_src = &src[bi..bi + blen];
+            let block_tgt = &tgt[bj..bj + blen];
+            let src_slot = block_src[0].slot;
+            let tgt_slot = block_tgt[0].slot;
+            let joined: String = block_src.iter().map(|t| t.text.as_str()).collect();
+            // Frame blocks carry words: bare delimiter soup (`,`, `;`, `)`),
+            // pure numbers, and punctuation-only scraps identify nothing.
+            if !joined.chars().any(char::is_alphabetic) {
+                continue;
+            }
+            // Generic vocabulary only: a block carrying a domain identifier
+            // (`AddLine::with_spans(`, `spans.clone(`) belongs to affinity
+            // and the coverage floor, not to frame completion.
+            if !is_generic_subtoken(&joined, profile) {
+                continue;
+            }
+            // Jurisdiction: inside relocation's window a bracketed block was
+            // relocation's call — verbatim whole-run matching proposed it and
+            // declining it was deliberate (affinity, coverage, single-donor).
+            // Only what verbatim matching could not see is completed here:
+            // glue whose counterpart ends in a different terminator
+            // (` as usize,` vs ` as usize;`), or a frame beyond the window.
+            let dist = (src_slot as i32 - tgt_slot as i32).abs();
+            if dist <= CROSS_SLOT_WINDOW && joined.chars().any(is_bracket) {
+                continue;
+            }
+            // Beyond the window, only a bracket-unbalanced block may travel:
+            // an opener whose closer must live in another slot (`Some(`). A
+            // balanced far fragment is coincidence, and blindness of
+            // relocation is not evidence.
+            let externals = |toks: &[LeftoverTok]| {
+                let mut depth = 0i32;
+                let mut closed_early = false;
+                for t in toks {
+                    for c in slot_runs[t.slot][t.run].1[t.start..t.end].chars() {
+                        match dyck_classifier.classify(&c) {
+                            Some(DelimiterCategory::Open(_)) => depth += 1,
+                            Some(DelimiterCategory::Close(_)) => {
+                                depth -= 1;
+                                closed_early |= depth < 0;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                depth != 0 || closed_early
+            };
+            if dist > CROSS_SLOT_WINDOW && !(externals(block_src) || externals(block_tgt)) {
+                continue;
+            }
+            // Structural frame gate: on each side the block holds a bracket
+            // itself, or its nearest non-whitespace neighbour in the slot
+            // projection does (` as usize` follows `)`). Whitespace is
+            // skipped so indentation never counts as structure; separators
+            // never count either, which keeps `,`/`;` glued to their sides.
+            let structural = |toks: &[LeftoverTok], old_side: bool| {
+                let slot = toks[0].slot;
+                if toks.iter().any(|t| {
+                    slot_runs[t.slot][t.run].1[t.start..t.end]
+                        .chars()
+                        .any(is_bracket)
+                }) {
+                    return true;
+                }
+                let (proj, run_off) = if old_side {
+                    (&old_proj[slot], &old_run_off[slot])
+                } else {
+                    (&new_proj[slot], &new_run_off[slot])
+                };
+                let first = &toks[0];
+                let last = &toks[toks.len() - 1];
+                let (Some(first_off), Some(last_off)) = (run_off[first.run], run_off[last.run])
+                else {
+                    return false;
+                };
+                let start = first_off + first.start;
+                let end = last_off + last.end;
+                let prev = proj[..start].chars().rev().find(|c| !c.is_whitespace());
+                let next = proj[end..].chars().find(|c| !c.is_whitespace());
+                prev.is_some_and(is_bracket) || next.is_some_and(is_bracket)
+            };
+            if !(structural(block_src, true) && structural(block_tgt, false)) {
+                continue;
+            }
+            // Donor exhaustion: the stranded `Del` fragment carries the frame
+            // alone, with no words left beside it (orphan `Some(`, suffix
+            // ` as usize,` before `,`). A donor keeping real content
+            // (`.clone()` out of `let mut line = del_line.clone();`) is a
+            // scrap of a contentful line, not a stranded frame part. The
+            // recipient needs no such test: whatever remains there is
+            // genuine addition content (`Some(` out of `Some(prop_thumb`).
+            let donor_exhausted = |toks: &[LeftoverTok]| {
+                let first = &toks[0];
+                let last = &toks[toks.len() - 1];
+                let head = &slot_runs[first.slot][first.run].1[..first.start];
+                let tail = &slot_runs[last.slot][last.run].1[last.end..];
+                !head.chars().chain(tail.chars()).any(char::is_alphanumeric)
+            };
+            if !donor_exhausted(block_src) {
+                continue;
+            }
+            // Uniqueness: the block as a unit occurs exactly once among the
+            // stranded `Del` text and once among the stranded `Add` text, and
+            // exactly one slot per side holds it. `)` and `.` fail here;
+            // `Some(` and ` as usize` pass 1-to-1.
+            if src_all.matches(joined.as_str()).count() != 1
+                || tgt_all.matches(joined.as_str()).count() != 1
+            {
+                continue;
+            }
+            let mut src_holders = 0usize;
+            let mut tgt_holders = 0usize;
+            for (idx, runs) in slot_runs.iter().enumerate() {
+                if is_moved_slot.get(idx).copied().unwrap_or(false) {
+                    continue;
+                }
+                let side_text = |kind: RunKind| -> String {
+                    runs.iter()
+                        .filter(|(k, _)| *k == kind)
+                        .map(|(_, t)| t.as_str())
+                        .collect()
+                };
+                if side_text(RunKind::Del).contains(joined.as_str()) {
+                    src_holders += 1;
+                }
+                if is_pure_add.get(idx).copied().unwrap_or(false) {
+                    continue;
+                }
+                if side_text(RunKind::Add).contains(joined.as_str()) {
+                    tgt_holders += 1;
+                }
+            }
+            if src_holders != 1 || tgt_holders != 1 {
+                continue;
+            }
+            // Mod-anchored recipient: the target slot carries context or an
+            // exchange, so it is a paired row rather than an orphan. Pure
+            // `Add` rows never reach here (excluded from the pool above), so
+            // an addition row can never be scavenged into a faux modification.
+            let tgt_anchored = slot_runs[tgt_slot]
+                .iter()
+                .any(|(k, _)| matches!(k, RunKind::Ctx | RunKind::MovedSrc | RunKind::MovedTgt));
+            if !tgt_anchored {
+                continue;
+            }
+            // Donor stranded: a donor whose old side already donated was
+            // adjudicated by relocation, and its remaining fragments are the
+            // residue of that decision (`.any(|r| ` beside an already-moved
+            // `matches!(`). Receiving does not disqualify a donor: group 6's
+            // slot 5 hosts the moved `)` and still owns ` as usize`.
+            if slot_runs[src_slot]
+                .iter()
+                .any(|(k, _)| *k == RunKind::MovedSrc)
+            {
+                continue;
+            }
+            // Retype only after proving exact byte-for-byte identity of the
+            // two spans, so conservation holds pairwise and `,`/`;` never
+            // ride along.
+            let src_spans = run_spans_of(block_src, &slot_runs[src_slot], RunKind::Del);
+            let tgt_spans = run_spans_of(block_tgt, &slot_runs[tgt_slot], RunKind::Add);
+            let (Some(src_spans), Some(tgt_spans)) = (src_spans, tgt_spans) else {
+                continue;
+            };
+            let src_text: String = src_spans
+                .iter()
+                .map(|&(r, s, e)| &slot_runs[src_slot][r].1[s..e])
+                .collect();
+            let tgt_text: String = tgt_spans
+                .iter()
+                .map(|&(r, s, e)| &slot_runs[tgt_slot][r].1[s..e])
+                .collect();
+            if src_text != tgt_text {
+                continue;
+            }
+            applied = true;
+            // Bottom-up so earlier byte offsets stay valid.
+            for &(r, s, e) in tgt_spans.iter().rev() {
+                let piece = slot_runs[tgt_slot][r].1[s..e].to_string();
+                replace_span_in_run(&mut slot_runs[tgt_slot], r, RunKind::MovedTgt, s, e, piece);
+            }
+            for &(r, s, e) in src_spans.iter().rev() {
+                let piece = slot_runs[src_slot][r].1[s..e].to_string();
+                replace_span_in_run(&mut slot_runs[src_slot], r, RunKind::MovedSrc, s, e, piece);
+            }
+            break;
+        }
+        if !applied {
+            return;
+        }
+    }
+}
 
 fn relocate_cross_slot_tokens(
     slot_runs: &mut [Vec<(RunKind, String)>],
@@ -2709,6 +3136,245 @@ mod tests {
             !(has_alpha && has_beta),
             "pure Add slot 3 must not scavenge from disjoint donors (slot 0 and slot 2), got: {:?}",
             slot_runs[3]
+        );
+    }
+
+    #[test]
+    fn test_leftover_frame_two_candidate_weak_token_abstains() {
+        // Phase-3 preservation: a weak token with two eligible Mod
+        // recipients is ambiguous — affinity owns it, the leftover pass
+        // must not grab it for the first slot in group order.
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(RunKind::Del, "alpha = 1;".to_string())],
+            vec![
+                (RunKind::Ctx, "keep".to_string()),
+                (RunKind::Add, " alpha;".to_string()),
+            ],
+            vec![
+                (RunKind::Ctx, "keep".to_string()),
+                (RunKind::Add, " alpha;".to_string()),
+            ],
+        ];
+        let is_moved_slot = vec![false; 3];
+        let is_pure_add = vec![false; 3];
+        relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
+        assert!(
+            slot_runs[0].iter().all(|(k, _)| *k != RunKind::MovedSrc),
+            "two-candidate donor must abstain, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            slot_runs[1].iter().all(|(k, _)| *k != RunKind::MovedTgt),
+            "first of two recipients must not steal, got: {:?}",
+            slot_runs[1]
+        );
+        assert!(
+            slot_runs[2].iter().all(|(k, _)| *k != RunKind::MovedTgt),
+            "second of two recipients must not steal, got: {:?}",
+            slot_runs[2]
+        );
+    }
+
+    /// Concatenated text of all runs of one kind: retyping splits a block
+    /// across the word diff's color runs, so a moved frame is one logical
+    /// span spread over several runs.
+    fn kind_text(runs: &[(RunKind, String)], kind: RunKind) -> String {
+        runs.iter()
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, t)| t.as_str())
+            .collect()
+    }
+
+    /// Runs of `scrollbar-grab-drag` group 6 transcribed from the golden wire
+    /// output (file `app/geometry.rs` hunk 0, rows 26-32), after Phase-3
+    /// relocation has already placed `.round()` and the stray `)`.
+    fn scrollbar_group_6_runs() -> Vec<Vec<(RunKind, String)>> {
+        let r = |k: RunKind, t: &str| (k, t.to_string());
+        vec![
+            // slot 0: old231 orphan `Some(`
+            vec![r(RunKind::Del, "        Some(")],
+            // slot 1: new241 pure addition
+            vec![
+                r(RunKind::Add, "        "),
+                r(RunKind::Add, "let"),
+                r(RunKind::Add, " min_thumb "),
+                r(RunKind::Add, "= (("),
+                r(RunKind::Add, "track_h "),
+                r(RunKind::Add, "as "),
+                r(RunKind::Add, "f64 "),
+                r(RunKind::Add, "* "),
+                r(RunKind::Add, "Self"),
+                r(RunKind::Add, "::"),
+                r(RunKind::Add, "SCROLLBAR_MIN_PERCENT"),
+                r(RunKind::Add, ")."),
+                r(RunKind::Add, "round"),
+                r(RunKind::Add, "() "),
+                r(RunKind::Add, "as "),
+                r(RunKind::Add, "usize"),
+                r(RunKind::Add, ")"),
+            ],
+            // slot 2: new242 pure addition
+            vec![
+                r(RunKind::Add, "            "),
+                r(RunKind::Add, "."),
+                r(RunKind::Add, "clamp"),
+                r(RunKind::Add, "("),
+                r(RunKind::Add, "Self"),
+                r(RunKind::Add, "::"),
+                r(RunKind::Add, "SCROLLBAR_MIN_THUMB_LINES"),
+                r(RunKind::Add, ","),
+                r(RunKind::Add, " max_thumb"),
+                r(RunKind::Add, ");"),
+            ],
+            // slot 3: old232 -> new243
+            vec![
+                r(RunKind::Del, "    "),
+                r(RunKind::Ctx, "        "),
+                r(RunKind::Add, "let"),
+                r(RunKind::Ctx, " prop_thumb "),
+                r(RunKind::Ctx, "= "),
+                r(RunKind::Ctx, "(("),
+                r(RunKind::Ctx, "vh "),
+                r(RunKind::Ctx, "as "),
+                r(RunKind::Ctx, "f64 "),
+                r(RunKind::Ctx, "/"),
+                r(RunKind::Ctx, " total_vis_lines "),
+                r(RunKind::Ctx, "as "),
+                r(RunKind::Ctx, "f64"),
+                r(RunKind::Ctx, ") *"),
+                r(RunKind::Ctx, " track_h "),
+                r(RunKind::Ctx, "as "),
+                r(RunKind::Ctx, "f64"),
+                r(RunKind::Ctx, ")"),
+                r(RunKind::MovedTgt, "."),
+                r(RunKind::MovedTgt, "round"),
+                r(RunKind::MovedTgt, "()"),
+                r(RunKind::Add, " "),
+                r(RunKind::Add, "as "),
+                r(RunKind::Add, "usize"),
+                r(RunKind::Add, ";"),
+            ],
+            // slot 4: old233 `.round()` already relocated
+            vec![
+                r(RunKind::Del, "                "),
+                r(RunKind::MovedSrc, ".round()"),
+            ],
+            // slot 5: old234 -> new244
+            vec![
+                r(RunKind::Del, "        "),
+                r(RunKind::Ctx, "        "),
+                r(RunKind::Add, "Some"),
+                r(RunKind::Add, "("),
+                r(RunKind::Add, "prop_thumb"),
+                r(RunKind::Ctx, " "),
+                r(RunKind::Ctx, "."),
+                r(RunKind::Ctx, "clamp"),
+                r(RunKind::Ctx, "("),
+                r(RunKind::Del, "2.0"),
+                r(RunKind::Add, "min_thumb"),
+                r(RunKind::Ctx, " "),
+                r(RunKind::Ctx, ","),
+                r(RunKind::Ctx, " max_thumb"),
+                r(RunKind::Del, " as f64"),
+                r(RunKind::MovedTgt, ")"),
+                r(RunKind::Ctx, ")"),
+                r(RunKind::Del, " as usize,"),
+            ],
+            // slot 6: old235 stray `)` already relocated
+            vec![r(RunKind::Del, "        "), r(RunKind::MovedSrc, ")")],
+        ]
+    }
+
+    #[test]
+    fn test_leftover_frame_completes_scrollbar_group_6() {
+        let mut slot_runs = scrollbar_group_6_runs();
+        let is_moved_slot = vec![false; 7];
+        // new241 / new242 are pure additions.
+        let is_pure_add = vec![false, true, true, false, false, false, false];
+        relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
+
+        // Opener: slot 0 `Some(` -> slot 5 `Some(` despite distance 5.
+        assert_eq!(
+            kind_text(&slot_runs[0], RunKind::MovedSrc),
+            "Some(",
+            "orphan `Some(` must become MovedSrc, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            kind_text(&slot_runs[5], RunKind::MovedTgt).starts_with("Some("),
+            "slot 5 must receive `Some(` as MovedTgt, got: {:?}",
+            slot_runs[5]
+        );
+        // ` as usize` block moves; `,`/`;` stay unmatched.
+        assert!(
+            kind_text(&slot_runs[5], RunKind::MovedSrc).ends_with("as usize"),
+            "` as usize` must become MovedSrc in slot 5, got: {:?}",
+            slot_runs[5]
+        );
+        assert!(
+            slot_runs[5]
+                .iter()
+                .any(|(k, t)| *k == RunKind::Del && t == ","),
+            "slot 5 `,` must stay Del, got: {:?}",
+            slot_runs[5]
+        );
+        assert!(
+            kind_text(&slot_runs[3], RunKind::MovedTgt).ends_with("as usize"),
+            "` as usize` must become MovedTgt in slot 3, got: {:?}",
+            slot_runs[3]
+        );
+        assert!(
+            slot_runs[3]
+                .iter()
+                .any(|(k, t)| *k == RunKind::Add && t == ";"),
+            "slot 3 `;` must stay Add, got: {:?}",
+            slot_runs[3]
+        );
+        // Phase-3 protection: pure additions untouched, `.round()`/`)`
+        // already placed by relocation stay put.
+        for idx in [1usize, 2] {
+            assert!(
+                slot_runs[idx].iter().all(|(k, _)| *k == RunKind::Add),
+                "pure addition slot {idx} must stay pure, got: {:?}",
+                slot_runs[idx]
+            );
+        }
+        assert_eq!(
+            slot_runs[4].last().map(|(k, _)| *k),
+            Some(RunKind::MovedSrc)
+        );
+        assert_eq!(
+            slot_runs[6].last().map(|(k, _)| *k),
+            Some(RunKind::MovedSrc)
+        );
+    }
+
+    #[test]
+    fn test_leftover_frame_bracketed_within_window_abstains() {
+        // Jurisdiction: a bracketed expression within relocation's window
+        // (`.clone()` at distance 1) was relocation's call — declining it
+        // was deliberate. The leftover pass must not second-guess it,
+        // even though the fragment is unique and Mod-anchored.
+        let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
+            vec![(RunKind::Del, "let mut line = del_line.clone();".to_string())],
+            vec![
+                (RunKind::Ctx, "Row::Del(del_line".to_string()),
+                (RunKind::Add, ".clone()".to_string()),
+                (RunKind::Ctx, ")".to_string()),
+            ],
+        ];
+        let is_moved_slot = vec![false; 2];
+        let is_pure_add = vec![false; 2];
+        relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, None);
+        assert!(
+            slot_runs[0].iter().all(|(k, _)| *k != RunKind::MovedSrc),
+            "within-window `.clone()` donor must abstain, got: {:?}",
+            slot_runs[0]
+        );
+        assert!(
+            slot_runs[1].iter().all(|(k, _)| *k != RunKind::MovedTgt),
+            "within-window `.clone()` recipient must abstain, got: {:?}",
+            slot_runs[1]
         );
     }
 }
