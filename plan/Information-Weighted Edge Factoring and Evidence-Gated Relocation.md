@@ -1,7 +1,7 @@
 # Information-Weighted Edge Factoring and Evidence-Gated Relocation — Engineering Plan
 
 - [x] Phase 0 — Built-in Type & Operator Keyword Recognition in LangProfile (`crates/diffuse-syntax/`, `crates/diffuse-core/`)
-- [ ] Phase 1 — Information-Theoretic Edge Weighting & Fragile Edge Pruning in Cluster Factoring (`crates/diffuse-core/src/cluster/factor.rs`)
+- [x] Phase 1 — Information-Theoretic Edge Weighting & Fragile Edge Pruning in Cluster Factoring (`crates/diffuse-core/src/cluster/factor.rs`)
 - [ ] Phase 2 — Competing Destination Affinity in Token Relocation (`crates/diffuse-core/src/collapse/slot.rs`)
 - [ ] Phase 3 — Evidence-Gated Cross-Slot Relocation & Anti-Scavenging Floor on Add Rows (`crates/diffuse-core/src/collapse/slot.rs`)
 - [ ] Phase 4 — Multi-Line Expression Collapse in Micro-DP Reflow (`crates/diffuse-core/src/collapse/slot.rs`)
@@ -148,6 +148,9 @@ In `crates/diffuse-core/src/cluster/factor.rs`:
      - *Desirable*: Groups that previously pooled unrelated statements now cleanly factor into separate, cohesive groups.
      - *Undesirable*: True compound reflow groups erroneously shattered.
    - Assert asymmetric loss condition: $\mathcal{L} = 3 \times N_{\text{bad}} + 1 \times N_{\text{dissolved}} < \mathcal{L}_{\text{prior}}$.
+
+> [!NOTE]
+> Reflow atomicity across multi-line expression heads (e.g. `let matched =` severed from RHS expressions during compound factoring) is temporarily guarded by `is_open_continuation_line`. A complete language-agnostic replacement combining universal operator valence, indentation geometry, and asymmetric reflow gating is specified in [`Structural Continuation and Punctuation Valence in Cluster Factoring.md`](Structural%20Continuation%20and%20Punctuation%20Valence%20in%20Cluster%20Factoring.md).
 
 ---
 

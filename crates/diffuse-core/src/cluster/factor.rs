@@ -151,7 +151,7 @@ pub fn factor_cluster_with_content(
         }
     }
 
-    let mut edges = Vec::new();
+    let mut raw_edges: Vec<(usize, usize, f64)> = Vec::new();
 
     if n * m <= 4096 {
         for (u, old_row) in old_rows.iter().enumerate() {
@@ -167,7 +167,7 @@ pub fn factor_cluster_with_content(
                 let v_text = new_row.text();
                 let is_exact = u_trim == v_text.trim();
                 if is_exact {
-                    if has_information_edge_with_words(
+                    if let Some(w) = calculate_edge_explanation_ratio(
                         u_text,
                         v_text,
                         &old_words[u],
@@ -176,11 +176,11 @@ pub fn factor_cluster_with_content(
                         new_content,
                         profile,
                     ) {
-                        edges.push((u, v));
+                        raw_edges.push((u, v, w));
                     }
                 } else if !exact_matches_u.contains(&u)
                     && !exact_matches_v.contains(&v)
-                    && has_information_edge_with_words(
+                    && let Some(w) = calculate_edge_explanation_ratio(
                         u_text,
                         v_text,
                         &old_words[u],
@@ -190,7 +190,7 @@ pub fn factor_cluster_with_content(
                         profile,
                     )
                 {
-                    edges.push((u, v));
+                    raw_edges.push((u, v, w));
                 }
             }
         }
@@ -221,7 +221,7 @@ pub fn factor_cluster_with_content(
 
                 let is_exact = u_trim == v_trim;
                 if is_exact {
-                    if has_information_edge_with_words(
+                    if let Some(w) = calculate_edge_explanation_ratio(
                         u_text,
                         v_text,
                         &old_words[u],
@@ -230,11 +230,11 @@ pub fn factor_cluster_with_content(
                         new_content,
                         profile,
                     ) {
-                        edges.push((u, v));
+                        raw_edges.push((u, v, w));
                     }
                 } else if !exact_matches_u.contains(&u)
                     && !exact_matches_v.contains(&v)
-                    && has_information_edge_with_words(
+                    && let Some(w) = calculate_edge_explanation_ratio(
                         u_text,
                         v_text,
                         &old_words[u],
@@ -244,11 +244,109 @@ pub fn factor_cluster_with_content(
                         profile,
                     )
                 {
-                    edges.push((u, v));
+                    raw_edges.push((u, v, w));
                 }
             }
         }
     }
+
+    // Identify exact multi-word landmarks that retain transport power across
+    // distance
+    let is_exact_landmark = |u: usize, v: usize| -> bool {
+        let u_trim = old_rows[u].text().trim();
+        let v_trim = new_rows[v].text().trim();
+        if u_trim == v_trim {
+            return true;
+        }
+        if u_trim.len() >= 8
+            && (v_trim.starts_with(u_trim)
+                || v_trim.ends_with(u_trim)
+                || u_trim.starts_with(v_trim)
+                || u_trim.ends_with(v_trim))
+        {
+            return true;
+        }
+        if let (Some(d_eq), Some(a_eq)) = (u_trim.find('='), v_trim.find('=')) {
+            let d_lhs = u_trim[..d_eq].trim();
+            let a_lhs = v_trim[..a_eq].trim();
+            if !d_lhs.is_empty() && d_lhs == a_lhs {
+                return true;
+            }
+        }
+        let matched: usize = old_words[u]
+            .iter()
+            .filter(|dw| new_words[v].iter().any(|aw| is_salient_word_match(dw, aw)))
+            .map(|w| w.len())
+            .sum();
+        let match_count = old_words[u]
+            .iter()
+            .filter(|dw| new_words[v].iter().any(|aw| is_salient_word_match(dw, aw)))
+            .count();
+        (match_count >= 2 && matched >= 12) || matched >= 16
+    };
+
+    // Step 2: Distance-penalized edge thresholding
+    let mut distance_pruned = Vec::with_capacity(raw_edges.len());
+    for &(u, v, w) in &raw_edges {
+        let delta = (u as isize - v as isize).unsigned_abs();
+        let tau_min = if delta <= 1 || is_exact_landmark(u, v) {
+            0.25
+        } else {
+            (0.25 + 0.14 * ((1 + delta) as f64).ln()).min(0.65)
+        };
+        if w >= tau_min {
+            distance_pruned.push((u, v, w));
+        }
+    }
+
+    // Step 3: Competing edge suppression
+    // Where a line has competing edges separated by a gap (not part of a contiguous
+    // expansion or collapse block), suppress weak secondary edges whose weight
+    // is less than 0.5 * the dominant edge.
+    let mut max_u_weight = vec![0.0f64; n];
+    let mut max_v_weight = vec![0.0f64; m];
+    for &(u, v, w) in &distance_pruned {
+        if w > max_u_weight[u] {
+            max_u_weight[u] = w;
+        }
+        if w > max_v_weight[v] {
+            max_v_weight[v] = w;
+        }
+    }
+
+    let edges: Vec<(usize, usize)> = distance_pruned
+        .iter()
+        .filter(|&&(u, v, w)| {
+            // Check if (u, v) is a secondary edge for u (< 0.5 * dominant)
+            let is_weak_u = w < 0.50 * max_u_weight[u];
+            if is_weak_u {
+                // If v has an immediate neighbor candidate for u (|v - v'| <= 1),
+                // it is part of a contiguous expansion block and not competing.
+                let has_neighbor = distance_pruned.iter().any(|&(u_other, v_other, _)| {
+                    u_other == u && (v as isize - v_other as isize).abs() == 1
+                });
+                if !has_neighbor {
+                    return false;
+                }
+            }
+
+            // Check if (u, v) is a secondary edge for v (< 0.5 * dominant)
+            let is_weak_v = w < 0.50 * max_v_weight[v];
+            if is_weak_v {
+                // If u has an immediate neighbor candidate for v (|u - u'| <= 1),
+                // it is part of a contiguous collapse block and not competing.
+                let has_neighbor = distance_pruned.iter().any(|&(u_other, v_other, _)| {
+                    v_other == v && (u as isize - u_other as isize).abs() == 1
+                });
+                if !has_neighbor {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .map(|&(u, v, _)| (u, v))
+        .collect();
 
     // 4. Monotonic cut factor walk
     let mut groups = Vec::new();
@@ -461,6 +559,31 @@ pub fn factor_cluster_with_content(
                 changed = true;
             }
 
+            // Expand across open continuation statements (e.g. ending in '=')
+            // only when factoring a compound group (both old and new present)
+            let u_is_open = can_expand_u
+                && u_end > u_start
+                && v_end > v_start
+                && u_end < max_u
+                && !old_rows[u_end].is_moved()
+                && is_open_continuation_line(old_rows[u_end - 1].text());
+
+            let v_is_open = can_expand_v
+                && u_end > u_start
+                && v_end > v_start
+                && v_end < max_v
+                && !new_rows[v_end].is_moved()
+                && is_open_continuation_line(new_rows[v_end - 1].text());
+
+            if u_is_open {
+                u_end += 1;
+                changed = true;
+            }
+            if v_is_open {
+                v_end += 1;
+                changed = true;
+            }
+
             if !changed {
                 break;
             }
@@ -565,11 +688,32 @@ pub(crate) fn robust_delim_delta(text: &str) -> i32 {
 }
 
 #[inline]
+fn is_salient_word_match(w1: &str, w2: &str) -> bool {
+    w1 == w2
+        || (w2.len() >= 4 && w1.split('_').any(|s| s == w2))
+        || (w1.len() >= 4 && w2.split('_').any(|s| s == w1))
+}
+
+#[inline]
+fn is_open_continuation_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    (t.ends_with('=')
+        && !t.ends_with("==")
+        && !t.ends_with("!=")
+        && !t.ends_with("<=")
+        && !t.ends_with(">="))
+        || t.ends_with("=>")
+        || t.ends_with("->")
+}
+
 fn is_comment_line(line: &str, profile: Option<&LangProfile>) -> bool {
     profile.is_some_and(|p| p.is_comment_line(line))
 }
 
-fn has_information_edge_with_words(
+fn calculate_edge_explanation_ratio(
     del_text: &str,
     add_text: &str,
     d_words: &[&str],
@@ -577,38 +721,49 @@ fn has_information_edge_with_words(
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
-) -> bool {
+) -> Option<f64> {
     let d_trim = del_text.trim();
     let a_trim = add_text.trim();
     if d_trim.is_empty() || a_trim.is_empty() {
-        return false;
+        return None;
     }
     let d_is_comment = is_comment_line(del_text, profile);
     let a_is_comment = is_comment_line(add_text, profile);
     if d_is_comment != a_is_comment {
-        return false;
+        return None;
     }
     // 1. Exact trimmed match: form edge for identical code
     if d_trim == a_trim {
         if d_trim == "}" || d_trim == "{" || d_trim == "}," {
             let del_indent = del_text.len() - d_trim.len();
             let add_indent = add_text.len() - a_trim.len();
-            return (del_indent as i32 - add_indent as i32).abs() <= 8;
+            if (del_indent as i32 - add_indent as i32).abs() <= 8 {
+                return Some(1.0);
+            } else {
+                return None;
+            }
         }
-        return true;
+        return Some(1.0);
     }
     // Fast path: multi-character phrase match where one is a
-    // substring/prefix/suffix of the other (>= 8 chars)
-    if crate::lcs::is_affix_pair(d_trim, a_trim) {
-        let len_diff = (d_trim.len() as i32 - a_trim.len() as i32).abs();
-        if len_diff <= 8 {
-            return true;
-        }
+    // prefix/suffix (>= 8 chars) or significant substring of the other
+    let is_affix = a_trim.starts_with(d_trim)
+        || a_trim.ends_with(d_trim)
+        || d_trim.starts_with(a_trim)
+        || d_trim.ends_with(a_trim);
+    let min_len = d_trim.len().min(a_trim.len());
+    let max_len = d_trim.len().max(a_trim.len());
+    if min_len >= 8 && is_affix {
+        let ratio = min_len as f64 / max_len as f64;
+        return Some(ratio.max(0.70));
     }
     if (d_trim.len() >= 8 && a_trim.contains(d_trim))
         || (a_trim.len() >= 8 && d_trim.contains(a_trim))
     {
-        return true;
+        let substr_ratio = min_len as f64 / max_len as f64;
+        if substr_ratio >= 0.20 || min_len >= 16 {
+            return Some(substr_ratio.max(0.40));
+        }
     }
     // Compatible declaration roles (e.g. enum <-> struct replacement)
     if let (Some(d_role), Some(a_role)) = (
@@ -619,7 +774,7 @@ fn has_information_edge_with_words(
         && !crate::collapse::residual::has_verbatim_rival(d_trim, new_content)
         && !crate::collapse::residual::has_verbatim_rival(a_trim, old_content)
     {
-        return true;
+        return Some(1.0);
     }
     // Common assignment target/key or value before/after '=' or ':'
     if let (Some(d_eq), Some(a_eq)) = (d_trim.find('='), a_trim.find('=')) {
@@ -627,42 +782,47 @@ fn has_information_edge_with_words(
         let a_lhs = a_trim[..a_eq].trim();
         let d_rhs = d_trim[d_eq + 1..].trim();
         let a_rhs = a_trim[a_eq + 1..].trim();
-        if (!d_lhs.is_empty() && d_lhs == a_lhs)
-            || (!d_rhs.is_empty()
-                && d_rhs == a_rhs
-                && crate::lcs::line_has_salient_token(d_rhs, profile))
+        if !d_lhs.is_empty() && d_lhs == a_lhs {
+            let lhs_ratio = d_lhs.len() as f64 / d_trim.len().max(a_trim.len()) as f64;
+            return Some(lhs_ratio.max(0.70));
+        }
+        if !d_rhs.is_empty() && d_rhs == a_rhs && crate::lcs::line_has_salient_token(d_rhs, profile)
         {
-            return true;
+            let rhs_ratio = d_rhs.len() as f64 / d_trim.len().max(a_trim.len()) as f64;
+            return Some(rhs_ratio.max(0.70));
         }
     }
     if let (Some(d_col), Some(a_col)) = (d_trim.find(':'), a_trim.find(':')) {
         let d_key = d_trim[..d_col].trim();
         let a_key = a_trim[..a_col].trim();
         if !d_key.is_empty() && d_key == a_key && !d_key.contains(' ') {
-            return true;
+            return Some(0.80);
         }
     }
     // 2. Significant non-keyword word sharing with non-wholesale context and
     //    salient ratio
     let matched_salient: usize = d_words
         .iter()
-        .filter(|dw| {
-            a_words.iter().any(|aw| {
-                **dw == *aw
-                    || (aw.len() >= 4 && dw.split('_').any(|s| s == *aw))
-                    || (dw.len() >= 4 && aw.split('_').any(|s| s == **dw))
-            })
-        })
+        .filter(|dw| a_words.iter().any(|aw| is_salient_word_match(dw, aw)))
         .map(|w| w.len())
         .sum();
 
     if matched_salient > 0 {
         let del_salient: usize = d_words.iter().map(|w| w.len()).sum();
         let add_salient: usize = a_words.iter().map(|w| w.len()).sum();
-        let qualifies = if del_salient > 0 && add_salient > 0 {
-            let min_salient = del_salient.min(add_salient);
+        if del_salient > 0 && add_salient > 0 {
             let del_ratio = matched_salient as f64 / del_salient as f64;
             let add_ratio = matched_salient as f64 / add_salient as f64;
+
+            // Bilateral coverage noise floor:
+            // If the matched salient tokens explain less than 20% of either side,
+            // reject the edge unless it is a high-entropy compound identifier (>= 16
+            // chars).
+            if (del_ratio < 0.20 || add_ratio < 0.20) && matched_salient < 16 {
+                return None;
+            }
+
+            let min_salient = del_salient.min(add_salient);
             let has_min_salient =
                 matched_salient >= 6 || (matched_salient >= 3 && matched_salient == min_salient);
             let is_full_containment = matched_salient == min_salient;
@@ -670,18 +830,43 @@ fn has_information_edge_with_words(
             let is_dominant_coverage =
                 (del_ratio >= 0.65 || add_ratio >= 0.65) && del_ratio >= 0.25 && add_ratio >= 0.25;
 
-            has_min_salient && (is_full_containment || is_bilateral_balance || is_dominant_coverage)
-        } else {
-            true
-        };
-        if qualifies {
-            let spans = crate::lcs::word_spans(del_text, add_text);
-            if !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans) {
-                return true;
+            let qualifies = has_min_salient
+                && (is_full_containment || is_bilateral_balance || is_dominant_coverage);
+
+            if qualifies {
+                let spans = crate::lcs::word_spans(del_text, add_text);
+                if !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans) {
+                    let jaccard = matched_salient as f64
+                        / (del_salient + add_salient - matched_salient) as f64;
+                    return Some(jaccard);
+                }
             }
         }
     }
-    false
+    None
+}
+
+#[cfg(test)]
+#[inline]
+pub(crate) fn has_information_edge_with_words(
+    del_text: &str,
+    add_text: &str,
+    d_words: &[&str],
+    a_words: &[&str],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
+    profile: Option<&LangProfile>,
+) -> bool {
+    calculate_edge_explanation_ratio(
+        del_text,
+        add_text,
+        d_words,
+        a_words,
+        old_content,
+        new_content,
+        profile,
+    )
+    .is_some_and(|w| w >= 0.20)
 }
 
 #[cfg(test)]
@@ -1103,5 +1288,146 @@ mod tests {
         let total_new: usize = groups.iter().map(|g| g.new_count()).sum();
         assert_eq!(total_old, 29);
         assert_eq!(total_new, 4);
+    }
+
+    #[test]
+    fn test_short_fragment_does_not_form_information_edge_with_unrelated_long_line() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        let d_text = "                .round()";
+        let a_text = "        let min_thumb = ((track_h as f64 * Self::SCROLLBAR_MIN_PERCENT).round() as usize)";
+        let d_words = significant_words(d_text, profile);
+        let a_words = significant_words(a_text, profile);
+        assert!(
+            !has_information_edge_with_words(
+                d_text, a_text, &d_words, &a_words, None, None, profile
+            ),
+            "short method call .round() must NOT form an information edge with unrelated assignment let min_thumb = ..."
+        );
+
+        let d_expr = "            ((vh as f64 / total_vis_lines as f64) * track_h as f64)";
+        let a_expr = "        let prop_thumb = ((vh as f64 / total_vis_lines as f64) * track_h as f64).round() as usize;";
+        let d_expr_words = significant_words(d_expr, profile);
+        let a_expr_words = significant_words(a_expr, profile);
+        assert!(
+            has_information_edge_with_words(
+                d_expr,
+                a_expr,
+                &d_expr_words,
+                &a_expr_words,
+                None,
+                None,
+                profile
+            ),
+            "genuine reflowed expression must maintain an information edge"
+        );
+    }
+
+    #[test]
+    fn test_distance_penalized_edge_pruning_and_competing_suppression() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        // Line 0: strong match with line 0 (w ~ 0.9), weak partial match with line 1 (w
+        // ~ 0.35) Line 1: strong match with line 1 (w ~ 0.9)
+        let dels = vec![
+            make_del(10, "let alpha_config = compute_alpha_settings();"),
+            make_del(11, "let beta_config = compute_beta_settings();"),
+        ];
+        let adds = vec![
+            make_add(10, "let alpha_config = compute_alpha_settings_fast();"),
+            make_add(11, "let beta_config = compute_beta_settings_fast();"),
+        ];
+        let groups = factor_cluster(&dels, &adds, profile);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].old_range, 0..1);
+        assert_eq!(groups[0].new_range, 0..1);
+        assert_eq!(groups[1].old_range, 1..2);
+        assert_eq!(groups[1].new_range, 1..2);
+    }
+
+    #[test]
+    fn test_scrollbar_thumb_factoring_does_not_rope_min_thumb() {
+        let profile = diffuse_syntax::registry::lang_profile("rs");
+        let dels = vec![
+            make_del(
+                238,
+                "        let max_thumb = track_h.saturating_sub(1).max(2);",
+            ),
+            make_del(239, "        Some("),
+            make_del(
+                240,
+                "            ((vh as f64 / total_vis_lines as f64) * track_h as f64)",
+            ),
+            make_del(241, "                .round()"),
+            make_del(
+                242,
+                "                .clamp(2.0, max_thumb as f64) as usize,",
+            ),
+            make_del(243, "        )"),
+        ];
+        let adds = vec![
+            make_add(238, "        let max_thumb = track_h.saturating_sub(1);"),
+            make_add(
+                239,
+                "        if max_thumb < Self::SCROLLBAR_MIN_THUMB_LINES {",
+            ),
+            make_add(240, "            return None;"),
+            make_add(241, "        }"),
+            make_add(
+                242,
+                "        let min_thumb = ((track_h as f64 * Self::SCROLLBAR_MIN_PERCENT).round() as usize)",
+            ),
+            make_add(
+                243,
+                "            .clamp(Self::SCROLLBAR_MIN_THUMB_LINES, max_thumb);",
+            ),
+            make_add(
+                244,
+                "        let prop_thumb = ((vh as f64 / total_vis_lines as f64) * track_h as f64).round() as usize;",
+            ),
+            make_add(245, "        Some(prop_thumb.clamp(min_thumb, max_thumb))"),
+        ];
+
+        let groups = factor_cluster(&dels, &adds, profile);
+        // max_thumb is factored as group 0 (old 0..1, new 0..1)
+        assert_eq!(groups[0].old_range, 0..1);
+        assert_eq!(groups[0].new_range, 0..1);
+
+        // Group 1 captures the enclosed Some(...) expression replacement
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[1].old_range, 1..6);
+        assert_eq!(groups[1].new_range, 1..8);
+
+        // Crucial invariant: min_thumb (adds index 4) must NOT have an information edge
+        // with .round() (dels index 3).
+        let d_round_words = significant_words(dels[3].text(), profile);
+        let a_min_thumb_words = significant_words(adds[4].text(), profile);
+        assert!(
+            !has_information_edge_with_words(
+                dels[3].text(),
+                adds[4].text(),
+                &d_round_words,
+                &a_min_thumb_words,
+                None,
+                None,
+                profile
+            ),
+            "min_thumb must NOT form an information edge with .round()"
+        );
+
+        // In contrast, genuine reflowed expression ((vh as f64... (dels index 2)
+        // maintains an edge with prop_thumb (adds index 6).
+        let d_prop_words = significant_words(dels[2].text(), profile);
+        let a_prop_words = significant_words(adds[6].text(), profile);
+        assert!(
+            has_information_edge_with_words(
+                dels[2].text(),
+                adds[6].text(),
+                &d_prop_words,
+                &a_prop_words,
+                None,
+                None,
+                profile
+            ),
+            "prop_thumb must maintain an information edge with reflowed expression"
+        );
     }
 }
