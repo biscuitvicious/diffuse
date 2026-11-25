@@ -1233,6 +1233,36 @@ fn fold_expansion_window(
     true
 }
 
+/// Row distance beyond which a pair must explain its deleted line in full
+/// before it may be tied: distance on its own never vetoes a correspondence.
+const LONG_DIAGONAL: i32 = 8;
+
+/// Fraction of a deleted line's characters a partner must account for before
+/// the pair may bridge a [`LONG_DIAGONAL`] gap. Mirrors the strict coverage bar
+/// of [`joined_alignment`]: an incompletely explained pair that bridges a long
+/// gap hides a relocation by absorbing it into a modification.
+const BRIDGED_EXPLANATION: f64 = 0.85;
+
+/// Whether `new_text` accounts for (nearly) all of `old_text`.
+///
+/// Long insertions push a genuine correspondence far down the diagonal. Such a
+/// pair is still a modification when nothing of the deleted line is left over;
+/// when text is left over, that remainder has to travel and belongs to a
+/// formation instead.
+fn explained_deletion(old_text: &str, new_text: &str) -> bool {
+    let old_chars = old_text.trim().chars().count();
+    if old_chars == 0 {
+        return false;
+    }
+    let spans = crate::lcs::word_spans(old_text, new_text);
+    let explained: usize = crate::merge::merged_runs_from_texts(old_text, new_text, &spans)
+        .iter()
+        .filter(|r| r.kind == RunKind::Ctx)
+        .map(|r| r.text.chars().count())
+        .sum();
+    explained as f64 >= BRIDGED_EXPLANATION * old_chars as f64
+}
+
 fn align_slots_micro_dp<'a>(
     old_rows: &'a [Row],
     new_rows: &'a [Row],
@@ -1310,8 +1340,6 @@ fn align_slots_micro_dp<'a>(
                 -1000
             } else if u_trim == v_trim {
                 (u_trim.chars().count() as i32 * 10) + 1000 - (indent_diff * 2) - diag_dist
-            } else if diag_dist > 8 {
-                -1000
             } else if crate::lcs::is_affix_pair(u_trim, v_trim) {
                 let common = u_trim.len().min(v_trim.len());
                 (common as i32 * 10) + 900 - (indent_diff * 2) - diag_dist
@@ -1469,6 +1497,10 @@ fn align_slots_micro_dp<'a>(
                         }
                     }
                 }
+            }
+
+            if match_score > 0 && diag_dist > LONG_DIAGONAL && !explained_deletion(u_text, v_text) {
+                match_score = -1000;
             }
 
             let from_diag = dp[i - 1][j - 1].0 + match_score;
@@ -2661,6 +2693,29 @@ mod tests {
 
     fn make_add(num: u32, text: &str) -> Row {
         Row::add(AddLine::new(num, text))
+    }
+
+    #[test]
+    fn explained_deletion_accepts_a_fully_accounted_line() {
+        assert!(explained_deletion(
+            "  cargo install --locked --path crates/diffuse --force \"$@\"",
+            "  \"${CARGO[@]}\" install --locked --path crates/diffuse \"${BINS[@]}\" --force \"$@\""
+        ));
+    }
+
+    #[test]
+    fn explained_deletion_rejects_leftover_and_empty_deletions() {
+        assert!(
+            !explained_deletion("", "anything"),
+            "an empty deletion explains nothing"
+        );
+        assert!(
+            !explained_deletion(
+                "  cargo \"+$TOOLCHAIN\" install --locked --path crates/diffuse --force \"$@\"",
+                "  \"${CARGO[@]}\" install --locked --path crates/diffuse \"${BINS[@]}\" --force \"$@\""
+            ),
+            "the toolchain argument is left over, so the pair cannot bridge a long diagonal"
+        );
     }
 
     #[test]

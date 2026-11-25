@@ -4505,3 +4505,140 @@ fn test_recalibrate_dissolved_rows_reset_to_context_order() {
     );
     assert!(rows.iter().all(|r| r.group().is_none()));
 }
+
+/// Long insertion runs must not manufacture formations. Twelve inserted lines
+/// push `cargo install …` eleven rows down the diagonal, yet its deleted
+/// partner is accounted for in full by `"${CARGO[@]}" install …`, and the
+/// indented `echo …` is likewise a complete explanation of its deleted twin.
+/// Both pair as plain modifications; everything the pairing leaves over stays
+/// a plain deletion or addition, with no formation to justify.
+#[test]
+fn long_insertion_run_pairs_mods_instead_of_forming_a_group() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "  cargo \"+$TOOLCHAIN\" install --locked --path crates/diffuse --force \"$@\"",
+            None,
+            Some(10),
+        ),
+        row(RowKind::Del, "else", None, Some(11)),
+        row(
+            RowKind::Del,
+            "  cargo install --locked --path crates/diffuse --force \"$@\"",
+            None,
+            Some(12),
+        ),
+        row(RowKind::Del, "fi", None, Some(13)),
+        row(
+            RowKind::Del,
+            "echo \"diffuse binary installed to $(which diffuse)\"",
+            None,
+            Some(14),
+        ),
+        row(RowKind::Del, "", None, Some(15)),
+        row(
+            RowKind::Del,
+            "if [ -f \"extension/pi/scripts/install.sh\" ]; then",
+            None,
+            Some(16),
+        ),
+        row(
+            RowKind::Del,
+            "  PROFILE=release ./extension/pi/scripts/install.sh",
+            None,
+            Some(17),
+        ),
+        row(
+            RowKind::Add,
+            "  CARGO=(cargo \"+$TOOLCHAIN\")",
+            Some(18),
+            None,
+        ),
+        row(RowKind::Add, "fi", Some(19), None),
+        row(RowKind::Add, "", Some(20), None),
+        row(
+            RowKind::Add,
+            "# diffuse-harvest is opt-in: the default install ships only the diffuse CLI.",
+            Some(21),
+            None,
+        ),
+        row(RowKind::Add, "BINS=(--bin diffuse)", Some(22), None),
+        row(
+            RowKind::Add,
+            "if [ \"${INSTALL_HARVEST:-}\" = \"1\" ]; then",
+            Some(23),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "  BINS+=(--bin diffuse-harvest)",
+            Some(24),
+            None,
+        ),
+        row(RowKind::Add, "fi", Some(25), None),
+        row(RowKind::Add, "", Some(26), None),
+        row(
+            RowKind::Add,
+            "PROFILE=\"${PROFILE:-release}\"",
+            Some(27),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "if [ \"$PROFILE\" = \"dev\" ]; then",
+            Some(28),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "  \"${CARGO[@]}\" install --locked --debug --path crates/diffuse \"${BINS[@]}\" --force \"$@\"",
+            Some(29),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "  echo \"diffuse binary installed to $(which diffuse) (dev)\"",
+            Some(30),
+            None,
+        ),
+        row(RowKind::Add, "else", Some(31), None),
+        row(
+            RowKind::Add,
+            "  \"${CARGO[@]}\" install --locked --path crates/diffuse \"${BINS[@]}\" --force \"$@\"",
+            Some(32),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "  echo \"diffuse binary installed to $(which diffuse)\"",
+            Some(33),
+            None,
+        ),
+    ]);
+    let c = collapse_hunk_rows(&h, None, None, None);
+
+    assert!(
+        c.iter().all(|r| r.group().is_none()),
+        "no formation is invented for text the pairing explains: {c:#?}"
+    );
+    let mods: Vec<(Option<u32>, Option<u32>)> = c
+        .iter()
+        .filter(|r| r.kind() == RowKind::Mod)
+        .map(|r| (r.old_line(), r.new_line()))
+        .collect();
+    assert_eq!(
+        mods,
+        vec![(Some(12), Some(32)), (Some(14), Some(33))],
+        "each completely explained deletion pairs with its explanation: {c:#?}"
+    );
+    let dels: Vec<Option<u32>> = c
+        .iter()
+        .filter(|r| r.kind() == RowKind::Del)
+        .map(Row::old_line)
+        .collect();
+    assert_eq!(
+        dels,
+        vec![Some(10), Some(13), Some(15), Some(16), Some(17)],
+        "unexplained deletions stay plain and ungrouped: {c:#?}"
+    );
+}
