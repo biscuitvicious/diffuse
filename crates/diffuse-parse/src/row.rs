@@ -127,9 +127,9 @@ impl std::ops::Deref for GroupId {
 /// The peer reflow group a diff row belongs to.
 ///
 /// A row carries `Some(group)` when slot alignment placed it in an (N -> M)
-/// peer group with a strong token link (a paired `Mod` slot or a salient
-/// moved-token relationship); otherwise it carries `None` and renders as a
-/// standalone row.
+/// peer group justified by relocated text (balanced `MovedSrc`/`MovedTgt`
+/// runs, which need no `Mod` anchor); otherwise it carries `None` and renders
+/// as a standalone row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 pub struct PeerGroup {
     /// Unique identifier of the irreducible (N -> M) group within a hunk.

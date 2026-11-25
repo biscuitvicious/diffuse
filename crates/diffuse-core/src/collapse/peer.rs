@@ -12,7 +12,7 @@ use crate::{
             check_context_old_line_monotonicity, check_del_add_topological_order,
             check_no_orphaned_continuation_dels,
         },
-        normalize::pass_normalize_identical_mods,
+        normalize::{pass_normalize_identical_mods, recalibrate_peer_groups},
         slot::{PeerGroupRows, align_and_type_peer_group_with_content},
     },
     merge::RunKind,
@@ -431,7 +431,13 @@ pub fn peer_reflow_pipeline(
         }
     }
 
-    let res = pass_normalize_identical_mods(h, out, &FxHashSet::default());
+    // Group metadata is typed before normalization, which both removes members
+    // and dissolves formations that no longer witness a relocation. Rebuild
+    // first so normalization is only offered whole formations, then rebuild
+    // again to re-derive whatever its conversions left behind.
+    recalibrate_peer_groups(&mut out);
+    let mut res = pass_normalize_identical_mods(h, out, &FxHashSet::default());
+    recalibrate_peer_groups(&mut res);
 
     crate::ensure!(
         res.iter().all(|r| match r {
@@ -961,5 +967,52 @@ mod tests {
 
         let res = peer_reflow_pipeline(&hunk, None, None, None);
         assert_peer_group_invariants(&res);
+    }
+
+    #[test]
+    fn test_peer_pipeline_identical_anchors_leave_no_group() {
+        // `scrollbar-grab-drag` `geometry.rs`: a 2 -> 8 reflow whose only two
+        // anchors are byte-identical lines. Normalizing those Mods to Ctx
+        // removes every relocated token from the group, so the surviving
+        // additions must not stay annotated as peers.
+        let hunk = Hunk {
+            old_start: 299,
+            old_count: 3,
+            new_start: 373,
+            new_count: 11,
+            rows: vec![
+                make_ctx(299, 373, "        if max_scroll == 1 {"),
+                make_del(300, "            return 0;"),
+                make_del(301, "        }"),
+                make_add(
+                    374,
+                    "            return if row >= track_h / 2 { 1 } else { 0 };",
+                ),
+                make_add(375, "        }"),
+                make_add(
+                    376,
+                    "        let Some(thumb_size) = Self::scrollbar_thumb_size(track_h, vh, total_vis_lines) else {",
+                ),
+                make_add(377, "            return 0;"),
+                make_add(378, "        };"),
+                make_add(
+                    379,
+                    "        let span = track_h.saturating_sub(thumb_size);",
+                ),
+                make_add(380, "        if span == 0 {"),
+                make_add(381, "            return 0;"),
+                make_add(382, "        }"),
+                make_ctx(302, 383, "        let r = row.min(track_h - 1);"),
+            ],
+            ..Default::default()
+        };
+
+        let res = peer_reflow_pipeline(&hunk, None, None, None);
+
+        assert!(
+            res.iter().all(|r| r.group().is_none()),
+            "identical anchors relocate nothing, so no peer group may remain: {:?}",
+            res.iter().filter_map(|r| r.group()).collect::<Vec<_>>()
+        );
     }
 }

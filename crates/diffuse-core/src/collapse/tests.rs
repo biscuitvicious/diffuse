@@ -2540,8 +2540,7 @@ fn test_multiline_deleted_identifier_localized_to_group_row() {
 }
 
 #[test]
-fn test_reflow_atomicity_trailing_deletions_do_not_interleave_seed_and_tail_add() {
-    use crate::parse::PeerGroup;
+fn test_reflow_without_relocated_text_dissolves_group() {
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -2569,13 +2568,22 @@ fn test_reflow_atomicity_trailing_deletions_do_not_interleave_seed_and_tail_add(
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
+    // A 5 -> 2 reflow that relocates nothing is not a peer group: it renders
+    // as plain Mod rows rather than implying a relocation that never happened.
+    let has_moved = c.iter().any(|r| {
+        merged_runs(r)
+            .iter()
+            .any(|run| matches!(run.kind, RunKind::MovedSrc | RunKind::MovedTgt))
+    });
+    assert!(
+        !has_moved,
+        "fixture must relocate nothing, else this tests the wrong rule"
+    );
     let peer_group_rows: Vec<&Row> = c.iter().filter(|r| r.group().is_some()).collect();
-    assert_eq!(peer_group_rows.len(), 4, "peer group must contain 4 rows");
-    for (expected_slot, r) in peer_group_rows.iter().enumerate() {
-        if let Some(PeerGroup { slot, .. }) = r.group() {
-            assert_eq!(slot, expected_slot);
-        }
-    }
+    assert!(
+        peer_group_rows.is_empty(),
+        "group without relocated text must dissolve, got: {peer_group_rows:?}"
+    );
     assert_peer_group_invariants(&c);
 }
 
@@ -3990,4 +3998,379 @@ fn test_phase4_pipeline_expansion_absorbs_continuation_line() {
         "continuation Add must carry absorbed expression as MovedTgt, got: {:?}",
         cont_runs
     );
+}
+
+/// Builds a grouped `Del` member carrying one relocated run.
+fn moved_src_member(line: u32, text: &str, moved: &str, group: PeerGroup) -> Row {
+    Row::Del {
+        line: DelLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::MovedSrc, moved.to_string())],
+        group: Some(group),
+    }
+}
+
+/// Builds a grouped `Add` member carrying one relocated run.
+fn moved_tgt_member(line: u32, text: &str, moved: &str, group: PeerGroup) -> Row {
+    Row::Add {
+        line: AddLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::MovedTgt, moved.to_string())],
+        group: Some(group),
+    }
+}
+
+/// Builds a plain `Del` row carrying no group.
+fn plain_del(line: u32, text: &str) -> Row {
+    Row::Del {
+        line: DelLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::Del, text.to_string())],
+        group: None,
+    }
+}
+
+/// Builds a plain `Add` row carrying no group.
+fn plain_add(line: u32, text: &str) -> Row {
+    Row::Add {
+        line: AddLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::Add, text.to_string())],
+        group: None,
+    }
+}
+
+/// Builds a grouped `Del` row that relocates nothing.
+fn grouped_del(line: u32, text: &str, group: PeerGroup) -> Row {
+    Row::Del {
+        line: DelLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::Del, text.to_string())],
+        group: Some(group),
+    }
+}
+
+/// Builds a grouped `Add` row that relocates nothing.
+fn grouped_add(line: u32, text: &str, group: PeerGroup) -> Row {
+    Row::Add {
+        line: AddLine::new(line, text),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![(RunKind::Add, text.to_string())],
+        group: Some(group),
+    }
+}
+
+#[test]
+fn test_recalibrate_dissolves_group_without_relocated_text() {
+    let group = |slot| PeerGroup {
+        id: GroupId(4),
+        slot,
+        n: 2,
+        m: 2,
+    };
+    let mut rows = vec![
+        Row::Mod {
+            old_line: DelLine::new(10, "let a = 1;"),
+            new_line: AddLine::new(10, "let a = 2;"),
+            spans: crate::parse::Spans::default(),
+            cached_runs: vec![
+                (RunKind::Ctx, "let a = ".to_string()),
+                (RunKind::Del, "1".to_string()),
+                (RunKind::Add, "2".to_string()),
+            ],
+            group: Some(group(0)),
+        },
+        Row::Add {
+            line: AddLine::new(11, "let b = 3;"),
+            spans: crate::parse::Spans::default(),
+            cached_runs: vec![(RunKind::Add, "let b = 3;".to_string())],
+            group: Some(group(1)),
+        },
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(
+        rows[0].group(),
+        None,
+        "a rewritten Mod with no relocated text is not a peer group"
+    );
+    assert_eq!(rows[1].group(), None, "nor are its pure-Add siblings");
+    assert_eq!(rows[0].kind(), RowKind::Mod, "the row itself is preserved");
+}
+
+#[test]
+fn test_recalibrate_keeps_group_without_mod_anchor() {
+    let group = |slot| PeerGroup {
+        id: GroupId(7),
+        slot,
+        n: 4,
+        m: 5,
+    };
+    let mut rows = vec![
+        moved_src_member(20, "let x = shared;", "shared", group(0)),
+        moved_src_member(21, "let y = moved;", "moved", group(1)),
+        moved_tgt_member(20, "let a = shared;", "shared", group(2)),
+        moved_tgt_member(21, "let b = moved;", "moved", group(3)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    let expected = PeerGroup {
+        id: GroupId(7),
+        slot: 0,
+        n: 2,
+        m: 2,
+    };
+    for (slot, row) in rows.iter().enumerate() {
+        assert_eq!(
+            row.group(),
+            Some(PeerGroup { slot, ..expected }),
+            "relocated text needs no Mod anchor; slots and counts are recomputed"
+        );
+    }
+}
+
+#[test]
+fn test_recalibrate_split_renumbers_slots_and_recounts() {
+    let stale = |slot| PeerGroup {
+        id: GroupId(9),
+        slot,
+        n: 4,
+        m: 4,
+    };
+    let mut rows = vec![
+        moved_src_member(30, "a shared b", "shared", stale(0)),
+        moved_src_member(31, "a other b", "other", stale(1)),
+        moved_tgt_member(30, "c shared d", "shared", stale(2)),
+        moved_tgt_member(31, "c other d", "other", stale(3)),
+        Row::Ctx(CtxLine::new(32, 32, "    between();")),
+        moved_src_member(33, "e third f", "third", stale(5)),
+        moved_src_member(34, "e fourth f", "fourth", stale(6)),
+        moved_tgt_member(33, "g third h", "third", stale(8)),
+        moved_tgt_member(34, "g fourth h", "fourth", stale(9)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    for (slot, row) in rows[..4].iter().enumerate() {
+        assert_eq!(
+            row.group(),
+            Some(PeerGroup {
+                id: GroupId(9),
+                slot,
+                n: 2,
+                m: 2,
+            }),
+            "first fragment keeps its id but restarts slots and counts"
+        );
+    }
+    assert_eq!(rows[4].group(), None, "the interrupting Ctx stays plain");
+    for (slot, row) in rows[5..].iter().enumerate() {
+        assert_eq!(
+            row.group(),
+            Some(PeerGroup {
+                id: GroupId(10),
+                slot,
+                n: 2,
+                m: 2,
+            }),
+            "a split fragment is a new formation with its own id and slots"
+        );
+    }
+}
+
+#[test]
+fn test_recalibrate_same_slot_pair_dissolves_to_plain_mod() {
+    let group = PeerGroup {
+        id: GroupId(3),
+        slot: 0,
+        n: 1,
+        m: 1,
+    };
+    let mut rows = vec![Row::Mod {
+        old_line: DelLine::new(5, "let a = 1;"),
+        new_line: AddLine::new(5, "let a = 2;"),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![
+            (RunKind::Ctx, "let a = ".to_string()),
+            (RunKind::Del, "1".to_string()),
+            (RunKind::Add, "2".to_string()),
+        ],
+        group: Some(group),
+    }];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(rows.len(), 1, "the modification stays one row");
+    assert_eq!(rows[0].kind(), RowKind::Mod);
+    assert_eq!(rows[0].group(), None, "a same-slot pair is just a Mod");
+}
+
+#[test]
+fn test_recalibrate_same_slot_moved_pair_dissolves_to_plain_mod() {
+    // A single row can carry relocated runs, but one slot is a modification,
+    // not a transition between rows.
+    let mut rows = vec![Row::Mod {
+        old_line: DelLine::new(5, "let a = 1;"),
+        new_line: AddLine::new(5, "let b = 2;"),
+        spans: crate::parse::Spans::default(),
+        cached_runs: vec![
+            (RunKind::MovedSrc, "a".to_string()),
+            (RunKind::MovedTgt, "b".to_string()),
+        ],
+        group: Some(PeerGroup {
+            id: GroupId(13),
+            slot: 0,
+            n: 1,
+            m: 1,
+        }),
+    }];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(rows.len(), 1, "the row itself is preserved");
+    assert_eq!(rows[0].kind(), RowKind::Mod);
+    assert_eq!(
+        rows[0].group(),
+        None,
+        "relocated text inside one slot is still just a Mod"
+    );
+}
+
+#[test]
+fn test_recalibrate_two_slot_pair_with_moves_keeps_group() {
+    let group = |slot| PeerGroup {
+        id: GroupId(6),
+        slot,
+        n: 1,
+        m: 1,
+    };
+    let mut rows = vec![
+        moved_src_member(20, "a shared", "shared", group(0)),
+        moved_tgt_member(20, "b shared", "shared", group(1)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(
+        rows[0].group(),
+        Some(PeerGroup {
+            id: GroupId(6),
+            slot: 0,
+            n: 1,
+            m: 1,
+        })
+    );
+    assert_eq!(
+        rows[1].group(),
+        Some(PeerGroup {
+            id: GroupId(6),
+            slot: 1,
+            n: 1,
+            m: 1,
+        }),
+        "a two-slot pair that observes relocated text is a real transition"
+    );
+}
+
+#[test]
+fn test_recalibrate_two_slot_pair_without_moves_dissolves_to_del_then_add() {
+    let group = |slot| PeerGroup {
+        id: GroupId(8),
+        slot,
+        n: 1,
+        m: 1,
+    };
+    let mut rows = vec![
+        grouped_del(5, "let a = 1;", group(0)),
+        grouped_add(5, "let a = 2;", group(1)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(
+        rows.len(),
+        2,
+        "nothing is shared, so the pair stays two independent rows"
+    );
+    let kinds: Vec<RowKind> = rows.iter().map(Row::kind).collect();
+    assert_eq!(kinds, vec![RowKind::Del, RowKind::Add]);
+    assert_eq!(rows[0].old_line(), Some(5));
+    assert_eq!(rows[1].new_line(), Some(5));
+    assert!(rows.iter().all(|r| r.group().is_none()));
+}
+
+#[test]
+fn test_recalibrate_dissolved_fragment_merges_into_surrounding_run() {
+    let pair = |slot| PeerGroup {
+        id: GroupId(12),
+        slot,
+        n: 1,
+        m: 1,
+    };
+    let mut rows = vec![
+        Row::Ctx(CtxLine::new(3, 3, "before")),
+        plain_del(4, "old a"),
+        plain_del(5, "old b"),
+        grouped_add(6, "new a", pair(0)),
+        grouped_del(7, "old c", pair(1)),
+        plain_add(8, "new b"),
+        plain_add(9, "new c"),
+        Row::Mod {
+            old_line: DelLine::new(10, "tail"),
+            new_line: AddLine::new(10, "tail"),
+            spans: crate::parse::Spans::default(),
+            cached_runs: vec![(RunKind::Ctx, "tail".to_string())],
+            group: None,
+        },
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    let kinds: Vec<RowKind> = rows.iter().map(Row::kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            RowKind::Ctx,
+            RowKind::Del,
+            RowKind::Del,
+            RowKind::Del,
+            RowKind::Add,
+            RowKind::Add,
+            RowKind::Add,
+            RowKind::Mod,
+        ],
+        "the dissolved pair is folded into one run with its neighbours"
+    );
+    let old_lines: Vec<u32> = rows.iter().filter_map(Row::old_line).collect();
+    let new_lines: Vec<u32> = rows.iter().filter_map(Row::new_line).collect();
+    assert_eq!(old_lines, vec![3, 4, 5, 7, 10], "deletions stay ascending");
+    assert_eq!(new_lines, vec![3, 6, 8, 9, 10], "additions stay ascending");
+    assert!(rows.iter().all(|r| r.group().is_none()));
+}
+
+#[test]
+fn test_recalibrate_dissolved_rows_reset_to_context_order() {
+    let group = |slot| PeerGroup {
+        id: GroupId(11),
+        slot,
+        n: 1,
+        m: 2,
+    };
+    let mut rows = vec![
+        grouped_add(6, "second", group(0)),
+        grouped_del(5, "first", group(1)),
+        grouped_add(7, "third", group(2)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    let kinds: Vec<RowKind> = rows.iter().map(Row::kind).collect();
+    assert_eq!(
+        kinds,
+        vec![RowKind::Del, RowKind::Add, RowKind::Add],
+        "dissolved rows are reset to the surrounding deletion-then-addition order"
+    );
+    assert!(rows.iter().all(|r| r.group().is_none()));
 }
