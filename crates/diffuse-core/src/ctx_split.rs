@@ -31,7 +31,9 @@ pub fn should_split_ctx(old_text: &str, new_text: &str, profile: Option<&LangPro
     !(old_salient && new_salient)
 }
 
-/// Rewrite trivial Ctx rows to Del+Add in place, preserving order.
+/// Rewrite trivial Ctx rows to Del+Add in place, preserving order. A split
+/// keeps the row's peer group on both halves: the two sides are the same
+/// formation slot, not a new one.
 ///
 /// The Del(old) immediately followed by Add(new) preserves positional
 /// monotonicity, so flanking clusters merge with no explicit cluster
@@ -52,10 +54,12 @@ pub fn split_trivial_ctx_rows(
     let mut homes = Vec::new();
     for r in rows {
         match r {
-            Row::Ctx(c) if should_split_ctx(&c.text, &c.text, profile) => {
+            Row::Ctx { line: c, group } if should_split_ctx(&c.text, &c.text, profile) => {
+                // Splitting a context row into its two sides does not change the
+                // formation it anchors: both halves keep the group.
                 let di = out.len();
-                out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())));
-                out.push(Row::add(AddLine::new(c.new_pos, c.text)));
+                out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())).with_group(group));
+                out.push(Row::add(AddLine::new(c.new_pos, c.text)).with_group(group));
                 homes.push((di, di + 1));
             }
             other => out.push(other),
@@ -70,6 +74,31 @@ mod tests {
     use diffuse_syntax::registry::lang_profile;
 
     use crate::parse::{AddLine, CtxLine, DelLine};
+
+    #[test]
+    fn test_split_keeps_peer_group_on_both_halves() {
+        use crate::parse::{GroupId, PeerGroup};
+
+        let profile = lang_profile("rs");
+        let group = PeerGroup {
+            id: GroupId(5),
+            slot: 1,
+            n: 2,
+            m: 2,
+        };
+        let rows = vec![Row::ctx(CtxLine::new(10, 20, "}")).with_group(Some(group))];
+
+        let (out, homes) = split_trivial_ctx_rows(rows, profile);
+
+        assert_eq!(homes, vec![(0, 1)], "the split is one del/add home pair");
+        assert_eq!(out.len(), 2);
+        assert!(
+            out.iter().all(|r| r.group() == Some(group)),
+            "both halves stay members"
+        );
+        assert_eq!(out[0].old_line(), Some(10));
+        assert_eq!(out[1].new_line(), Some(20));
+    }
 
     #[test]
     fn test_lone_brace_ctx_splits() {
@@ -113,12 +142,12 @@ mod tests {
         let profile = lang_profile("rs");
         let rows = vec![
             Row::del(DelLine::new(312, "                            }")),
-            Row::Ctx(CtxLine::new(307, 307, "                                }")),
+            Row::ctx(CtxLine::new(307, 307, "                                }")),
             Row::add(AddLine::new(308, "                                }")),
         ];
         let (out, homes) = split_trivial_ctx_rows(rows, profile);
         assert!(
-            out.iter().all(|r| !matches!(r, Row::Ctx(_))),
+            out.iter().all(|r| !matches!(r, Row::Ctx { .. })),
             "trivial Ctx must be rewritten, got: {out:?}"
         );
         assert_eq!(out.len(), 4);
@@ -131,7 +160,7 @@ mod tests {
     fn test_hunk_edge_split_attaches_to_single_cluster() {
         let profile = lang_profile("rs");
         let rows = vec![
-            Row::Ctx(CtxLine::new(307, 307, "                                }")),
+            Row::ctx(CtxLine::new(307, 307, "                                }")),
             Row::add(AddLine::new(308, "                                }")),
         ];
         let (out, homes) = split_trivial_ctx_rows(rows, profile);
@@ -149,7 +178,7 @@ mod tests {
                 353,
                 "                            let prev_row = self.row_idx;",
             )),
-            Row::Ctx(CtxLine::new(
+            Row::ctx(CtxLine::new(
                 309,
                 345,
                 "                                        let seg_off = target_vis - s;",
@@ -161,7 +190,7 @@ mod tests {
         ];
         let (out, homes) = split_trivial_ctx_rows(rows, profile);
         assert_eq!(out.len(), 3);
-        assert!(matches!(out[1], Row::Ctx(_)));
+        assert!(matches!(out[1], Row::Ctx { .. }));
         assert!(homes.is_empty());
     }
 

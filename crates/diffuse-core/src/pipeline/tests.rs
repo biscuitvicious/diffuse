@@ -1461,8 +1461,8 @@ fn test_synthesize_plain_common_context_hunk() {
     assert_eq!(hunk.new_start, 1);
     assert_eq!(hunk.new_count, 2);
     assert_eq!(hunk.rows.len(), 2);
-    assert!(matches!(hunk.rows[0], crate::parse::Row::Ctx(_)));
-    assert!(matches!(hunk.rows[1], crate::parse::Row::Ctx(_)));
+    assert!(matches!(hunk.rows[0], crate::parse::Row::Ctx { .. }));
+    assert!(matches!(hunk.rows[1], crate::parse::Row::Ctx { .. }));
 }
 
 // Render unification: a row carrying assemble's profiled merged runs must

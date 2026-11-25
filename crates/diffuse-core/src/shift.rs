@@ -99,7 +99,7 @@ pub fn normalize_context(file: &mut DiffFile, visual: usize) {
 fn count_carried_ctx(h: &Hunk) -> (u32, u32) {
     let mut above = 0u32;
     for r in &h.rows {
-        if matches!(r, Row::Ctx(_)) {
+        if matches!(r, Row::Ctx { .. }) {
             above += 1;
         } else {
             break;
@@ -107,7 +107,7 @@ fn count_carried_ctx(h: &Hunk) -> (u32, u32) {
     }
     let mut below = 0u32;
     for r in h.rows.iter().rev() {
-        if matches!(r, Row::Ctx(_)) {
+        if matches!(r, Row::Ctx { .. }) {
             below += 1;
         } else {
             break;
@@ -119,11 +119,11 @@ fn count_carried_ctx(h: &Hunk) -> (u32, u32) {
 /// Removes leading/trailing `Ctx` rows beyond the requested visual width.
 fn trim_context(file: &mut DiffFile, visual: usize) {
     for h in &mut file.hunks {
-        if h.rows.iter().all(|r| matches!(r, Row::Ctx(_))) {
+        if h.rows.iter().all(|r| matches!(r, Row::Ctx { .. })) {
             continue;
         }
         while (h.above_ctx as usize) > visual {
-            let Some(pos) = h.rows.iter().position(|r| matches!(r, Row::Ctx(_))) else {
+            let Some(pos) = h.rows.iter().position(|r| matches!(r, Row::Ctx { .. })) else {
                 break;
             };
             h.rows.remove(pos);
@@ -134,7 +134,7 @@ fn trim_context(file: &mut DiffFile, visual: usize) {
             h.new_count = h.new_count.saturating_sub(1);
         }
         while (h.below_ctx as usize) > visual {
-            let Some(pos) = h.rows.iter().rposition(|r| matches!(r, Row::Ctx(_))) else {
+            let Some(pos) = h.rows.iter().rposition(|r| matches!(r, Row::Ctx { .. })) else {
                 break;
             };
             h.rows.remove(pos);
@@ -292,7 +292,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                             .cloned()
                             .unwrap_or_default()
                     };
-                    leading.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
+                    leading.push(Row::ctx(CtxLine::new(old_ln, new_ln, text)));
                 }
                 leading.extend(mem::take(&mut h.rows));
                 h.rows = leading;
@@ -343,7 +343,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                         .cloned()
                         .unwrap_or_default()
                 };
-                h.rows.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
+                h.rows.push(Row::ctx(CtxLine::new(old_ln, new_ln, text)));
                 added += 1;
             }
             if added > 0 {
@@ -370,7 +370,7 @@ pub fn max_shift_down_rows(hunk: &Hunk, split_idx: usize, end_idx: usize) -> usi
         if absorbed_idx >= hunk.rows.len() {
             break;
         }
-        if !matches!(hunk.rows[absorbed_idx], Row::Ctx(_)) {
+        if !matches!(hunk.rows[absorbed_idx], Row::Ctx { .. }) {
             break;
         }
         if hunk.rows[split_idx + offset].text() != hunk.rows[absorbed_idx].text() {
@@ -449,7 +449,7 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
         return;
     }
     for offset in 0..count {
-        if !matches!(hunk.rows[end_idx + offset], Row::Ctx(_))
+        if !matches!(hunk.rows[end_idx + offset], Row::Ctx { .. })
             || hunk.rows[split_idx + offset].text() != hunk.rows[end_idx + offset].text()
         {
             return;
@@ -469,13 +469,17 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
         let ctx_new = absorbed
             .new_line_num()
             .expect("new line number must be present");
+        // Each reclassification is the same slot changing kind, so each side
+        // keeps the peer group of the row whose line numbers it takes over.
         swaps.push((
             split_idx + offset,
-            Row::Ctx(CtxLine::new(ctx_old, add_nl, released.text().to_string())),
+            Row::ctx(CtxLine::new(ctx_old, add_nl, released.text().to_string()))
+                .with_group(released.group()),
         ));
         swaps.push((
             end_idx + offset,
-            Row::add(AddLine::new(ctx_new, absorbed.text().to_string())),
+            Row::add(AddLine::new(ctx_new, absorbed.text().to_string()))
+                .with_group(absorbed.group()),
         ));
     }
     for (idx, row) in swaps {

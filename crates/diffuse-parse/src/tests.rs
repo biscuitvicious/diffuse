@@ -176,6 +176,7 @@ fn test_diff_components_reverse_involution() {
         line: DelLine::new(10, "moved text"),
         spans: spans.clone(),
         cached_runs: vec![(RunKind::MovedSrc, "moved text".to_string())],
+        group: None,
     };
     let rev_mov = mov_src.clone().reverse();
     assert_eq!(rev_mov.kind(), RowKind::Mov);
@@ -461,7 +462,7 @@ fn test_exact_hunk_with_blank_context_row_is_accepted() {
         "blank line must materialize as a context row"
     );
     match &rows[3] {
-        Row::Ctx(c) => {
+        Row::Ctx { line: c, .. } => {
             assert_eq!((c.old_pos, c.new_pos), (3, 3));
             assert!(c.text.is_empty(), "blank row carries no text");
         }

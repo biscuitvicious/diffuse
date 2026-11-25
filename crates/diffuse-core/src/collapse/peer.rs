@@ -221,16 +221,16 @@ pub fn peer_reflow_pipeline(
         let rows = &h.rows;
         let first_change = rows
             .iter()
-            .position(|r| !matches!(r, Row::Ctx(_) | Row::Sep(_)));
+            .position(|r| !matches!(r, Row::Ctx { .. } | Row::Sep(_)));
         let last_change = rows
             .iter()
-            .rposition(|r| !matches!(r, Row::Ctx(_) | Row::Sep(_)));
+            .rposition(|r| !matches!(r, Row::Ctx { .. } | Row::Sep(_)));
         if let (Some(first), Some(last)) = (first_change, last_change) {
             let mut out = Vec::with_capacity(rows.len());
             for (i, r) in rows.iter().enumerate() {
                 if i > first && i < last {
                     match r {
-                        Row::Ctx(c)
+                        Row::Ctx { line: c, .. }
                             if crate::ctx_split::should_split_ctx(&c.text, &c.text, profile) =>
                         {
                             out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())));
@@ -261,13 +261,13 @@ pub fn peer_reflow_pipeline(
 
     while i < h.rows.len() {
         match &h.rows[i] {
-            Row::Ctx(_) | Row::Sep(_) => {
+            Row::Ctx { .. } | Row::Sep(_) => {
                 out.push(h.rows[i].clone());
                 i += 1;
             }
             _ => {
                 let cluster_start = i;
-                while i < h.rows.len() && !matches!(&h.rows[i], Row::Ctx(_) | Row::Sep(_)) {
+                while i < h.rows.len() && !matches!(&h.rows[i], Row::Ctx { .. } | Row::Sep(_)) {
                     i += 1;
                 }
                 let cluster_rows = &h.rows[cluster_start..i];
@@ -390,6 +390,7 @@ pub fn peer_reflow_pipeline(
                                             line: AddLine::new(v, new_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
+                                            group: group_meta,
                                         });
                                     } else if n == 0 || group_meta.is_none() {
                                         cluster_out.push(Row::add(AddLine::new(v, new_text)));
@@ -409,6 +410,7 @@ pub fn peer_reflow_pipeline(
                                             line: DelLine::new(u, old_text),
                                             spans: slot.spans,
                                             cached_runs: slot.runs,
+                                            group: group_meta,
                                         });
                                     } else if m == 0 || group_meta.is_none() {
                                         cluster_out.push(Row::del(DelLine::new(u, old_text)));
@@ -444,7 +446,7 @@ pub fn peer_reflow_pipeline(
             Row::Mod {
                 old_line, new_line, ..
             } => old_line.num > 0 && new_line.num > 0,
-            Row::Ctx(c) => c.old_pos > 0 && c.new_pos > 0,
+            Row::Ctx { line: c, .. } => c.old_pos > 0 && c.new_pos > 0,
             Row::Add { line, .. } => line.num > 0,
             Row::Del { line, .. } => line.num > 0,
             Row::MovSrc { line, .. } => line.num > 0,
@@ -495,7 +497,7 @@ mod tests {
     use crate::parse::{CtxLine, RowKind};
 
     fn make_ctx(old: u32, new: u32, text: &str) -> Row {
-        Row::Ctx(CtxLine::new(old, new, text))
+        Row::ctx(CtxLine::new(old, new, text))
     }
 
     fn make_del(num: u32, text: &str) -> Row {
@@ -525,12 +527,12 @@ mod tests {
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
 
         assert_eq!(peer.len(), 4);
-        assert!(matches!(peer[0], Row::Ctx(_)));
+        assert!(matches!(peer[0], Row::Ctx { .. }));
         assert_eq!(peer[1].kind(), RowKind::Add);
         assert_eq!(peer[1].new_line(), Some(2));
         assert_eq!(peer[2].kind(), RowKind::Add);
         assert_eq!(peer[2].new_line(), Some(3));
-        assert!(matches!(peer[3], Row::Ctx(_)));
+        assert!(matches!(peer[3], Row::Ctx { .. }));
     }
 
     #[test]
@@ -615,14 +617,14 @@ mod tests {
         };
         let res = peer_reflow_pipeline(&hunk, None, None, None);
         assert_eq!(res.len(), 35);
-        assert!(matches!(res[0], Row::Ctx(_)));
+        assert!(matches!(res[0], Row::Ctx { .. }));
         for r in &res[1..34] {
             assert!(matches!(
                 r,
                 Row::Del { .. } | Row::Mod { .. } | Row::Add { .. }
             ));
         }
-        assert!(matches!(res[34], Row::Ctx(_)));
+        assert!(matches!(res[34], Row::Ctx { .. }));
     }
 
     #[test]
@@ -644,12 +646,12 @@ mod tests {
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
 
         assert_eq!(peer.len(), 4);
-        assert!(matches!(peer[0], Row::Ctx(_)));
+        assert!(matches!(peer[0], Row::Ctx { .. }));
         assert_eq!(peer[1].kind(), RowKind::Del);
         assert_eq!(peer[1].old_line(), Some(2));
         assert_eq!(peer[2].kind(), RowKind::Del);
         assert_eq!(peer[2].old_line(), Some(3));
-        assert!(matches!(peer[3], Row::Ctx(_)));
+        assert!(matches!(peer[3], Row::Ctx { .. }));
     }
 
     #[test]
@@ -875,8 +877,8 @@ mod tests {
 
         let res = peer_reflow_pipeline(&hunk, None, None, None);
         assert_eq!(res.len(), 6);
-        assert!(matches!(res[0], Row::Ctx(_)));
-        assert!(matches!(res[5], Row::Ctx(_)));
+        assert!(matches!(res[0], Row::Ctx { .. }));
+        assert!(matches!(res[5], Row::Ctx { .. }));
         for r in &res[1..5] {
             assert!(
                 matches!(r, Row::Del { .. } | Row::Add { .. }),

@@ -81,7 +81,7 @@ fn resurface_ctx_rows(h: &mut Hunk, old_lines: &[&str], new_lines: &[&str]) -> b
     let mut out = Vec::with_capacity(h.rows.len());
     let mut changed = false;
     for r in &h.rows {
-        if let Row::Ctx(c) = r
+        if let Row::Ctx { line: c, .. } = r
             && let (Some(ot), Some(nt)) =
                 (line_at(old_lines, c.old_pos), line_at(new_lines, c.new_pos))
             && ws_only_diff(ot, nt)
@@ -111,7 +111,7 @@ fn synthesize_gap_hunks(hunks: &mut Vec<Hunk>, old_lines: &[&str], new_lines: &[
     let valid = hunks.iter().all(|h| {
         h.rows
             .iter()
-            .all(|r| matches!(r, Row::Ctx(_) | Row::Del { .. } | Row::Add { .. }))
+            .all(|r| matches!(r, Row::Ctx { .. } | Row::Del { .. } | Row::Add { .. }))
             && h.old_start + h.old_count <= old_lines.len() as u32 + 1
             && h.new_start + h.new_count <= new_lines.len() as u32 + 1
     }) && hunks.windows(2).all(|w| {
@@ -236,7 +236,7 @@ fn synthesize_gap(
                 run.push(k);
             } else {
                 flush_run(&mut run, &mut rows, old_a, new_a, old_lines, new_lines);
-                rows.push(Row::Ctx(CtxLine::new(
+                rows.push(Row::ctx(CtxLine::new(
                     old_a + k,
                     new_a + k,
                     old_lines[(old_a + k - 1) as usize],

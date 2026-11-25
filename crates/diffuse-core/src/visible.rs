@@ -29,7 +29,7 @@ pub fn build_visible(hunks: &[Hunk], _expand_lines: usize) -> Vec<VisibleRow> {
         for r in &h.rows {
             rows.push(VisibleRow {
                 row: r.clone(),
-                side: if matches!(r, Row::Ctx(_)) {
+                side: if matches!(r, Row::Ctx { .. }) {
                     Some(side)
                 } else {
                     None

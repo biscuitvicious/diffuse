@@ -19,9 +19,9 @@ fn test_build_visible_walks_carried_context() {
     // A single hunk whose rows already carry leading + trailing context.
     let h = hunk(
         vec![
-            Row::Ctx(CtxLine::new(1, 1, "fn foo() {")),
+            Row::ctx(CtxLine::new(1, 1, "fn foo() {")),
             Row::mod_row(DelLine::new(2, "let x = 1;"), AddLine::new(2, "let x = 2;")),
-            Row::Ctx(CtxLine::new(3, 3, "}")),
+            Row::ctx(CtxLine::new(3, 3, "}")),
         ],
         1,
         3,

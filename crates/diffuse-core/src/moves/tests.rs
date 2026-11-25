@@ -12,7 +12,7 @@ fn add(num: u32, text: &str) -> Row {
 }
 
 fn ctx(old_num: u32, new_num: u32, text: &str) -> Row {
-    Row::Ctx(CtxLine::new(old_num, new_num, text))
+    Row::ctx(CtxLine::new(old_num, new_num, text))
 }
 
 fn movsrc(num: u32, text: &str) -> Row {
@@ -20,6 +20,7 @@ fn movsrc(num: u32, text: &str) -> Row {
         line: DelLine::new(num, text),
         spans: Spans::default(),
         cached_runs: Vec::new(),
+        group: None,
     }
 }
 
@@ -28,6 +29,7 @@ fn movtgt(num: u32, text: &str) -> Row {
         line: AddLine::new(num, text),
         spans: Spans::default(),
         cached_runs: Vec::new(),
+        group: None,
     }
 }
 
@@ -749,7 +751,7 @@ fn test_resolve_mov_pairs_by_line_drops_stale_pairs() {
 
 fn row_sig(r: &Row) -> (String, Option<u32>, Option<u32>) {
     let kind = match r {
-        Row::Ctx(_) => "ctx",
+        Row::Ctx { .. } => "ctx",
         Row::Del { .. } => "del",
         Row::Add { .. } => "add",
         Row::MovSrc { .. } => "movsrc",
@@ -1094,7 +1096,7 @@ fn test_tail_absorption_hunk_boundary_confinement() {
 
 fn collapsed_sig(r: &Row) -> (String, Option<u32>, Option<u32>) {
     let kind = match r {
-        Row::Ctx(_) => "ctx",
+        Row::Ctx { .. } => "ctx",
         Row::Mod { .. } => "mod",
         Row::MovSrc { .. } => "movsrc",
         Row::MovTgt { .. } => "movtgt",

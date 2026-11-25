@@ -146,7 +146,7 @@ pub fn partition_hunk_segments<'a>(
     let mut i = 0;
 
     while i < hunk.rows.len() {
-        if matches!(hunk.rows[i], Row::Ctx(_)) {
+        if matches!(hunk.rows[i], Row::Ctx { .. }) {
             segments.push(HunkSegment::Context(hunk.rows[i].clone()));
             i += 1;
             continue;
@@ -157,7 +157,7 @@ pub fn partition_hunk_segments<'a>(
         let mut preceding_ctx = Vec::new();
         let mut ctx_idx = i;
         while ctx_idx > 0
-            && matches!(hunk.rows[ctx_idx - 1], Row::Ctx(_))
+            && matches!(hunk.rows[ctx_idx - 1], Row::Ctx { .. })
             && preceding_ctx.len() < 6
         {
             ctx_idx -= 1;
@@ -170,7 +170,7 @@ pub fn partition_hunk_segments<'a>(
         let mut new_rows = Vec::new();
 
         while i < hunk.rows.len() {
-            if matches!(hunk.rows[i], Row::Ctx(_)) {
+            if matches!(hunk.rows[i], Row::Ctx { .. }) {
                 break;
             }
             let row = &hunk.rows[i];
@@ -184,7 +184,7 @@ pub fn partition_hunk_segments<'a>(
                     old_rows.push(Row::del(old_line.clone()));
                     new_rows.push(Row::add(new_line.clone()));
                 }
-                Row::Ctx(_) | Row::Sep(_) => {}
+                Row::Ctx { .. } | Row::Sep(_) => {}
             }
             i += 1;
         }
@@ -222,7 +222,7 @@ pub fn partition_hunk_segments<'a>(
         let mut following_ctx = Vec::new();
         let mut f_idx = i;
         while f_idx < hunk.rows.len()
-            && matches!(hunk.rows[f_idx], Row::Ctx(_))
+            && matches!(hunk.rows[f_idx], Row::Ctx { .. })
             && following_ctx.len() < 6
         {
             following_ctx.push(hunk.rows[f_idx].text());

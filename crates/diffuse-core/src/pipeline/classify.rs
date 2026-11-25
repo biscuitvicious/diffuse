@@ -83,7 +83,7 @@ pub fn colored_runs_with_next(
         || !r.cached_runs().is_empty();
 
     if !use_merged {
-        if matches!(r, Row::Add { .. } | Row::MovTgt { .. } | Row::Ctx(_)) {
+        if matches!(r, Row::Add { .. } | Row::MovTgt { .. } | Row::Ctx { .. }) {
             let kind = if matches!(r, Row::Add { .. } | Row::MovTgt { .. }) {
                 RunKind::Add
             } else {

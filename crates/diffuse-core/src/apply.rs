@@ -119,7 +119,7 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
         let mut cursor = if old_start == 0 { 0 } else { old_start - 1 };
         for r in &h.rows {
             match r {
-                Row::Ctx(ctx_line) => {
+                Row::Ctx { line: ctx_line, .. } => {
                     if cursor < out.len() {
                         assert_eq!(
                             &out[cursor],
@@ -192,7 +192,7 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
     let mut cursor = 0;
     for r in rows {
         match r {
-            Row::Ctx(ctx_line) => {
+            Row::Ctx { line: ctx_line, .. } => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],

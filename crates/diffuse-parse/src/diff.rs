@@ -235,7 +235,7 @@ where
                 raw_hunk.rows.push(row);
                 oi += 1;
             } else if let Some(rest) = line.strip_prefix(' ') {
-                let row = Row::Ctx(CtxLine::new(oi, ni, rest));
+                let row = Row::ctx(CtxLine::new(oi, ni, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
@@ -246,7 +246,7 @@ where
             {
                 let old_num = oi.max(1);
                 let new_num = ni.max(1);
-                let row = Row::Ctx(CtxLine::new(old_num, new_num, ""));
+                let row = Row::ctx(CtxLine::new(old_num, new_num, ""));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;

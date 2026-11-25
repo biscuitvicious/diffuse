@@ -12,20 +12,25 @@ use crate::{
 /// potential rollback. Returns `None` for non-Mod rows (never a
 /// candidate, or already converted by the fast path below).
 pub(crate) fn swap_mod_to_ctx(slot: &mut Row) -> Option<Row> {
-    let (dold, anew, text) = match slot {
+    let (dold, anew, text, group) = match slot {
         Row::Mod {
-            old_line, new_line, ..
-        } => (old_line.num, new_line.num, new_line.text.clone()),
+            old_line,
+            new_line,
+            group,
+            ..
+        } => (old_line.num, new_line.num, new_line.text.clone(), *group),
         _ => return None,
     };
     Some(std::mem::replace(
         slot,
-        Row::Ctx(CtxLine::new(dold, anew, text)),
+        Row::ctx(CtxLine::new(dold, anew, text)).with_group(group),
     ))
 }
 
-/// Post-walk normalization: convert no-visible-change Mod rows
-/// (byte-identical old/new text, no group attachments) back to Ctx.
+/// Post-walk normalization: convert no-visible-change Mod rows (byte-identical
+/// old/new text, no relocated runs) back to Ctx. A converted row keeps its peer
+/// group: the formation's slot is unchanged, only its kind is; the context line
+/// is the anchor that holds the changes around it together.
 ///
 /// Split trivial Ctx rows re-pair in the DP as identical Mods; without
 /// this they render as Mod noise. Each conversion is kept only when the
@@ -209,13 +214,15 @@ pub(crate) fn recalibrate_peer_groups(rows: &mut [Row]) {
     }
 }
 
-/// Reports whether a row carries relocated text (`MovedSrc`/`MovedTgt` runs).
-/// Such runs are what justify a formation; they need no `Mod` anchor because
-/// tokens can travel across `Del`/`Add` boundaries.
+/// Reports whether a row carries relocated text (`MovedSrc`/`MovedTgt` runs) or
+/// is itself a whole-row move (`MovSrc`/`MovTgt`). Such rows are what justify a
+/// formation; they need no `Mod` anchor because tokens can travel across
+/// `Del`/`Add` boundaries.
 fn has_moved_runs(r: &Row) -> bool {
-    r.cached_runs()
-        .iter()
-        .any(|(kind, _)| matches!(kind, RunKind::MovedSrc | RunKind::MovedTgt))
+    r.is_moved()
+        || r.cached_runs()
+            .iter()
+            .any(|(kind, _)| matches!(kind, RunKind::MovedSrc | RunKind::MovedTgt))
 }
 
 /// Counts the sides a contiguous group fragment currently represents and

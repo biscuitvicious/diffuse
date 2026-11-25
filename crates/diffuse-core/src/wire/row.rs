@@ -198,7 +198,7 @@ impl From<&OutputRow> for Row {
             RowKind::Ctx => {
                 let old_pos = r.old_line.expect("Ctx row must have old line");
                 let new_pos = r.new_line.expect("Ctx row must have new line");
-                Row::Ctx(CtxLine::new(old_pos, new_pos, r.new_text()))
+                Row::ctx(CtxLine::new(old_pos, new_pos, r.new_text())).with_group(r.group)
             }
             RowKind::Del => {
                 let num = r.old_line.expect("Del row must have old line");
@@ -241,6 +241,7 @@ impl From<&OutputRow> for Row {
                         line,
                         spans,
                         cached_runs,
+                        group: r.group,
                     }
                 }
                 Some(MovSide::Tgt) | None => {
@@ -250,6 +251,7 @@ impl From<&OutputRow> for Row {
                         line,
                         spans,
                         cached_runs,
+                        group: r.group,
                     }
                 }
             },

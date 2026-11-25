@@ -16,7 +16,7 @@ use diffuse_syntax::{
 };
 
 use crate::{
-    collapse::collapse_hunk_rows,
+    collapse::{collapse_hunk_rows, normalize::recalibrate_peer_groups},
     counts::file_counts,
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_replacement},
@@ -315,6 +315,18 @@ pub fn process_single_diff_file(
     // worth showing as a move.
     touch_pairs.extend(absorption.absorbed.iter().copied());
     collapse_touching_moves(&mut f, &touch_pairs, profile);
+
+    // Peer groups are formed before any move is marked, so the move passes
+    // rewrite their members: a grouped `Del`/`Add` becomes a move half, and a
+    // touching move pair collapses into one row. Re-derive every formation
+    // from the rows the rewrites left behind, keeping groups whose slots still
+    // witness a relocation and dissolving the rest.
+    let recalibrate = |h: &mut crate::parse::Hunk| recalibrate_peer_groups(&mut h.rows);
+    if f.hunks.len() > 1 {
+        f.hunks.par_iter_mut().for_each(recalibrate);
+    } else {
+        f.hunks.iter_mut().for_each(recalibrate);
+    }
     // The post-collapse return value (newly absorbed pairs) is not used: a
     // subsequent index-shifting pass does not follow, so there is no caller
     // that needs to re-resolve positions. The side-effect on `f` is what matters.
@@ -583,7 +595,7 @@ pub fn process_single_diff_file(
                 VisibleSide::Old
             };
             for (i, (r, r_out)) in h.rows.iter().zip(&h_out.rows).enumerate() {
-                if matches!(r, Row::Ctx(_)) {
+                if matches!(r, Row::Ctx { .. }) {
                     let mut row = r_out.clone();
                     if !is_pure_context {
                         match side {

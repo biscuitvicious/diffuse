@@ -67,7 +67,7 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
         section: String::new(),
         rows: vec![
             Row::del(DelLine::new(1, "/// Obsolete doc")),
-            Row::Ctx(CtxLine::new(2, 2, "pub fn existing() {")),
+            Row::ctx(CtxLine::new(2, 2, "pub fn existing() {")),
             Row::add(AddLine::new(3, "    let x = 10;")),
         ],
         above_ctx: 0,
@@ -755,7 +755,7 @@ fn test_collapse_hunk_doc_comment_partial_truncation() {
         above_ctx: 1,
         below_ctx: 1,
         rows: vec![
-            Row::Ctx(CtxLine::new(3, 3, "//! Context above")),
+            Row::ctx(CtxLine::new(3, 3, "//! Context above")),
             Row::del(DelLine::new(
                 4,
                 "//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,",
@@ -766,19 +766,19 @@ fn test_collapse_hunk_doc_comment_partial_truncation() {
             )),
             Row::del(DelLine::new(6, "//! the greedy heuristics.")),
             Row::add(AddLine::new(4, "//! run UNCHANGED on top.")),
-            Row::Ctx(CtxLine::new(7, 5, "//! Context below")),
+            Row::ctx(CtxLine::new(7, 5, "//! Context below")),
         ],
     };
     let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
     assert_eq!(collapsed.len(), 5);
-    assert!(matches!(collapsed[0], Row::Ctx(_)));
+    assert!(matches!(collapsed[0], Row::Ctx { .. }));
     assert!(matches!(collapsed[1], Row::Mod { .. }));
     assert_eq!(collapsed[1].text(), "//! run UNCHANGED on top.");
     assert_eq!(collapsed[1].old_line(), Some(4));
     assert_eq!(collapsed[1].new_line(), Some(4));
     assert!(matches!(collapsed[2], Row::Del { .. }));
     assert!(matches!(collapsed[3], Row::Del { .. }));
-    assert!(matches!(collapsed[4], Row::Ctx(_)));
+    assert!(matches!(collapsed[4], Row::Ctx { .. }));
 }
 
 #[test]
@@ -1269,11 +1269,11 @@ fn test_scope_restricted_deletion_pairing() {
         new_count: 4,
         section: String::new(),
         rows: vec![
-            Row::Ctx(CtxLine::new(1, 1, "fn alpha() {")),
+            Row::ctx(CtxLine::new(1, 1, "fn alpha() {")),
             Row::del(DelLine::new(2, "    let count = 0;")),
             Row::add(AddLine::new(2, "    let total = 0;")),
-            Row::Ctx(CtxLine::new(3, 3, "    process();")),
-            Row::Ctx(CtxLine::new(4, 4, "}")),
+            Row::ctx(CtxLine::new(3, 3, "    process();")),
+            Row::ctx(CtxLine::new(4, 4, "}")),
         ],
         above_ctx: 0,
         below_ctx: 0,

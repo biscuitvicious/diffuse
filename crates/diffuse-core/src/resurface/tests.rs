@@ -14,7 +14,7 @@ use crate::{
 const DISPATCH_W_PATCH: &str = include_str!("fixtures/dispatch_w.patch");
 
 fn ctx(o: u32, n: u32, t: &str) -> Row {
-    Row::Ctx(CtxLine::new(o, n, t))
+    Row::ctx(CtxLine::new(o, n, t))
 }
 
 fn del(n: u32, t: &str) -> Row {
@@ -43,7 +43,7 @@ fn signature(h: &Hunk) -> Vec<&'static str> {
     h.rows
         .iter()
         .map(|r| match r {
-            Row::Ctx(_) => "ctx",
+            Row::Ctx { .. } => "ctx",
             Row::Del { .. } => "del",
             Row::Add { .. } => "add",
             Row::Mod { .. } => "mod",

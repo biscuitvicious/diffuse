@@ -2850,10 +2850,16 @@ fn test_mov_target_and_source_render_in_tui() {
     state.jump_to_row(tgt_pos.unwrap(), false);
     let frame = state.render_frame(120, 40);
     let raw_frame = crate::render::strip_ansi(&frame);
-    assert!(
-        raw_frame.contains("96≈+"),
-        "frame must render target move row 96≈+"
-    );
+    // A move row renders `≈` with no `+`/`-` sign: the row coloring already
+    // identifies the move side.
+    let mov_line = |frame: &str, num: &str| -> String {
+        frame
+            .lines()
+            .find(|line| line.contains(num) && line.contains('≈'))
+            .map(str::to_owned)
+            .unwrap_or_else(|| panic!("no move row {num} in frame:\n{frame}"))
+    };
+    assert!(!mov_line(&raw_frame, "96").contains("≈+"));
 
     let src_pos = state.flat.iter().position(|fr| {
         state.row_of(fr).is_some_and(|r| {
@@ -2867,25 +2873,23 @@ fn test_mov_target_and_source_render_in_tui() {
     state.jump_to_row(src_pos.unwrap(), false);
     let frame_src = state.render_frame(120, 40);
     let raw_frame_src = crate::render::strip_ansi(&frame_src);
+    assert!(!mov_line(&raw_frame_src, "127").contains("≈-"));
     assert!(
-        raw_frame_src.contains("127") && raw_frame_src.contains("≈-"),
-        "frame must render source move row 127 with ≈-"
-    );
-    assert!(
-        raw_frame_src.contains("135") && !raw_frame_src.contains("135≈-"),
-        "trailing blank line 135 must be regular deletion '-', not move '≈-'"
+        raw_frame_src
+            .lines()
+            .any(|line| line.contains("135") && line.contains('-') && !line.contains('≈')),
+        "trailing blank line 135 must be regular deletion '-', not a move row"
     );
 
     // Also verify collapsed gutter at narrow width (< 100 diff content cols)
     let frame_narrow = state.render_frame(80, 40);
     let raw_frame_narrow = crate::render::strip_ansi(&frame_narrow);
+    assert!(!mov_line(&raw_frame_narrow, "127").contains("≈-"));
     assert!(
-        raw_frame_narrow.contains("127≈-"),
-        "narrow frame must render collapsed source move row 127≈-"
-    );
-    assert!(
-        raw_frame_narrow.contains("135 -") && !raw_frame_narrow.contains("135≈-"),
-        "trailing blank line 135 must be regular deletion '-', not move '≈-'"
+        raw_frame_narrow
+            .lines()
+            .any(|line| line.contains("135") && line.contains('-') && !line.contains('≈')),
+        "narrow frame must render line 135 as a regular deletion, not a move row"
     );
 }
 

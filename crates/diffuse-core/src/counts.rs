@@ -170,7 +170,7 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
                 Row::Del { .. } => dels += 1,
                 Row::Mod { .. } => mods += 1,
                 Row::MovTgt { .. } => movs += 1,
-                Row::MovSrc { .. } | Row::Ctx(_) | Row::Sep(_) => {}
+                Row::MovSrc { .. } | Row::Ctx { .. } | Row::Sep(_) => {}
             }
         }
     }

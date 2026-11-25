@@ -105,7 +105,7 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                         out[num - 1] = del.text.clone();
                     }
                 }
-                crate::parse::Row::Ctx(ctx) => {
+                crate::parse::Row::Ctx { line: ctx, .. } => {
                     let num = ctx.old_pos as usize;
                     if num > 0 {
                         while out.len() < num {
@@ -145,7 +145,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                         out[num - 1] = add.text.clone();
                     }
                 }
-                crate::parse::Row::Ctx(ctx) => {
+                crate::parse::Row::Ctx { line: ctx, .. } => {
                     let num = ctx.new_pos as usize;
                     if num > 0 {
                         while out.len() < num {

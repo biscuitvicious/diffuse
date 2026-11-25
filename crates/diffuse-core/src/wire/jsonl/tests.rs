@@ -699,6 +699,59 @@ fn test_row_group_wire_serialization() {
     );
     let de_row_peer: OutputRow = serde_json::from_str(&json_peer).unwrap();
     assert_eq!(de_row_peer.group, Some(peer_group));
+
+    // A moved row carries its peer group through the wire too, and keeps it
+    // when the row is reconstructed back into a parse row.
+    let row_peer_mov = OutputRow {
+        kind: RowKind::Mov,
+        mov_side: Some(crate::wire::MovSide::Tgt),
+        new_line: Some(58),
+        old_line: None,
+        runs: vec![OutputRun {
+            kind: RunKind::MovedTgt,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "moved".into(),
+        }],
+        wholesale: false,
+        group: Some(peer_group),
+    };
+    let json_peer_mov = serde_json::to_string(&row_peer_mov).unwrap();
+    assert!(
+        json_peer_mov.contains(r#""g":{"id":42,"slot":1,"n":2,"m":3}"#),
+        "serialized move row must contain peer group info: {json_peer_mov}"
+    );
+    let de_row_peer_mov: OutputRow = serde_json::from_str(&json_peer_mov).unwrap();
+    assert_eq!(de_row_peer_mov.group, Some(peer_group));
+    let reconstructed = crate::parse::Row::from(&de_row_peer_mov);
+    assert_eq!(reconstructed.group(), Some(peer_group));
+
+    // A context row can be a formation anchor, so its group travels the wire
+    // and survives reconstruction too.
+    let row_peer_ctx = OutputRow {
+        kind: RowKind::Ctx,
+        mov_side: None,
+        new_line: Some(31),
+        old_line: Some(11),
+        runs: vec![OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    }".into(),
+        }],
+        wholesale: false,
+        group: Some(peer_group),
+    };
+    let json_peer_ctx = serde_json::to_string(&row_peer_ctx).unwrap();
+    assert!(
+        json_peer_ctx.contains(r#""g":{"id":42,"slot":1,"n":2,"m":3}"#),
+        "serialized context row must contain peer group info: {json_peer_ctx}"
+    );
+    let de_row_peer_ctx: OutputRow = serde_json::from_str(&json_peer_ctx).unwrap();
+    assert_eq!(de_row_peer_ctx.group, Some(peer_group));
+    let reconstructed_ctx = crate::parse::Row::from(&de_row_peer_ctx);
+    assert_eq!(reconstructed_ctx.kind(), RowKind::Ctx);
+    assert_eq!(reconstructed_ctx.group(), Some(peer_group));
 }
 
 #[test]

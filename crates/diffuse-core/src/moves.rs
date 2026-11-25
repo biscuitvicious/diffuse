@@ -146,7 +146,7 @@ fn hunk_row_clusters(h: &crate::parse::Hunk) -> Vec<usize> {
     let mut cluster_id = 0;
     let mut prev_was_change = false;
     for r in &h.rows {
-        if matches!(r, Row::Ctx(_)) {
+        if matches!(r, Row::Ctx { .. }) {
             if prev_was_change {
                 cluster_id += 1;
                 prev_was_change = false;
@@ -174,7 +174,7 @@ fn hunk_row_clusters_salient(
     let mut cluster_id = 0;
     let mut ctx_run: Vec<&Row> = Vec::new();
     for r in &h.rows {
-        if matches!(r, Row::Ctx(_)) {
+        if matches!(r, Row::Ctx { .. }) {
             ctx_run.push(r);
             clusters.push(usize::MAX);
         } else {
@@ -398,12 +398,12 @@ where
     for m in matches_vec {
         let (hi, ri) = m.source_pos;
         let (ah, ar) = m.target_pos;
-        let del_line = match &f.hunks[hi].rows[ri] {
-            Row::Del { line: d, .. } => d.clone(),
+        let (del_line, del_group) = match &f.hunks[hi].rows[ri] {
+            Row::Del { line: d, group, .. } => (d.clone(), *group),
             _ => continue,
         };
-        let add_line = match &f.hunks[ah].rows[ar] {
-            Row::Add { line: a, .. } => a.clone(),
+        let (add_line, add_group) = match &f.hunks[ah].rows[ar] {
+            Row::Add { line: a, group, .. } => (a.clone(), *group),
             _ => continue,
         };
         let (spans, cached_runs) = if del_line.text != add_line.text {
@@ -415,11 +415,13 @@ where
             line: add_line,
             spans: spans.clone(),
             cached_runs: cached_runs.clone(),
+            group: add_group,
         };
         f.hunks[hi].rows[ri] = Row::MovSrc {
             line: del_line,
             spans,
             cached_runs,
+            group: del_group,
         };
         move_count += 1;
         applied.push((m.source_pos, m.target_pos));
@@ -621,7 +623,9 @@ pub fn absorb_mov_tails(
             match actions.remove(&(hi, ri)) {
                 None => rebuilt.push(row),
                 Some(TailAction::ClaimSrc { add_text }) => match row {
-                    Row::Del { line: del, .. } => {
+                    Row::Del {
+                        line: del, group, ..
+                    } => {
                         let (spans, cached_runs) = if del.text != add_text {
                             word_spans_and_runs_with_profile(&del.text, &add_text, profile)
                         } else {
@@ -632,12 +636,15 @@ pub fn absorb_mov_tails(
                             line: del,
                             spans,
                             cached_runs,
+                            group,
                         });
                     }
                     other => rebuilt.push(other),
                 },
                 Some(TailAction::ClaimTgt { del_text }) => match row {
-                    Row::Add { line: add, .. } => {
+                    Row::Add {
+                        line: add, group, ..
+                    } => {
                         let (spans, cached_runs) = if del_text != add.text {
                             word_spans_and_runs_with_profile(&del_text, &add.text, profile)
                         } else {
@@ -648,12 +655,13 @@ pub fn absorb_mov_tails(
                             line: add,
                             spans,
                             cached_runs,
+                            group,
                         });
                     }
                     other => rebuilt.push(other),
                 },
                 Some(TailAction::BreakSrc { add_text }) => match row {
-                    Row::Ctx(ctx) => {
+                    Row::Ctx { line: ctx, group } => {
                         use crate::parse::{AddLine, DelLine};
                         let (spans, cached_runs) = if ctx.text != add_text {
                             word_spans_and_runs_with_profile(&ctx.text, &add_text, profile)
@@ -664,17 +672,22 @@ pub fn absorb_mov_tails(
                         let orphan_num = ctx.new_pos;
                         add_orphans.push(orphan_num);
                         let text = ctx.text.clone();
+                        // Both halves of the broken context row belong to the
+                        // formation the row was part of: the move source keeps
+                        // the group, and so does the orphan addition that takes
+                        // over the new side.
                         rebuilt.push(Row::MovSrc {
                             line: DelLine::new(ctx.old_pos, ctx.text),
                             spans,
                             cached_runs,
+                            group,
                         });
-                        rebuilt.push(Row::add(AddLine::new(orphan_num, text)));
+                        rebuilt.push(Row::add(AddLine::new(orphan_num, text)).with_group(group));
                     }
                     other => rebuilt.push(other),
                 },
                 Some(TailAction::BreakTgt { del_text }) => match row {
-                    Row::Ctx(ctx) => {
+                    Row::Ctx { line: ctx, group } => {
                         use crate::parse::{AddLine, DelLine};
                         let (spans, cached_runs) = if del_text != ctx.text {
                             word_spans_and_runs_with_profile(&del_text, &ctx.text, profile)
@@ -689,8 +702,9 @@ pub fn absorb_mov_tails(
                             line: AddLine::new(ctx.new_pos, ctx.text),
                             spans,
                             cached_runs,
+                            group,
                         });
-                        rebuilt.push(Row::del(DelLine::new(orphan_num, text)));
+                        rebuilt.push(Row::del(DelLine::new(orphan_num, text)).with_group(group));
                     }
                     other => rebuilt.push(other),
                 },
@@ -938,7 +952,7 @@ fn rows_between_are_boundary(rows: &[Row], a: usize, b: usize) -> bool {
     rows.get(lo + 1..hi).is_some_and(|between| {
         between
             .iter()
-            .any(|r| matches!(r, Row::Ctx(_) | Row::Mod { .. } | Row::Sep(_)))
+            .any(|r| matches!(r, Row::Ctx { .. } | Row::Mod { .. } | Row::Sep(_)))
     })
 }
 
@@ -1106,9 +1120,9 @@ fn absorb_run_tail(
         let o_row = &f.hunks[hi].rows[o_idx];
         let n_row = &f.hunks[ah].rows[n_idx];
         let o_take = matches!(o_row, Row::Del { group: None, .. })
-            || (allow_ctx_break && matches!(o_row, Row::Ctx(_)));
+            || (allow_ctx_break && matches!(o_row, Row::Ctx { .. }));
         let n_take = matches!(n_row, Row::Add { group: None, .. })
-            || (allow_ctx_break && matches!(n_row, Row::Ctx(_)));
+            || (allow_ctx_break && matches!(n_row, Row::Ctx { .. }));
         if !o_take || !n_take {
             break;
         }
@@ -1122,7 +1136,7 @@ fn absorb_run_tail(
             Row::Del { .. } => TailAction::ClaimSrc {
                 add_text: n_row.text().to_owned(),
             },
-            Row::Ctx(_) => TailAction::BreakSrc {
+            Row::Ctx { .. } => TailAction::BreakSrc {
                 add_text: n_row.text().to_owned(),
             },
             _ => break,
@@ -1131,7 +1145,7 @@ fn absorb_run_tail(
             Row::Add { .. } => TailAction::ClaimTgt {
                 del_text: o_row.text().to_owned(),
             },
-            Row::Ctx(_) => TailAction::BreakTgt {
+            Row::Ctx { .. } => TailAction::BreakTgt {
                 del_text: o_row.text().to_owned(),
             },
             _ => break,
@@ -1345,18 +1359,24 @@ pub fn collapse_touching_moves(
                 consumed.insert(ti);
                 let old_text = hunk.rows[si].text().to_owned();
                 let new_text = hunk.rows[ti].text().to_owned();
+                // A move pair that collapses into a single row keeps the peer
+                // group its two halves carried, so the formation can be
+                // re-derived from the row that survives.
+                let group = hunk.rows[si].group().or(hunk.rows[ti].group());
                 if old_text == new_text {
-                    out.push(Row::Ctx(CtxLine::new(o, n, old_text)));
+                    out.push(Row::ctx(CtxLine::new(o, n, old_text)).with_group(group));
                 } else {
                     let (spans, cached_runs) =
                         word_spans_and_runs_with_profile(&old_text, &new_text, profile);
-                    out.push(Row::Mod {
-                        old_line: DelLine::new(o, old_text),
-                        new_line: AddLine::new(n, new_text),
-                        spans,
-                        cached_runs,
-                        group: None,
-                    });
+                    out.push(
+                        Row::mod_with_alignment(
+                            DelLine::new(o, old_text),
+                            AddLine::new(n, new_text),
+                            spans,
+                            cached_runs,
+                        )
+                        .with_group(group),
+                    );
                 }
             }
             emit_at.insert(first, out);

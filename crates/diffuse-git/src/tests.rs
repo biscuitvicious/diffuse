@@ -611,10 +611,10 @@ fn test_diff_text_structure_and_context() {
     assert_eq!(h.rows.len(), 6); // c1, c2, -old_mid, +new_mid, c3, c4
 
     assert!(
-        matches!(&h.rows[0], diffuse_parse::Row::Ctx(c) if c.old_pos == 1 && c.new_pos == 1 && c.text == "c1")
+        matches!(&h.rows[0], diffuse_parse::Row::Ctx { line: c, .. } if c.old_pos == 1 && c.new_pos == 1 && c.text == "c1")
     );
     assert!(
-        matches!(&h.rows[1], diffuse_parse::Row::Ctx(c) if c.old_pos == 2 && c.new_pos == 2 && c.text == "c2")
+        matches!(&h.rows[1], diffuse_parse::Row::Ctx { line: c, .. } if c.old_pos == 2 && c.new_pos == 2 && c.text == "c2")
     );
     assert!(
         matches!(&h.rows[2], diffuse_parse::Row::Del { line: d, .. } if d.num == 3 && d.text == "old_mid")
@@ -623,10 +623,10 @@ fn test_diff_text_structure_and_context() {
         matches!(&h.rows[3], diffuse_parse::Row::Add { line: a, .. } if a.num == 3 && a.text == "new_mid")
     );
     assert!(
-        matches!(&h.rows[4], diffuse_parse::Row::Ctx(c) if c.old_pos == 4 && c.new_pos == 4 && c.text == "c3")
+        matches!(&h.rows[4], diffuse_parse::Row::Ctx { line: c, .. } if c.old_pos == 4 && c.new_pos == 4 && c.text == "c3")
     );
     assert!(
-        matches!(&h.rows[5], diffuse_parse::Row::Ctx(c) if c.old_pos == 5 && c.new_pos == 5 && c.text == "c4")
+        matches!(&h.rows[5], diffuse_parse::Row::Ctx { line: c, .. } if c.old_pos == 5 && c.new_pos == 5 && c.text == "c4")
     );
 
     assert!(patch.starts_with("@@ -1,5 +1,5 @@\n"));

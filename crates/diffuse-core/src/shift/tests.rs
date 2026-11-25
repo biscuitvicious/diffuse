@@ -26,8 +26,8 @@ fn test_max_shift_down_rows() {
         Row::add(AddLine::new(22, "")),
         Row::add(AddLine::new(23, "    pub fn next() {}")),
         Row::add(AddLine::new(24, "    }")),
-        Row::Ctx(CtxLine::new(15, 25, "    }")),
-        Row::Ctx(CtxLine::new(16, 26, "")),
+        Row::ctx(CtxLine::new(15, 25, "    }")),
+        Row::ctx(CtxLine::new(16, 26, "")),
     ]);
 
     let max_rows = max_shift_down_rows(&h, 2, 6);
@@ -45,19 +45,22 @@ fn test_apply_shift_down_identity() {
         Row::add(AddLine::new(21, "    }")),
         Row::add(AddLine::new(22, "")),
         Row::add(AddLine::new(23, "    pub fn next() {}")),
-        Row::Ctx(CtxLine::new(12, 24, "    }")),
-        Row::Ctx(CtxLine::new(13, 25, "")),
+        Row::ctx(CtxLine::new(12, 24, "    }")),
+        Row::ctx(CtxLine::new(13, 25, "")),
     ]);
 
     apply_shift_down_identity(&mut h, 2, 5, 2);
 
     assert_eq!(h.rows.len(), 7);
     // Released adds (2,3) became context.
-    assert!(matches!(h.rows[2], Row::Ctx(_)), "released add becomes ctx");
+    assert!(
+        matches!(h.rows[2], Row::Ctx { .. }),
+        "released add becomes ctx"
+    );
     assert_eq!(h.rows[2].new_line(), Some(21));
     assert_eq!(h.rows[2].old_line(), Some(12));
     assert!(
-        matches!(h.rows[3], Row::Ctx(_)),
+        matches!(h.rows[3], Row::Ctx { .. }),
         "released blank becomes ctx"
     );
     // Absorbed context (5,6) became adds.
@@ -118,12 +121,12 @@ fn test_inline_hunk_merging() {
                 new_count: 3,
                 section: String::new(),
                 rows: vec![
-                    Row::Ctx(CtxLine::new(10, 10, "line 10")),
+                    Row::ctx(CtxLine::new(10, 10, "line 10")),
                     Row::mod_row(
                         DelLine::new(11, "line 11"),
                         AddLine::new(11, "line 11 modified"),
                     ),
-                    Row::Ctx(CtxLine::new(12, 12, "line 12")),
+                    Row::ctx(CtxLine::new(12, 12, "line 12")),
                 ],
                 above_ctx: 1,
                 below_ctx: 1,
@@ -135,12 +138,12 @@ fn test_inline_hunk_merging() {
                 new_count: 3,
                 section: String::new(),
                 rows: vec![
-                    Row::Ctx(CtxLine::new(15, 15, "line 15")),
+                    Row::ctx(CtxLine::new(15, 15, "line 15")),
                     Row::mod_row(
                         DelLine::new(16, "line 16"),
                         AddLine::new(16, "line 16 modified"),
                     ),
-                    Row::Ctx(CtxLine::new(17, 17, "line 17")),
+                    Row::ctx(CtxLine::new(17, 17, "line 17")),
                 ],
                 above_ctx: 1,
                 below_ctx: 1,
@@ -208,8 +211,8 @@ fn test_semantic_slide_addition_to_function_header() {
         Row::add(AddLine::new(22, "")),
         Row::add(AddLine::new(23, "    pub fn new_func() {")),
         Row::add(AddLine::new(24, "        step();")),
-        Row::Ctx(CtxLine::new(18, 25, "    }")),
-        Row::Ctx(CtxLine::new(19, 26, "")),
+        Row::ctx(CtxLine::new(18, 25, "    }")),
+        Row::ctx(CtxLine::new(19, 26, "")),
     ]);
 
     let profile = lang_profile("rs");
@@ -218,11 +221,14 @@ fn test_semantic_slide_addition_to_function_header() {
     // The leading "}" and blank are released into context; the matching
     // trailing context becomes the additions.
     assert!(
-        matches!(shifted.rows[0], Row::Ctx(_)),
+        matches!(shifted.rows[0], Row::Ctx { .. }),
         "leading brace is context"
     );
     assert_eq!(shifted.rows[0].text(), "    }");
-    assert!(matches!(shifted.rows[1], Row::Ctx(_)), "blank is context");
+    assert!(
+        matches!(shifted.rows[1], Row::Ctx { .. }),
+        "blank is context"
+    );
     assert_eq!(shifted.rows[2].text(), "    pub fn new_func() {");
     assert_eq!(shifted.rows[2].new_line(), Some(23));
     assert_eq!(shifted.rows[3].text(), "        step();");
@@ -315,14 +321,14 @@ fn test_semantic_slide_json_object_closing_delimiter() {
         Row::add(AddLine::new(2031, "                {")),
         Row::add(AddLine::new(2032, "                  \"kind\": \"del\",")),
         Row::add(AddLine::new(2033, "                  \"text\": \")\"")),
-        Row::Ctx(CtxLine::new(2029, 2034, "                },")),
+        Row::ctx(CtxLine::new(2029, 2034, "                },")),
     ]);
 
     let profile = lang_profile("json");
     let shifted = pass_shift_hunk(&h, profile);
 
     assert!(
-        matches!(shifted.rows[2], Row::Ctx(_)),
+        matches!(shifted.rows[2], Row::Ctx { .. }),
         "line 2030 closing brace must be context, got {:?}",
         shifted.rows[2]
     );
@@ -380,7 +386,7 @@ fn test_normalize_context_preserves_pure_context_hunk() {
             new_count: 5,
             section: String::new(),
             rows: (1..=5)
-                .map(|i| Row::Ctx(CtxLine::new(i, i, format!("line {i}"))))
+                .map(|i| Row::ctx(CtxLine::new(i, i, format!("line {i}"))))
                 .collect(),
             above_ctx: 5,
             below_ctx: 5,
@@ -469,7 +475,7 @@ fn context_expansion_stops_at_snapshot_disagreement() {
     assert_eq!(h.below_ctx, 0, "expansion stops at the disagreeing pair");
     assert_eq!(h.old_count, 3);
     for r in &h.rows {
-        if let Row::Ctx(c) = r {
+        if let Row::Ctx { line: c, .. } = r {
             assert_eq!(
                 f.old_content[c.old_pos as usize - 1],
                 f.new_content[c.new_pos as usize - 1],

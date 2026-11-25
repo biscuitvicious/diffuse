@@ -567,7 +567,7 @@ fn test_is_wholesale_replacement_branches() {
     };
 
     // Non-mod row returns false
-    let ctx = Row::Ctx(CtxLine::new(1, 1, "hello"));
+    let ctx = Row::ctx(CtxLine::new(1, 1, "hello"));
     assert!(!is_wholesale_replacement(&ctx));
 
     // Both empty returns false

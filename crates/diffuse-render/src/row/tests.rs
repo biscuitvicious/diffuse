@@ -562,7 +562,7 @@ fn test_render_moved_row_with_indentation_subwords() {
             text: "foo()".into(),
         },
     ];
-    let prefix = "  10≈+ ";
+    let prefix = "  10 ≈ ";
     let rendered = render_row_segment(
         "        foo()",
         true,
@@ -581,7 +581,7 @@ fn test_render_moved_row_with_indentation_subwords() {
         &theme,
     );
     // Gutter prefix
-    assert!(rendered.contains("  10≈+ "));
+    assert!(rendered.contains("  10 ≈ "));
     // Subline addition fill on the 4 added indentation spaces
     assert!(
         rendered.contains("\x1b[48;2;30;96;50m"),
@@ -647,7 +647,7 @@ fn test_render_moved_source_del_row() {
         sgr: None,
         text: "    foo()".into(),
     }];
-    let prefix = "  15≈- ";
+    let prefix = "  15 ≈ ";
     let rendered = render_row_segment(
         "    foo()",
         false,
@@ -665,7 +665,7 @@ fn test_render_moved_source_del_row() {
         true,
         &theme,
     );
-    assert!(rendered.contains("  15≈- "));
+    assert!(rendered.contains("  15 ≈ "));
     assert!(
         rendered.contains(&s_del.fg.fg_code()),
         "deleted source of move must have deletion foreground color"
@@ -682,7 +682,7 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
         sgr: None,
         text: "    foo()".into(),
     }];
-    let prefix = "  15≈- ";
+    let prefix = "  15 ≈ ";
     let rendered = render_row_segment(
         "    foo()",
         false,
@@ -700,7 +700,7 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
         true,
         &theme,
     );
-    assert!(rendered.contains("  15≈- "));
+    assert!(rendered.contains("  15 ≈ "));
     assert!(
         rendered.contains(&s_del.fg.fg_code()),
         "mov src must have deletion foreground color"
@@ -732,7 +732,7 @@ fn test_mov_src_with_del_and_ctx_runs_renders_strikethrough_del() {
             text: "foo()".into(),
         },
     ];
-    let prefix = "  15≈- ";
+    let prefix = "  15 ≈ ";
     let rendered = render_row_segment(
         "    foo()",
         false,
@@ -750,7 +750,7 @@ fn test_mov_src_with_del_and_ctx_runs_renders_strikethrough_del() {
         true,
         &theme,
     );
-    assert!(rendered.contains("  15≈- "));
+    assert!(rendered.contains("  15 ≈ "));
     assert!(
         rendered.contains("\x1b[9m"),
         "mov src with Del run must have strikethrough styling on deleted run"
@@ -778,7 +778,7 @@ fn test_mov_tgt_filters_out_del_runs_no_strikethrough() {
             text: "foo()".into(),
         },
     ];
-    let prefix = "  20≈+ ";
+    let prefix = "  20 ≈ ";
     let rendered = render_row_segment(
         "foo()",
         false,
@@ -796,7 +796,7 @@ fn test_mov_tgt_filters_out_del_runs_no_strikethrough() {
         true,
         &theme,
     );
-    assert!(rendered.contains("  20≈+ "));
+    assert!(rendered.contains("  20 ≈ "));
     assert!(
         !rendered.contains("\x1b[9m"),
         "mov tgt must NOT have strikethrough styling (del run should be filtered out)"
@@ -828,7 +828,7 @@ fn test_mov_src_filters_out_add_runs() {
             text: "foo()".into(),
         },
     ];
-    let prefix = "  15≈- ";
+    let prefix = "  15 ≈ ";
     let rendered = render_row_segment(
         "foo()",
         false,
@@ -846,7 +846,7 @@ fn test_mov_src_filters_out_add_runs() {
         true,
         &theme,
     );
-    assert!(rendered.contains("  15≈- "));
+    assert!(rendered.contains("  15 ≈ "));
     assert!(
         !rendered.contains("    foo()"),
         "mov src must NOT contain added text"
@@ -1517,6 +1517,7 @@ fn test_mov_row_prefix_line_number_colors() {
     let add_gutter = &theme.palette[Cursor::Rest][DiffKind::Add].gutter;
     let del_gutter = &theme.palette[Cursor::Rest][DiffKind::Del].gutter;
     let mov_gutter = &theme.palette[Cursor::Rest][DiffKind::Mov].gutter;
+    let r#mod_gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
 
     // MovSrc: line number carries Del rendering (red + italic), icons stay mov.icon
     // and del.icon
@@ -1535,10 +1536,13 @@ fn test_mov_row_prefix_line_number_colors() {
     );
     assert_eq!(src_spans[0].fg, Some(del_gutter.num.color));
     assert_eq!(src_spans[0].italic, del_gutter.num.italic);
-    assert_eq!(src_spans[1].fg, Some(mov_gutter.icon.color));
-    assert_eq!(src_spans[1].text, "≈");
-    assert_eq!(src_spans[2].fg, Some(del_gutter.icon.color));
-    assert_eq!(src_spans[2].text, "-");
+    // An ungrouped move row leaves the group column blank, puts the move glyph
+    // in the sign column, and carries no `-`.
+    assert_eq!(src_spans[1].text, " ");
+    assert_eq!(src_spans[1].fg, None);
+    assert_eq!(src_spans[2].fg, Some(mov_gutter.icon.color));
+    assert_eq!(src_spans[2].text, "≈");
+    assert_eq!(span_text(&src_spans), "   42 ≈");
 
     // MovTgt: line number carries Add rendering (green), icons stay mov.icon and
     // add.icon
@@ -1557,10 +1561,96 @@ fn test_mov_row_prefix_line_number_colors() {
     );
     assert_eq!(tgt_spans[0].fg, Some(add_gutter.num.color));
     assert_eq!(tgt_spans[0].italic, add_gutter.num.italic);
-    assert_eq!(tgt_spans[1].fg, Some(mov_gutter.icon.color));
-    assert_eq!(tgt_spans[1].text, "≈");
-    assert_eq!(tgt_spans[2].fg, Some(add_gutter.icon.color));
-    assert_eq!(tgt_spans[2].text, "+");
+    assert_eq!(tgt_spans[1].text, " ");
+    assert_eq!(tgt_spans[1].fg, None);
+    assert_eq!(tgt_spans[2].fg, Some(mov_gutter.icon.color));
+    assert_eq!(tgt_spans[2].text, "≈");
+    assert_eq!(span_text(&tgt_spans), "   99 ≈");
+
+    // A grouped move row marks its formation in the group column.
+    let grouped_spans = styled_prefix_spans(
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        None,
+        Some(peer_group()),
+        Some(99),
+        None,
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(grouped_spans[1].fg, Some(r#mod_gutter.icon.color));
+    assert_eq!(span_text(&grouped_spans), "   99~≈");
+}
+
+#[test]
+fn test_grouped_ctx_row_renders_group_marker() {
+    let theme = DiffuseTheme::dark();
+    let ungrouped = styled_prefix_spans(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        None,
+        Some(12),
+        Some(12),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(span_text(&ungrouped), "   12  ");
+
+    let grouped = styled_prefix_spans(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        Some(peer_group()),
+        Some(12),
+        Some(12),
+        &[],
+        true,
+        None,
+        &theme,
+    );
+    assert_eq!(
+        span_text(&grouped),
+        "   12~ ",
+        "a context anchor marks its formation"
+    );
+    assert_eq!(crate::width::display_width(span_text(&grouped)), 7);
+}
+
+#[test]
+fn test_grouped_ctx_split_gutters_mark_both_panes() {
+    let theme = DiffuseTheme::dark();
+
+    let left = styled_split_left_prefix_spans(
+        RowKind::Ctx,
+        None,
+        Some(peer_group()),
+        Some(42),
+        true,
+        None,
+        &theme,
+        3,
+    );
+    assert_eq!(span_text(&left), " 42~ ");
+
+    let right = styled_split_right_prefix_spans(
+        RowKind::Ctx,
+        None,
+        Some(peer_group()),
+        Some(105),
+        true,
+        None,
+        &theme,
+        4,
+    );
+    assert_eq!(span_text(&right), " 105~ ");
 }
 
 #[test]
@@ -2379,7 +2469,7 @@ fn test_dual_gutter_width_and_prefix_formatting() {
         3,
         4,
     );
-    assert_eq!(p_mov_src, "  8     ≈-");
+    assert_eq!(p_mov_src, "  8      ≈");
     assert_eq!(crate::width::display_width(&p_mov_src), 10);
 
     let p_mov_tgt = prefix_of_with_mod_side_and_widths(
@@ -2394,7 +2484,40 @@ fn test_dual_gutter_width_and_prefix_formatting() {
         3,
         4,
     );
-    assert_eq!(p_mov_tgt, "      10≈+");
+    assert_eq!(p_mov_tgt, "      10 ≈");
+
+    let p_ctx = prefix_of_with_mod_side_and_widths(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(p_ctx, "  8   10  ");
+    assert_eq!(crate::width::display_width(&p_ctx), 10);
+
+    let p_ctx_grouped = prefix_of_with_mod_side_and_widths(
+        RowKind::Ctx,
+        None,
+        None,
+        None,
+        Some(peer_group()),
+        Some(10),
+        Some(8),
+        &runs,
+        3,
+        4,
+    );
+    assert_eq!(
+        p_ctx_grouped, "  8   10~ ",
+        "the anchor marks its formation"
+    );
+    assert_eq!(crate::width::display_width(&p_ctx_grouped), 10);
     assert_eq!(crate::width::display_width(&p_mov_tgt), 10);
 
     let p_mod_del = prefix_of_with_mod_side_and_widths(
@@ -2651,7 +2774,11 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     assert_eq!(split_left_glyph(RowKind::Del, None, None), " -");
     assert_eq!(
         split_left_glyph(RowKind::Mov, Some(MovSide::Src), None),
-        "≈-"
+        " ≈"
+    );
+    assert_eq!(
+        split_left_glyph(RowKind::Mov, Some(MovSide::Src), Some(peer_group())),
+        "~≈"
     );
     assert_eq!(
         split_left_glyph(RowKind::Mod, None, Some(peer_group())),
@@ -2667,8 +2794,22 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     assert_eq!(split_right_glyph(RowKind::Add, None, None), " +");
     assert_eq!(
         split_right_glyph(RowKind::Mov, Some(MovSide::Tgt), None),
-        "≈+"
+        " ≈"
     );
+    assert_eq!(
+        split_right_glyph(RowKind::Mov, Some(MovSide::Tgt), Some(peer_group())),
+        "~≈"
+    );
+    assert_eq!(
+        split_left_glyph(RowKind::Ctx, None, Some(peer_group())),
+        "~ "
+    );
+    assert_eq!(
+        split_right_glyph(RowKind::Ctx, None, Some(peer_group())),
+        "~ "
+    );
+    assert_eq!(split_left_glyph(RowKind::Ctx, None, None), "  ");
+    assert_eq!(split_right_glyph(RowKind::Ctx, None, None), "  ");
     assert_eq!(
         split_right_glyph(RowKind::Mod, None, Some(peer_group())),
         "~ "
@@ -2697,11 +2838,16 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     );
     assert_eq!(
         split_left_prefix_of(RowKind::Mov, Some(MovSide::Src), None, Some(42), 3),
-        " 42≈-"
+        " 42 ≈"
     );
     assert_eq!(
         split_left_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, None, 3),
         "     "
+    );
+
+    assert_eq!(
+        split_left_prefix_of(RowKind::Ctx, None, Some(peer_group()), Some(42), 3),
+        " 42~ "
     );
 
     // 4. Plain prefixes: right (new) side with width 4
@@ -2723,7 +2869,11 @@ fn test_side_by_side_gutter_formatting_and_partitioning() {
     );
     assert_eq!(
         split_right_prefix_of(RowKind::Mov, Some(MovSide::Tgt), None, Some(105), 4),
-        " 105≈+"
+        " 105 ≈"
+    );
+    assert_eq!(
+        split_right_prefix_of(RowKind::Ctx, None, Some(peer_group()), Some(105), 4),
+        " 105~ "
     );
     assert_eq!(
         split_right_prefix_of(RowKind::Mov, Some(MovSide::Src), None, None, 4),

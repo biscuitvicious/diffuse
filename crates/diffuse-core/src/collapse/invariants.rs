@@ -37,7 +37,7 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
             // and d.
             let mut ctx_intervened = false;
             for prev in res[..i].iter().rev() {
-                if matches!(prev, Row::Ctx(_)) {
+                if matches!(prev, Row::Ctx { .. }) {
                     ctx_intervened = true;
                     break;
                 }
@@ -74,7 +74,7 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
 /// 2. Every row after C with an old line must satisfy old > C_old.
 pub fn check_context_old_line_monotonicity(res: &[Row]) -> Result<(), String> {
     for (i, r) in res.iter().enumerate() {
-        let Row::Ctx(c) = r else {
+        let Row::Ctx { line: c, .. } = r else {
             continue;
         };
         let c_old = c.old_pos;
@@ -156,7 +156,7 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                     {
                         Some((old_line.num, new_line.num))
                     }
-                    Row::Ctx(c)
+                    Row::Ctx { line: c, .. }
                         if cluster_dels.contains(&c.old_pos)
                             && cluster_adds.contains(&c.new_pos) =>
                     {
@@ -184,7 +184,7 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                         .unwrap_or(0);
 
                     for (vj, prev) in res[..vi].iter().enumerate().rev() {
-                        if matches!(prev, Row::Ctx(_)) {
+                        if matches!(prev, Row::Ctx { .. }) {
                             break;
                         }
                         if let Some(nl) = prev.new_line()

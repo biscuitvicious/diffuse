@@ -216,7 +216,7 @@ pub fn pass_residual_pairing(
             let (min_i, max_i) = if di < ai { (di, ai) } else { (ai, di) };
             if h.rows[min_i..=max_i]
                 .iter()
-                .any(|r| matches!(r, Row::Ctx(_)))
+                .any(|r| matches!(r, Row::Ctx { .. }))
             {
                 continue;
             }

@@ -129,7 +129,10 @@ impl std::ops::Deref for GroupId {
 /// A row carries `Some(group)` when slot alignment placed it in an (N -> M)
 /// peer group justified by relocated text (balanced `MovedSrc`/`MovedTgt`
 /// runs, which need no `Mod` anchor); otherwise it carries `None` and renders
-/// as a standalone row.
+/// as a standalone row. Every row kind that can fill a slot carries it: the
+/// whole-row move halves `MovSrc`/`MovTgt` (a formation can be witnessed by
+/// relocations whose only evidence is those two rows) and a `Ctx` that fills a
+/// slot (the anchor holds the changes on both of its sides in one group).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 pub struct PeerGroup {
     /// Unique identifier of the irreducible (N -> M) group within a hunk.
@@ -255,7 +258,16 @@ impl Spans {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Row {
-    Ctx(CtxLine),
+    /// A shared line: identical old and new text with no token change.
+    ///
+    /// A context row that fills a slot in a peer formation carries that group
+    /// and anchors it, holding the changes on both sides of the line together.
+    /// The anchor never counts as relocated evidence on its own.
+    Ctx {
+        line: CtxLine,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<PeerGroup>,
+    },
     Del {
         line: DelLine,
         #[serde(default, skip_serializing_if = "Spans::is_empty")]
@@ -290,6 +302,8 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<PeerGroup>,
     },
     MovTgt {
         line: AddLine,
@@ -297,6 +311,8 @@ pub enum Row {
         spans: Spans,
         #[serde(skip)]
         cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<PeerGroup>,
     },
     #[serde(skip_serializing)]
     Sep(String),
@@ -312,6 +328,13 @@ impl Row {
             cached_runs: Vec::new(),
             group: None,
         }
+    }
+
+    /// A context row outside any peer formation. A context row that anchors a
+    /// formation is built with [`Row::with_group`].
+    #[inline]
+    pub fn ctx(line: CtxLine) -> Self {
+        Self::Ctx { line, group: None }
     }
 
     #[inline]
@@ -367,6 +390,7 @@ impl Row {
             line,
             spans: Spans::default(),
             cached_runs: Vec::new(),
+            group: None,
         }
     }
 
@@ -376,13 +400,14 @@ impl Row {
             line,
             spans: Spans::default(),
             cached_runs: Vec::new(),
+            group: None,
         }
     }
 
     #[inline]
     pub fn kind(&self) -> RowKind {
         match self {
-            Row::Ctx(_) | Row::Sep(_) => RowKind::Ctx,
+            Row::Ctx { .. } | Row::Sep(_) => RowKind::Ctx,
             Row::Del { .. } => RowKind::Del,
             Row::Add { .. } => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
@@ -393,7 +418,7 @@ impl Row {
     #[inline]
     pub fn text(&self) -> &str {
         match self {
-            Row::Ctx(ctx_line) => &ctx_line.text,
+            Row::Ctx { line: ctx_line, .. } => &ctx_line.text,
             Row::Del { line, .. } => &line.text,
             Row::Add { line, .. } => &line.text,
             Row::Mod { new_line, .. } => &new_line.text,
@@ -406,7 +431,7 @@ impl Row {
     #[inline]
     pub fn old_text(&self) -> Option<&str> {
         match self {
-            Row::Ctx(ctx_line) => Some(&ctx_line.text),
+            Row::Ctx { line: ctx_line, .. } => Some(&ctx_line.text),
             Row::Del { line, .. } => Some(&line.text),
             Row::Mod { old_line, .. } => Some(&old_line.text),
             Row::MovSrc { line, .. } => Some(&line.text),
@@ -417,7 +442,7 @@ impl Row {
     #[inline]
     pub fn new_text(&self) -> Option<&str> {
         match self {
-            Row::Ctx(ctx_line) => Some(&ctx_line.text),
+            Row::Ctx { line: ctx_line, .. } => Some(&ctx_line.text),
             Row::Add { line, .. } => Some(&line.text),
             Row::Mod { new_line, .. } => Some(&new_line.text),
             Row::MovTgt { line, .. } => Some(&line.text),
@@ -428,7 +453,7 @@ impl Row {
     #[inline]
     pub fn old_line(&self) -> Option<u32> {
         match self {
-            Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
+            Row::Ctx { line: ctx_line, .. } => Some(ctx_line.old_pos),
             Row::Del { line, .. } => Some(line.num),
             Row::Mod { old_line, .. } => Some(old_line.num),
             Row::MovSrc { line, .. } => Some(line.num),
@@ -439,7 +464,7 @@ impl Row {
     #[inline]
     pub fn new_line(&self) -> Option<u32> {
         match self {
-            Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
+            Row::Ctx { line: ctx_line, .. } => Some(ctx_line.new_pos),
             Row::Add { line, .. } => Some(line.num),
             Row::Mod { new_line, .. } => Some(new_line.num),
             Row::MovTgt { line, .. } => Some(line.num),
@@ -488,13 +513,19 @@ impl Row {
     }
 
     /// Peer group membership if slot alignment placed this row in an (N -> M)
-    /// peer reflow group.
+    /// peer reflow group. Every row kind that can occupy a slot carries it,
+    /// including moved rows and context anchors: a formation can be justified
+    /// by whole-row moves whose only evidence sits in the move rows themselves,
+    /// and held together by a context row that witnesses nothing by itself.
     #[inline]
     pub fn group(&self) -> Option<PeerGroup> {
         match self {
+            Row::Ctx { group, .. } => *group,
             Row::Mod { group, .. } => *group,
             Row::Del { group, .. } => *group,
             Row::Add { group, .. } => *group,
+            Row::MovSrc { group, .. } => *group,
+            Row::MovTgt { group, .. } => *group,
             _ => None,
         }
     }
@@ -502,20 +533,42 @@ impl Row {
     #[inline]
     pub fn set_group(&mut self, new_group: Option<PeerGroup>) {
         match self {
+            Row::Ctx { group, .. } => *group = new_group,
             Row::Mod { group, .. } => *group = new_group,
             Row::Del { group, .. } => *group = new_group,
             Row::Add { group, .. } => *group = new_group,
+            Row::MovSrc { group, .. } => *group = new_group,
+            Row::MovTgt { group, .. } => *group = new_group,
             _ => {}
         }
     }
 
+    /// Attach peer-group membership to a freshly constructed row.
+    ///
+    /// Every reclassification that keeps a row in its formation slot (a `Mod`
+    /// converting to `Ctx`, a `Ctx` splitting into its two sides, a move pair
+    /// collapsing into one row) builds the new row with the group it replaces,
+    /// so a rewrite cannot silently drop the row out of the formation it
+    /// anchors.
+    #[inline]
+    pub fn with_group(mut self, group: Option<PeerGroup>) -> Self {
+        self.set_group(group);
+        self
+    }
+
     pub fn reverse(self) -> Self {
         match self {
-            Row::Ctx(ctx_line) => Row::Ctx(CtxLine {
-                old_pos: ctx_line.new_pos,
-                new_pos: ctx_line.old_pos,
-                text: ctx_line.text,
-            }),
+            Row::Ctx {
+                line: ctx_line,
+                group,
+            } => Row::Ctx {
+                line: CtxLine {
+                    old_pos: ctx_line.new_pos,
+                    new_pos: ctx_line.old_pos,
+                    text: ctx_line.text,
+                },
+                group: group.map(PeerGroup::reverse),
+            },
             Row::Del {
                 line,
                 spans,
@@ -564,6 +617,7 @@ impl Row {
                 line,
                 spans,
                 cached_runs,
+                group,
             } => Row::MovTgt {
                 line: AddLine::new(line.num, line.text),
                 spans: spans.reverse(),
@@ -571,11 +625,13 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
+                group: group.map(PeerGroup::reverse),
             },
             Row::MovTgt {
                 line,
                 spans,
                 cached_runs,
+                group,
             } => Row::MovSrc {
                 line: DelLine::new(line.num, line.text),
                 spans: spans.reverse(),
@@ -583,6 +639,7 @@ impl Row {
                     .into_iter()
                     .map(|(k, t)| (k.reverse(), t))
                     .collect(),
+                group: group.map(PeerGroup::reverse),
             },
             Row::Sep(s) => Row::Sep(s),
         }

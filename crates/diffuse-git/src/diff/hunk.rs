@@ -98,7 +98,7 @@ impl<'a> ConsumeHunk for AstHunkConsumer<'a> {
                     if !text.ends_with('\n') {
                         self.patch.push('\n');
                     }
-                    hunk.rows.push(Row::Ctx(CtxLine::new(
+                    hunk.rows.push(Row::ctx(CtxLine::new(
                         old_pos,
                         new_pos,
                         text_trimmed.to_string(),

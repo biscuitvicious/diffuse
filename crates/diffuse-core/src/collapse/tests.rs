@@ -32,7 +32,7 @@ fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) 
         RowKind::Ctx => {
             let old_num = old_line.expect("Ctx row requires old_line in test helper");
             let new_num = new_line.expect("Ctx row requires new_line in test helper");
-            Row::Ctx(CtxLine::new(old_num, new_num, text))
+            Row::ctx(CtxLine::new(old_num, new_num, text))
         }
         RowKind::Mov => {
             if let Some(old) = old_line {
@@ -1776,7 +1776,7 @@ fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
     ];
 
     let h = hunk(vec![
-        Row::Ctx(CtxLine::new(
+        Row::ctx(CtxLine::new(
             2027,
             2028,
             "                  \"color\": \"text\",",
@@ -1786,7 +1786,7 @@ fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
             "                  \"text\": \"        \"",
         )),
         Row::add(AddLine::new(2029, "                  \"text\": \"    \"")),
-        Row::Ctx(CtxLine::new(2029, 2030, "                },")),
+        Row::ctx(CtxLine::new(2029, 2030, "                },")),
     ]);
 
     let profile = lang_profile("json");
@@ -2982,12 +2982,12 @@ fn test_dbc_macro_invariant_4_del_add_topological_order() {
 #[test]
 fn test_reflow_filter_preserves_context_old_line_monotonicity() {
     let h = hunk(vec![
-        Row::Ctx(CtxLine::new(1, 1, "context before")),
+        Row::ctx(CtxLine::new(1, 1, "context before")),
         Row::add(crate::parse::AddLine::new(2, "}")),
         Row::del(crate::parse::DelLine::new(2, "files.push(item);")),
         Row::add(crate::parse::AddLine::new(3, "files.push(item);")),
         Row::del(crate::parse::DelLine::new(3, "}")),
-        Row::Ctx(CtxLine::new(4, 4, "context after")),
+        Row::ctx(CtxLine::new(4, 4, "context after")),
     ]);
     let profile = diffuse_syntax::registry::lang_profile("rs");
     let res = collapse_hunk_rows(&h, None, None, profile);
@@ -4100,6 +4100,137 @@ fn test_recalibrate_dissolves_group_without_relocated_text() {
 }
 
 #[test]
+fn test_recalibrate_keeps_group_witnessed_only_by_whole_row_moves() {
+    // A relocated block carries no word-level runs: its evidence is the move
+    // rows themselves, so a two-slot 1-to-1 formation must survive.
+    let group = |slot| PeerGroup {
+        id: GroupId(11),
+        slot,
+        n: 1,
+        m: 1,
+    };
+    let mut rows = vec![
+        Row::MovSrc {
+            line: DelLine::new(30, "let a = 1;"),
+            spans: crate::parse::Spans::default(),
+            cached_runs: Vec::new(),
+            group: Some(group(0)),
+        },
+        Row::MovTgt {
+            line: AddLine::new(70, "let a = 1;"),
+            spans: crate::parse::Spans::default(),
+            cached_runs: Vec::new(),
+            group: Some(group(1)),
+        },
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(
+        rows[0].group(),
+        Some(PeerGroup {
+            id: GroupId(11),
+            slot: 0,
+            n: 1,
+            m: 1
+        }),
+        "whole-row moves need no word-level runs to witness a formation"
+    );
+    assert_eq!(
+        rows[1].group(),
+        Some(PeerGroup {
+            id: GroupId(11),
+            slot: 1,
+            n: 1,
+            m: 1
+        })
+    );
+    assert_eq!(rows[0].kind(), RowKind::Mov, "the move rows stay intact");
+    assert_eq!(rows[1].kind(), RowKind::Mov);
+}
+
+#[test]
+fn test_recalibrate_keeps_ctx_anchor_inside_formation() {
+    // A context row is an anchor, not a boundary: it occupies one slot on each
+    // side and keeps holding the changes around it together.
+    let group = |slot| PeerGroup {
+        id: GroupId(13),
+        slot,
+        n: 3,
+        m: 3,
+    };
+    let mut rows = vec![
+        moved_src_member(40, "let a = moved;", "moved", group(0)),
+        Row::Ctx {
+            line: CtxLine::new(41, 80, "    }"),
+            group: Some(group(1)),
+        },
+        moved_tgt_member(90, "let a = moved;", "moved", group(2)),
+    ];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    let expected = |slot| PeerGroup {
+        id: GroupId(13),
+        slot,
+        n: 2,
+        m: 2,
+    };
+    assert_eq!(
+        rows[1].group(),
+        Some(expected(1)),
+        "the context anchor stays a member of the formation"
+    );
+    assert_eq!(rows[1].kind(), RowKind::Ctx, "it remains context");
+    assert_eq!(rows[0].group(), Some(expected(0)));
+    assert_eq!(rows[2].group(), Some(expected(2)));
+}
+
+#[test]
+fn test_recalibrate_dissolves_lone_ctx_anchor() {
+    // A formation that is nothing but one context slot carries no relocation.
+    let mut rows = vec![Row::Ctx {
+        line: CtxLine::new(5, 6, "    }"),
+        group: Some(PeerGroup {
+            id: GroupId(14),
+            slot: 0,
+            n: 1,
+            m: 1,
+        }),
+    }];
+
+    normalize::recalibrate_peer_groups(&mut rows);
+
+    assert_eq!(rows[0].group(), None);
+    assert_eq!(rows[0].kind(), RowKind::Ctx);
+}
+
+#[test]
+fn test_swap_mod_to_ctx_preserves_peer_group() {
+    // Converting an identical Mod to context is a kind change within the same
+    // slot, so the formation membership travels with it.
+    let group = PeerGroup {
+        id: GroupId(21),
+        slot: 3,
+        n: 3,
+        m: 4,
+    };
+    let mut row = Row::Mod {
+        old_line: DelLine::new(10, "    }"),
+        new_line: AddLine::new(20, "    }"),
+        spans: crate::parse::Spans::default(),
+        cached_runs: Vec::new(),
+        group: Some(group),
+    };
+
+    let original = normalize::swap_mod_to_ctx(&mut row).expect("identical mod converts to context");
+
+    assert_eq!(original.group(), Some(group), "the replaced row is the Mod");
+    assert!(matches!(row, Row::Ctx { .. }), "the slot becomes context");
+    assert_eq!(row.group(), Some(group), "the anchor keeps its formation");
+}
+
+#[test]
 fn test_recalibrate_keeps_group_without_mod_anchor() {
     let group = |slot| PeerGroup {
         id: GroupId(7),
@@ -4144,7 +4275,7 @@ fn test_recalibrate_split_renumbers_slots_and_recounts() {
         moved_src_member(31, "a other b", "other", stale(1)),
         moved_tgt_member(30, "c shared d", "shared", stale(2)),
         moved_tgt_member(31, "c other d", "other", stale(3)),
-        Row::Ctx(CtxLine::new(32, 32, "    between();")),
+        Row::ctx(CtxLine::new(32, 32, "    between();")),
         moved_src_member(33, "e third f", "third", stale(5)),
         moved_src_member(34, "e fourth f", "fourth", stale(6)),
         moved_tgt_member(33, "g third h", "third", stale(8)),
@@ -4310,7 +4441,7 @@ fn test_recalibrate_dissolved_fragment_merges_into_surrounding_run() {
         m: 1,
     };
     let mut rows = vec![
-        Row::Ctx(CtxLine::new(3, 3, "before")),
+        Row::ctx(CtxLine::new(3, 3, "before")),
         plain_del(4, "old a"),
         plain_del(5, "old b"),
         grouped_add(6, "new a", pair(0)),

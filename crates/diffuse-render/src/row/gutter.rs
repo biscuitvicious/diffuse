@@ -52,6 +52,36 @@ pub const fn gutter_width(line_num_width: usize) -> usize {
     dual_gutter_width(0, line_num_width)
 }
 
+/// The two gutter glyph columns of a moved row: the peer-group marker,
+/// followed by the move glyph. Moved rows carry no `+`/`-` sign; the row
+/// coloring already identifies which side of the move the row belongs to.
+#[inline]
+pub const fn mov_glyph(group: Option<PeerGroup>) -> &'static str {
+    if group.is_some() { "~≈" } else { " ≈" }
+}
+
+/// Span twin of [`mov_glyph`]: the peer-group marker span (a blank when the row
+/// is ungrouped) followed by the move glyph span.
+fn mov_glyph_spans(
+    group: Option<PeerGroup>,
+    theme: &DiffuseTheme,
+    bg: Option<Color>,
+) -> Vec<StyledSpan> {
+    let marker = if group.is_some() {
+        theme.palette[Cursor::Rest][DiffKind::Mod]
+            .gutter
+            .icon
+            .span("~", bg)
+    } else {
+        StyledSpan::styled(" ", None, bg)
+    };
+    let glyph = theme.palette[Cursor::Rest][DiffKind::Mov]
+        .gutter
+        .icon
+        .span("≈", bg);
+    vec![marker, glyph]
+}
+
 /// Minimum character width required for each pane individually to enable
 /// side-by-side mode by default.
 pub const MIN_SIDE_BY_SIDE_PANE_CHARS: usize = 80;
@@ -161,13 +191,11 @@ pub const fn split_left_glyph(
     match (group, kind) {
         (Some(g), RowKind::Mod) if g.is_multiline() => "~ ",
         (Some(g), RowKind::Del) if g.is_multiline() => "~-",
+        (_, RowKind::Mov) if matches!(mov_side, Some(MovSide::Src)) => mov_glyph(group),
+        (Some(_), RowKind::Ctx) => "~ ",
         _ => match kind {
             RowKind::Mod => " ~",
             RowKind::Del => " -",
-            RowKind::Mov => match mov_side {
-                Some(MovSide::Src) => "≈-",
-                _ => "  ",
-            },
             _ => "  ",
         },
     }
@@ -184,13 +212,11 @@ pub const fn split_right_glyph(
     match (group, kind) {
         (Some(g), RowKind::Mod) if g.is_multiline() => "~ ",
         (Some(g), RowKind::Add) if g.is_multiline() => "~+",
+        (_, RowKind::Mov) if matches!(mov_side, Some(MovSide::Tgt)) => mov_glyph(group),
+        (Some(_), RowKind::Ctx) => "~ ",
         _ => match kind {
             RowKind::Mod => " ~",
             RowKind::Add => " +",
-            RowKind::Mov => match mov_side {
-                Some(MovSide::Tgt) => "≈+",
-                _ => "  ",
-            },
             _ => "  ",
         },
     }
@@ -458,6 +484,12 @@ pub fn prefix_of_with_mod_side_and_widths(
                     ModSide::Add => format!("{glyph_str}+"),
                 };
             }
+            if kind == RowKind::Mov {
+                return mov_glyph(group).to_string();
+            }
+            if kind == RowKind::Ctx && group.is_some() {
+                return "~ ".to_string();
+            }
             return match group {
                 Some(g) if g.is_multiline() => match kind {
                     RowKind::Add => "~+".to_string(),
@@ -469,13 +501,6 @@ pub fn prefix_of_with_mod_side_and_widths(
                     RowKind::Add => " +".to_string(),
                     RowKind::Del => " -".to_string(),
                     RowKind::Mod => " ~".to_string(),
-                    RowKind::Mov => {
-                        if mov_side == Some(MovSide::Src) {
-                            "≈-".to_string()
-                        } else {
-                            "≈+".to_string()
-                        }
-                    }
                     _ => "  ".to_string(),
                 },
             };
@@ -497,6 +522,19 @@ pub fn prefix_of_with_mod_side_and_widths(
                     format_line_num(new_line, new_line_width, &mut buf)
                 ),
             };
+        }
+        if kind == RowKind::Mov {
+            return format!(
+                "{}{}",
+                format_line_num(new_line.or(old_line), new_line_width, &mut buf),
+                mov_glyph(group)
+            );
+        }
+        if kind == RowKind::Ctx && group.is_some() {
+            return format!(
+                "{}~ ",
+                format_line_num(new_line.or(old_line), new_line_width, &mut buf)
+            );
         }
         return match group {
             Some(g) if g.is_multiline() => match kind {
@@ -523,13 +561,6 @@ pub fn prefix_of_with_mod_side_and_widths(
                 }
                 RowKind::Mod => {
                     format!("{} ~", format_line_num(new_line, new_line_width, &mut buf))
-                }
-                RowKind::Mov => {
-                    if mov_side == Some(MovSide::Src) {
-                        format!("{}≈-", format_line_num(old_line, new_line_width, &mut buf))
-                    } else {
-                        format!("{}≈+", format_line_num(new_line, new_line_width, &mut buf))
-                    }
                 }
                 _ => format!(
                     "{}  ",
@@ -558,6 +589,16 @@ pub fn prefix_of_with_mod_side_and_widths(
             ModSide::Add => format!("{blank_old} {new_pad}{glyph_str}+"),
         };
     }
+    if kind == RowKind::Mov {
+        return if mov_side == Some(MovSide::Src) {
+            format!("{old_pad} {blank_new}{}", mov_glyph(group))
+        } else {
+            format!("{blank_old} {new_pad}{}", mov_glyph(group))
+        };
+    }
+    if kind == RowKind::Ctx && group.is_some() {
+        return format!("{old_pad} {new_pad}~ ");
+    }
     match group {
         Some(g) if g.is_multiline() => match kind {
             RowKind::Add => format!("{blank_old} {new_pad}~+"),
@@ -569,13 +610,6 @@ pub fn prefix_of_with_mod_side_and_widths(
             RowKind::Add => format!("{blank_old} {new_pad} +"),
             RowKind::Del => format!("{old_pad} {blank_new} -"),
             RowKind::Mod => format!("{old_pad} {new_pad} ~"),
-            RowKind::Mov => {
-                if mov_side == Some(MovSide::Src) {
-                    format!("{old_pad} {blank_new}≈-")
-                } else {
-                    format!("{blank_old} {new_pad}≈+")
-                }
-            }
             _ => format!("{old_pad} {new_pad}  "),
         },
     }
@@ -680,7 +714,6 @@ pub fn styled_prefix_spans_with_widths(
         .num;
     let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
     let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
-    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
 
     if old_line_width == 0 {
@@ -722,6 +755,31 @@ pub fn styled_prefix_spans_with_widths(
                     }
                 }
             };
+        }
+        if kind == RowKind::Mov {
+            let mut spans = if new_line_width == 0 {
+                Vec::new()
+            } else {
+                let pad = format_line_num(new_line.or(old_line), new_line_width, &mut buf);
+                if mov_side == Some(MovSide::Src) {
+                    vec![del.num.span(pad, bg)]
+                } else {
+                    vec![add.num.span(pad, bg)]
+                }
+            };
+            spans.extend(mov_glyph_spans(group, theme, bg));
+            return spans;
+        }
+        if kind == RowKind::Ctx && group.is_some() {
+            let mut spans = if new_line_width == 0 {
+                Vec::new()
+            } else {
+                let pad = format_line_num(new_line.or(old_line), new_line_width, &mut buf);
+                vec![ctx_num.span(pad, bg)]
+            };
+            spans.push(r#mod.icon.span("~", bg));
+            spans.push(ctx_num.span(" ", bg));
+            return spans;
         }
         if let Some(g) = group
             && g.is_multiline()
@@ -804,29 +862,6 @@ pub fn styled_prefix_spans_with_widths(
                     ]
                 }
             }
-            RowKind::Mov => {
-                if mov_side == Some(MovSide::Src) {
-                    if new_line_width == 0 {
-                        vec![mov.icon.span("≈", bg), del.icon.span("-", bg)]
-                    } else {
-                        let pad = format_line_num(old_line, new_line_width, &mut buf);
-                        vec![
-                            del.num.span(pad, bg),
-                            mov.icon.span("≈", bg),
-                            del.icon.span("-", bg),
-                        ]
-                    }
-                } else if new_line_width == 0 {
-                    vec![mov.icon.span("≈", bg), add.icon.span("+", bg)]
-                } else {
-                    let pad = format_line_num(new_line, new_line_width, &mut buf);
-                    vec![
-                        add.num.span(pad, bg),
-                        mov.icon.span("≈", bg),
-                        add.icon.span("+", bg),
-                    ]
-                }
-            }
             _ => {
                 if new_line_width == 0 {
                     vec![ctx_num.span("  ", bg)]
@@ -871,6 +906,30 @@ pub fn styled_prefix_spans_with_widths(
         };
     }
 
+    if kind == RowKind::Mov {
+        let mut spans = if mov_side == Some(MovSide::Src) {
+            vec![
+                del.num.span(old_pad, bg),
+                StyledSpan::styled(pad_after_old, Some(del.num.color), bg),
+            ]
+        } else {
+            vec![
+                StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
+                add.num.span(new_pad, bg),
+            ]
+        };
+        spans.extend(mov_glyph_spans(group, theme, bg));
+        return spans;
+    }
+
+    if kind == RowKind::Ctx && group.is_some() {
+        return vec![
+            ctx_num.span(format!("{old_pad} {new_pad}"), bg),
+            r#mod.icon.span("~", bg),
+            ctx_num.span(" ", bg),
+        ];
+    }
+
     if let Some(g) = group
         && g.is_multiline()
     {
@@ -913,23 +972,6 @@ pub fn styled_prefix_spans_with_widths(
             r#mod.num.span(format!("{new_pad} "), bg),
             r#mod.icon.span("~", bg),
         ],
-        RowKind::Mov => {
-            if mov_side == Some(MovSide::Src) {
-                vec![
-                    del.num.span(old_pad, bg),
-                    StyledSpan::styled(pad_after_old, Some(del.num.color), bg),
-                    mov.icon.span("≈", bg),
-                    del.icon.span("-", bg),
-                ]
-            } else {
-                vec![
-                    StyledSpan::styled(pad_before_new, Some(add.num.color), bg),
-                    add.num.span(new_pad, bg),
-                    mov.icon.span("≈", bg),
-                    add.icon.span("+", bg),
-                ]
-            }
-        }
         _ => vec![ctx_num.span(format!("{old_pad} {new_pad}  "), bg)],
     }
 }
@@ -990,7 +1032,6 @@ pub fn styled_split_left_prefix_spans(
         .gutter
         .num;
     let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
-    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
 
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
@@ -1004,6 +1045,11 @@ pub fn styled_split_left_prefix_spans(
             del.num.span(pad, bg),
             r#mod.icon.span("~", bg),
             del.icon.span("-", bg),
+        ],
+        (Some(_), RowKind::Ctx) => vec![
+            ctx_num.span(pad, bg),
+            r#mod.icon.span("~", bg),
+            ctx_num.span(" ", bg),
         ],
         _ => match kind {
             RowKind::Ctx => {
@@ -1023,11 +1069,9 @@ pub fn styled_split_left_prefix_spans(
                 ]
             }
             RowKind::Mov if mov_side == Some(MovSide::Src) => {
-                vec![
-                    del.num.span(pad, bg),
-                    mov.icon.span("≈", bg),
-                    del.icon.span("-", bg),
-                ]
+                let mut spans = vec![del.num.span(pad, bg)];
+                spans.extend(mov_glyph_spans(group, theme, bg));
+                spans
             }
             _ => {
                 vec![ctx_num.span(format!("{pad}  "), bg)]
@@ -1058,7 +1102,6 @@ pub fn styled_split_right_prefix_spans(
         .gutter
         .num;
     let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
-    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
 
     let mut buf = [b' '; MAX_LINE_NUM_BUF_LEN];
@@ -1072,6 +1115,11 @@ pub fn styled_split_right_prefix_spans(
             add.num.span(pad, bg),
             r#mod.icon.span("~", bg),
             add.icon.span("+", bg),
+        ],
+        (Some(_), RowKind::Ctx) => vec![
+            ctx_num.span(pad, bg),
+            r#mod.icon.span("~", bg),
+            ctx_num.span(" ", bg),
         ],
         _ => match kind {
             RowKind::Ctx => {
@@ -1087,11 +1135,9 @@ pub fn styled_split_right_prefix_spans(
                 vec![add.num.span(format!("{pad} "), bg), add.icon.span("+", bg)]
             }
             RowKind::Mov if mov_side == Some(MovSide::Tgt) => {
-                vec![
-                    add.num.span(pad, bg),
-                    mov.icon.span("≈", bg),
-                    add.icon.span("+", bg),
-                ]
+                let mut spans = vec![add.num.span(pad, bg)];
+                spans.extend(mov_glyph_spans(group, theme, bg));
+                spans
             }
             _ => {
                 vec![ctx_num.span(format!("{pad}  "), bg)]

@@ -176,6 +176,7 @@ fn test_diff_components_reverse_involution() {
         line: DelLine::new(10, "moved text"),
         spans: spans.clone(),
         cached_runs: vec![(crate::merge::RunKind::MovedSrc, "moved text".to_string())],
+        group: None,
     };
     let rev_mov = mov_src.clone().reverse();
     assert_eq!(rev_mov.kind(), RowKind::Mov);

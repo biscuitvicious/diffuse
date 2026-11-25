@@ -226,7 +226,7 @@ pub fn synthesize_note_context_hunks(
                 } else {
                     String::new()
                 };
-                rows.push(Row::Ctx(CtxLine::new(ol, nl, text)));
+                rows.push(Row::ctx(CtxLine::new(ol, nl, text)));
             }
 
             let hunk = Hunk {
@@ -262,7 +262,7 @@ pub fn synthesize_plain_common_context_hunk(lines: &[&str]) -> crate::parse::Hun
     let mut ctx_rows = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
         let pos = (i + 1) as u32;
-        ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
+        ctx_rows.push(crate::parse::Row::ctx(crate::parse::CtxLine::new(
             pos, pos, *line,
         )));
     }
