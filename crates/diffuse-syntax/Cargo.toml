@@ -9,5 +9,4 @@ description = "Syntax highlighting, language profiles, token classifier, and fen
 regex = { workspace = true }
 pulldown-cmark = { workspace = true }
 serde = { workspace = true }
-tracing = { workspace = true }
 unicode-segmentation = { workspace = true }

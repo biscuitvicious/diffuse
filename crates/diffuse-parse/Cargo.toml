@@ -8,7 +8,6 @@ description = "Unified diff AST, row/hunk models, and patch parser for diffuse"
 [dependencies]
 diffuse-algo = { workspace = true }
 serde = { workspace = true }
-smallvec = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

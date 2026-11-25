@@ -479,7 +479,6 @@ dependencies = [
 name = "diffuse-core"
 version = "0.1.0"
 dependencies = [
- "difflib",
  "diffuse-algo",
  "diffuse-git",
  "diffuse-parse",
@@ -519,7 +518,6 @@ dependencies = [
  "diffuse-algo",
  "serde",
  "serde_json",
- "smallvec",
  "thiserror 2.0.20",
 ]
 
@@ -550,7 +548,6 @@ dependencies = [
  "pulldown-cmark",
  "regex",
  "serde",
- "tracing",
  "unicode-segmentation",
 ]
 
