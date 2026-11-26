@@ -1,7 +1,10 @@
 //! Word spans calculation, tape reconstruction, and subline edit run
 //! generation.
 
-use crate::{merge::RunKind, parse::Spans};
+use crate::{
+    merge::{Run, RunKind},
+    parse::Spans,
+};
 use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;
 
@@ -81,6 +84,100 @@ pub fn word_spans_and_runs_with_profile(
     profile: Option<&LangProfile>,
 ) -> (WordSpans, Vec<(RunKind, String)>) {
     word_spans_and_runs_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
+}
+
+/// Borrowed merged runs from a single profiled alignment tape without
+/// constructing `WordSpans` or cloning run text into owned `String`s.
+pub fn merged_runs_for_texts_with_profile<'a>(
+    old_text: &'a str,
+    new_text: &'a str,
+    profile: Option<&LangProfile>,
+) -> Vec<Run<'a>> {
+    merged_runs_for_texts_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
+}
+
+/// Borrowed merged runs from a single profiled alignment tape with explicit
+/// token product cap. Matches the run stream of
+/// [`word_spans_and_runs_with_profile_and_cap`] while skipping span
+/// construction and per-run `String` allocations.
+pub fn merged_runs_for_texts_with_profile_and_cap<'a>(
+    old_text: &'a str,
+    new_text: &'a str,
+    profile: Option<&LangProfile>,
+    cap: usize,
+) -> Vec<Run<'a>> {
+    if !old_text.is_empty() && old_text == new_text {
+        return vec![Run {
+            kind: RunKind::Ctx,
+            text: old_text,
+        }];
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && new_text.starts_with(old_text) {
+        return vec![
+            Run {
+                kind: RunKind::Ctx,
+                text: old_text,
+            },
+            Run {
+                kind: RunKind::Add,
+                text: &new_text[old_text.len()..],
+            },
+        ];
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && old_text.starts_with(new_text) {
+        return vec![
+            Run {
+                kind: RunKind::Ctx,
+                text: new_text,
+            },
+            Run {
+                kind: RunKind::Del,
+                text: &old_text[new_text.len()..],
+            },
+        ];
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && new_text.ends_with(old_text) {
+        let prefix_len = new_text.len() - old_text.len();
+        return vec![
+            Run {
+                kind: RunKind::Add,
+                text: &new_text[..prefix_len],
+            },
+            Run {
+                kind: RunKind::Ctx,
+                text: old_text,
+            },
+        ];
+    }
+    if !old_text.is_empty() && !new_text.is_empty() && old_text.ends_with(new_text) {
+        let prefix_len = old_text.len() - new_text.len();
+        return vec![
+            Run {
+                kind: RunKind::Del,
+                text: &old_text[..prefix_len],
+            },
+            Run {
+                kind: RunKind::Ctx,
+                text: new_text,
+            },
+        ];
+    }
+
+    let tape = crate::tape::AlignmentTape::from_texts_with_cap(old_text, new_text, profile, cap);
+    tape.to_merged_runs()
+}
+
+/// Owned merged runs from a single profiled alignment tape without constructing
+/// `WordSpans`.
+pub fn owned_runs_for_texts_with_profile(
+    old_text: &str,
+    new_text: &str,
+    profile: Option<&LangProfile>,
+) -> Vec<(RunKind, String)> {
+    merged_runs_for_texts_with_profile(old_text, new_text, profile)
+        .into_iter()
+        .map(|r| (r.kind, r.text.to_string()))
+        .collect()
 }
 
 #[inline]
@@ -231,4 +328,42 @@ pub fn word_spans_and_runs_with_profile_and_cap(
         .map(|r| (r.kind, r.text.to_string()))
         .collect();
     (res, runs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merged_runs_for_texts_matches_word_spans_and_runs_across_all_paths() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let cases = [
+            ("let x = 1;", "let x = 1;"),
+            ("let x = 1;", "let x = 1; // tail"),
+            ("let x = 1; // tail", "let x = 1;"),
+            ("let x = 1;", "    let x = 1;"),
+            ("    let x = 1;", "let x = 1;"),
+            ("let alpha = compute(a, b);", "let beta = compute(a, c);"),
+            ("", "added"),
+            ("deleted", ""),
+        ];
+        for (old_text, new_text) in cases {
+            let (_, expected) = word_spans_and_runs_with_profile(old_text, new_text, rs);
+            let actual = owned_runs_for_texts_with_profile(old_text, new_text, rs);
+            assert_eq!(
+                actual, expected,
+                "single-tape runs must match word_spans_and_runs_with_profile for ({old_text:?}, {new_text:?})"
+            );
+        }
+
+        // Token-product cap fallback path.
+        let (_, expected_cap) =
+            word_spans_and_runs_with_profile_and_cap("a b c d", "e f g h", rs, 1);
+        let actual_cap: Vec<(RunKind, String)> =
+            merged_runs_for_texts_with_profile_and_cap("a b c d", "e f g h", rs, 1)
+                .into_iter()
+                .map(|r| (r.kind, r.text.to_string()))
+                .collect();
+        assert_eq!(actual_cap, expected_cap);
+    }
 }

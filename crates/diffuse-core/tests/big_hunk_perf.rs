@@ -138,17 +138,13 @@ fn wholesale_pairing_time(num_lines: usize) -> Duration {
 #[test]
 fn test_wholesale_replace_pairing_time() {
     let elapsed = wholesale_pairing_time(1000);
-    // Re-baselined for the peer pipeline (1300ms legacy -> 2000ms at
-    // cutover -> 4000ms now): 1000 affix Mods each build word spans,
-    // admissibility, typed runs, conservation repair, and projection
-    // checks, and per-cell span/run construction on long lines dominates
-    // (~2.5s solo, ~3.2s under workspace-parallel load on 8-core dev
-    // hardware). A/B shows the projection/repair guards cost only ~30ms
-    // of that; the rest is structural peer per-group work predating this
-    // change. Follow-up: cut per-cell tape/admissibility recomputation
-    // in slot DP instead of raising this again.
+    // Single-tape borrowed evidence scoring + pre-tape compound gating brought
+    // 1,000 long-line affix replacements down to ~150ms solo (from ~550ms
+    // post-lattice and ~2.5s–3.2s before tape unification). Keep a 1.5s budget
+    // so parallel workspace runs never flake while catching multi-tape
+    // regressions immediately.
     assert!(
-        elapsed < Duration::from_millis(4000),
+        elapsed < Duration::from_millis(1500),
         "wholesale replacement pairing regressed: {elapsed:?}"
     );
 }

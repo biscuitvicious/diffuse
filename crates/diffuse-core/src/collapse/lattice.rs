@@ -20,7 +20,7 @@
 use std::mem;
 
 use diffuse_algo::landmarks::find_unique_anchors;
-use diffuse_syntax::{prelude::first_word, profile::LangProfile};
+use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -28,11 +28,13 @@ use crate::{
         config::{PATH_GAP_COST, cluster_budget},
         with_tls_arena,
     },
-    lcs::{is_token_salient_in_context, tokenize_line},
     parse::Row,
 };
 
-use super::evidence::{assignment_target, field_label, is_statement_head_keyword, pair_evidence};
+use super::{
+    evidence::{PreparedRow, pair_evidence_prepared},
+    residual::declaration_role,
+};
 
 /// One transition of a cluster path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,30 +135,42 @@ pub fn solve_cluster_path(
     } else {
         vec![(0, m); n + 1]
     };
-    let old_hints: Vec<RowHints<'_>> = if prefilter {
-        old_rows
-            .iter()
-            .map(|row| RowHints::of(row.text(), profile))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let new_hints: Vec<RowHints<'_>> = if prefilter {
-        new_rows
-            .iter()
-            .map(|row| RowHints::of(row.text(), profile))
-            .collect()
-    } else {
-        Vec::new()
-    };
 
-    let ctx = EvidenceCtx {
-        old_content,
-        new_content,
-        profile,
-    };
+    // Build trimmed snapshot line sets only when a cluster row actually has a
+    // declaration role that needs a rival check, keeping O(file_lines) work
+    // strictly off clusters without declarations.
+    let new_trimmed_set = new_content
+        .filter(|_| {
+            old_rows
+                .iter()
+                .any(|r| declaration_role(r.text().trim()).is_some())
+        })
+        .map(|lines| lines.iter().map(|l| l.trim()).collect::<FxHashSet<_>>());
+    let old_trimmed_set = old_content
+        .filter(|_| {
+            new_rows
+                .iter()
+                .any(|r| declaration_role(r.text().trim()).is_some())
+        })
+        .map(|lines| lines.iter().map(|l| l.trim()).collect::<FxHashSet<_>>());
+
+    let old_prepared: Vec<PreparedRow<'_>> = old_rows
+        .iter()
+        .map(|row| PreparedRow::from_cluster_row(row.text(), new_trimmed_set.as_ref(), profile))
+        .collect();
+    let new_prepared: Vec<PreparedRow<'_>> = new_rows
+        .iter()
+        .map(|row| PreparedRow::from_cluster_row(row.text(), old_trimmed_set.as_ref(), profile))
+        .collect();
+
     solve_in_corridor(
-        old_rows, new_rows, &old_hints, &new_hints, &ctx, &bounds, prefilter,
+        old_rows,
+        new_rows,
+        &old_prepared,
+        &new_prepared,
+        profile,
+        &bounds,
+        prefilter,
     )
     .unwrap_or_else(|| degenerate_path(n, m))
 }
@@ -173,46 +187,6 @@ const CORRIDOR_PAD: usize = 2;
 /// Maximum number of cells one anchor-to-anchor rectangle may contribute before
 /// the segment is interpolated instead.
 const RECTANGLE_CAP: usize = 4096;
-
-/// Cheap per-row hints used only to skip corridor candidates that cannot share
-/// any evidence.
-struct RowHints<'a> {
-    trimmed: &'a str,
-    salient: FxHashSet<&'a str>,
-    head: Option<&'a str>,
-    assignment: Option<&'a str>,
-    field: Option<&'a str>,
-}
-
-impl<'a> RowHints<'a> {
-    fn of(text: &'a str, profile: Option<&LangProfile>) -> Self {
-        let trimmed = text.trim();
-        let tokens: Vec<&'a str> = tokenize_line(text).collect();
-        let salient = tokens
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| is_token_salient_in_context(&tokens, *i, profile))
-            .map(|(_, token)| *token)
-            .collect();
-        let head = first_word(trimmed).filter(|word| is_statement_head_keyword(word, profile));
-        let assignment = assignment_target(trimmed);
-        let field = field_label(trimmed);
-        Self {
-            trimmed,
-            salient,
-            head,
-            assignment,
-            field,
-        }
-    }
-}
-
-/// Snapshot text and language profile used to score a candidate pair.
-struct EvidenceCtx<'a> {
-    old_content: Option<&'a [&'a str]>,
-    new_content: Option<&'a [&'a str]>,
-    profile: Option<&'a LangProfile>,
-}
 
 fn degenerate_path(n: usize, m: usize) -> ClusterPath {
     let mut steps = vec![PathStep::DropOld; n];
@@ -290,7 +264,7 @@ fn corridor_bounds(
 /// because their evidence is cheap or rests on shape alone. This is a cost
 /// policy for large hunks, not a semantic rule: the whole-grid solver is used
 /// for every cluster where the alignment can afford it.
-fn plausible_pair(u: &RowHints<'_>, v: &RowHints<'_>) -> bool {
+fn plausible_pair(u: &PreparedRow<'_>, v: &PreparedRow<'_>) -> bool {
     if u.trimmed.is_empty() || v.trimmed.is_empty() || u.trimmed == v.trimmed {
         return true;
     }
@@ -312,10 +286,10 @@ fn plausible_pair(u: &RowHints<'_>, v: &RowHints<'_>) -> bool {
     {
         return true;
     }
-    let (smaller, larger) = if u.salient.len() <= v.salient.len() {
-        (&u.salient, &v.salient)
+    let (smaller, larger) = if u.salient_set.len() <= v.salient_set.len() {
+        (&u.salient_set, &v.salient_set)
     } else {
-        (&v.salient, &u.salient)
+        (&v.salient_set, &u.salient_set)
     };
     smaller.iter().any(|token| larger.contains(token))
 }
@@ -324,9 +298,9 @@ fn plausible_pair(u: &RowHints<'_>, v: &RowHints<'_>) -> bool {
 fn solve_in_corridor(
     old_rows: &[Row],
     new_rows: &[Row],
-    old_hints: &[RowHints<'_>],
-    new_hints: &[RowHints<'_>],
-    ctx: &EvidenceCtx<'_>,
+    old_prepared: &[PreparedRow<'_>],
+    new_prepared: &[PreparedRow<'_>],
+    profile: Option<&LangProfile>,
     bounds: &[(usize, usize)],
     prefilter: bool,
 ) -> Option<ClusterPath> {
@@ -360,17 +334,11 @@ fn solve_in_corridor(
                 let new_row = &new_rows[j - 1];
                 let skipped = old_row.is_moved()
                     || new_row.is_moved()
-                    || (prefilter && !plausible_pair(&old_hints[i - 1], &new_hints[j - 1]));
+                    || (prefilter && !plausible_pair(&old_prepared[i - 1], &new_prepared[j - 1]));
                 let pair = if skipped {
                     None
                 } else {
-                    pair_evidence(
-                        old_row.text(),
-                        new_row.text(),
-                        ctx.old_content,
-                        ctx.new_content,
-                        ctx.profile,
-                    )
+                    pair_evidence_prepared(&old_prepared[i - 1], &new_prepared[j - 1], profile)
                 };
 
                 let diag = match pair {

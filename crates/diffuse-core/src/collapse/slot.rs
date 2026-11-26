@@ -5,13 +5,14 @@ use diffuse_syntax::profile::LangProfile;
 
 use crate::{
     collapse::{
-        evidence::{is_admissible_mod_pair, is_statement_head_keyword},
+        evidence::admissible_from_runs,
         formation::Formation,
         frame::{is_open_continuation_line, robust_delim_delta},
+        residual::{are_roles_compatible, declaration_role, has_verbatim_rival},
         tokens::is_salient_word_match,
     },
-    lcs::{spans::word_spans_and_runs_with_profile, tokenize_line},
-    merge::RunKind,
+    lcs::{merged_runs_for_texts_with_profile, owned_runs_for_texts_with_profile, tokenize_line},
+    merge::{Run, RunKind},
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
 };
 
@@ -262,8 +263,11 @@ fn type_slot_pairs(
                 if u.text() == v.text() {
                     slot_runs.push(vec![(RunKind::Ctx, u.text().to_string())]);
                 } else {
-                    let (_, runs) = word_spans_and_runs_with_profile(u.text(), v.text(), profile);
-                    slot_runs.push(runs);
+                    slot_runs.push(owned_runs_for_texts_with_profile(
+                        u.text(),
+                        v.text(),
+                        profile,
+                    ));
                 }
             }
             (Some(u), None) => {
@@ -499,7 +503,7 @@ fn align_expansion_1_to_m(
     let u = old_row.text();
     let v_texts: Vec<&str> = new_rows.iter().map(Row::text).collect();
     let joined = v_texts.join("\n");
-    let (_, full_runs) = word_spans_and_runs_with_profile(u, &joined, profile);
+    let full_runs = owned_runs_for_texts_with_profile(u, &joined, profile);
 
     let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, m);
 
@@ -686,7 +690,7 @@ fn align_collapse_n_to_1(
     let v = new_row.text();
     let u_texts: Vec<&str> = old_rows.iter().map(Row::text).collect();
     let joined = u_texts.join("\n");
-    let (_, full_runs) = word_spans_and_runs_with_profile(&joined, v, profile);
+    let full_runs = owned_runs_for_texts_with_profile(&joined, v, profile);
 
     let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, n);
 
@@ -763,50 +767,21 @@ pub(crate) fn has_salient_moved_link(
     })
 }
 
-/// Determines if a pair of deletion and addition lines is admissible for
-/// slot-level Mod pairing, checking wholesale bounds, declaration
-/// compatibility, and verbatim rivals.
-/// Whether two trimmed lines share a statement head (`fn`/`let`/`pub`…)
-/// or an assignment key (`key = …`). Such a head alone must not anchor a
-/// pairing.
-fn shares_statement_head(u_trim: &str, v_trim: &str, profile: Option<&LangProfile>) -> bool {
-    if let (Some(u_eq), Some(v_eq)) = (u_trim.find('='), v_trim.find('=')) {
-        let u_key = u_trim[..u_eq].trim();
-        let v_key = v_trim[..v_eq].trim();
-        if !u_key.is_empty() && u_key == v_key {
-            return true;
-        }
-    }
-    match (
-        diffuse_syntax::prelude::first_word(u_trim),
-        diffuse_syntax::prelude::first_word(v_trim),
-    ) {
-        (Some(u_h), Some(v_h)) => u_h == v_h && is_statement_head_keyword(u_h, profile),
-        _ => false,
-    }
-}
-
-/// `enforce_head_gate` is true only for singleton (1×1) groups. In a
-/// compound group the DP argmax weighs shape and position evidence across
-/// competing candidates — a zero-overlap winner there is usually a rename
-/// (e.g. `let mut s = String::new();` → `let lines = …`), and vetoing it
-/// merely promotes a worse, coincidentally-overlapping rival (which can
-/// even collapse into a wholesale Mod). In a singleton group there is no
-/// competition, so a shared head with zero salient support dissolves.
-fn is_admissible_slot_pair(
+/// Determines if a pair of old and new texts is admissible for a post-DP
+/// multi-line fold, reusing one already-built borrowed alignment tape.
+fn is_admissible_fold_pair(
     u_text: &str,
     v_text: &str,
-    spans: &crate::lcs::WordSpans,
+    runs: &[Run<'_>],
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
-    enforce_head_gate: bool,
 ) -> bool {
     let u_trim = u_text.trim();
     let v_trim = v_text.trim();
 
-    let u_decl_role = crate::collapse::residual::declaration_role(u_trim);
-    let v_decl_role = crate::collapse::residual::declaration_role(v_trim);
+    let u_decl_role = declaration_role(u_trim);
+    let v_decl_role = declaration_role(v_trim);
 
     // For declaration-type lines, a verbatim twin elsewhere in the
     // file content signals relocation; block pairing independently of
@@ -815,52 +790,21 @@ fn is_admissible_slot_pair(
     // new snapshot.
     let decl_has_rival = u_decl_role.is_some()
         && v_decl_role.is_some()
-        && (crate::collapse::residual::has_verbatim_rival(u_trim, new_content)
-            || crate::collapse::residual::has_verbatim_rival(v_trim, old_content));
+        && (has_verbatim_rival(u_trim, new_content) || has_verbatim_rival(v_trim, old_content));
 
     let is_decl_compat = !decl_has_rival
-        && if let (Some(d_role), Some(a_role)) = (u_decl_role, v_decl_role) {
-            crate::collapse::residual::are_roles_compatible(d_role, a_role)
-                && u_trim.ends_with('{') == v_trim.ends_with('{')
-        } else {
-            false
-        };
+        && matches!((u_decl_role, v_decl_role), (Some(d_role), Some(a_role))
+            if are_roles_compatible(d_role, a_role)
+                && u_trim.ends_with('{') == v_trim.ends_with('{'));
 
-    if decl_has_rival || crate::merge::is_wholesale_replacement_spans(u_text, v_text, spans) {
-        return false;
-    }
-    if !(is_admissible_mod_pair(u_text, v_text, profile) || is_decl_compat) {
-        return false;
-    }
-    // A shared statement head alone must not anchor a singleton pairing:
-    // the 1×1 fast path bypasses the micro-DP argmax, so without at least
-    // one shared salient token, `fn row() {` vs `fn total() {` dissolves
-    // to Del + Add. Pairs with aligned salient context keep the
-    // historical behavior; headless pairs are untouched here. A verbatim
-    // reindent (`return None` at a new indent) always pairs: there is no
-    // content difference for a salient token to witness.
-    let is_cross_type_decl = is_decl_compat && u_decl_role != v_decl_role;
-    if !enforce_head_gate
-        || is_cross_type_decl
-        || u_trim == v_trim
-        || !shares_statement_head(u_trim, v_trim, profile)
-    {
-        return true;
-    }
-    let (_, runs) = crate::lcs::word_spans_and_runs_with_profile(u_text, v_text, profile);
-    let has_salient_ctx = runs.iter().any(|(kind, text)| {
-        *kind == crate::merge::RunKind::Ctx && text_has_salient_token(text, profile)
-    });
-    if has_salient_ctx {
-        return true;
-    }
-    let v_tokens: Vec<&str> = crate::lcs::tokenize_line(v_text).collect();
-    let u_tokens: Vec<&str> = crate::lcs::tokenize_line(u_text).collect();
-    u_tokens
+    let has_non_ws_ctx = runs
         .iter()
-        .enumerate()
-        .filter(|&(i, _)| crate::lcs::is_token_salient_in_context(&u_tokens, i, profile))
-        .any(|(_, t)| v_tokens.contains(t))
+        .any(|r| r.kind == RunKind::Ctx && !r.text.trim().is_empty());
+    let is_wholesale = !has_non_ws_ctx && (!u_trim.is_empty() || !v_trim.is_empty());
+    if decl_has_rival || is_wholesale {
+        return false;
+    }
+    admissible_from_runs(u_text, v_text, runs, profile) || is_decl_compat
 }
 
 /// Evidence that `head` opens a multi-line construct continued on a later
@@ -896,18 +840,19 @@ fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
 }
 
 /// Gates a `\n`-joined multi-line side against a single-line side for
-/// post-DP absorption. Mirrors the diag scorer's gates (token-overlap
-/// floor, admissibility, salient minimum) plus the Phase-4 coverage gate:
-/// the joined side must be substantially explained, otherwise two
-/// independent statements would merge into a Frankenstein Mod. Returns
-/// the matched and other-side character counts for the bilateral check.
+/// post-DP absorption using a single profiled alignment tape. Mirrors the
+/// diag scorer's gates (token-overlap floor, admissibility, salient minimum)
+/// plus the Phase-4 coverage gate: the joined side must be substantially
+/// explained, otherwise two independent statements would merge into a
+/// Frankenstein Mod. Returns the matched chars, other-side chars, and the
+/// owned runs from the same tape so callers distribute them directly.
 fn joined_alignment(
     joined: &str,
     other: &str,
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
-) -> Option<(usize, usize)> {
+) -> Option<(usize, usize, Runs)> {
     let joined_trim = joined.trim();
     let other_trim = other.trim();
     if joined_trim.is_empty() || other_trim.is_empty() {
@@ -923,22 +868,13 @@ fn joined_alignment(
     if shared_bound < 3 {
         return None;
     }
-    let spans = crate::lcs::word_spans(joined, other);
-    if !is_admissible_slot_pair(
-        joined,
-        other,
-        &spans,
-        old_content,
-        new_content,
-        profile,
-        false,
-    ) {
+    let runs = merged_runs_for_texts_with_profile(joined, other, profile);
+    if !is_admissible_fold_pair(joined, other, &runs, old_content, new_content, profile) {
         return None;
     }
-    let runs = crate::merge::merged_runs_from_texts(joined, other, &spans);
     let matched_chars: usize = runs
         .iter()
-        .filter(|r| r.kind == crate::merge::RunKind::Ctx && !r.text.trim().is_empty())
+        .filter(|r| r.kind == RunKind::Ctx && !r.text.trim().is_empty())
         .map(|r| r.text.chars().count())
         .sum();
     if matched_chars < 3 {
@@ -955,7 +891,11 @@ fn joined_alignment(
     if coverage < 0.85 {
         return None;
     }
-    Some((matched_chars, other_chars))
+    let owned_runs = runs
+        .into_iter()
+        .map(|r| (r.kind, r.text.to_string()))
+        .collect();
+    Some((matched_chars, other_chars, owned_runs))
 }
 
 /// A micro-DP aligned pair plus optional precomputed runs for Phase-4
@@ -1101,7 +1041,7 @@ fn fold_collapse_window(
         return false;
     }
     let joined = format!("{u_text}\n{up_text}");
-    let Some((matched, other_chars)) =
+    let Some((matched, other_chars, full_runs)) =
         joined_alignment(&joined, v_text, old_content, new_content, profile)
     else {
         return false;
@@ -1114,7 +1054,6 @@ fn fold_collapse_window(
     {
         return false;
     }
-    let (_, full_runs) = word_spans_and_runs_with_profile(&joined, v_text, profile);
     let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, 2);
     strip_join_newlines(&mut u_runs);
     let mod_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
@@ -1170,7 +1109,7 @@ fn fold_expansion_window(
         return false;
     }
     let joined_new = format!("{v_text}\n{vp_text}");
-    let Some((matched, other_chars)) =
+    let Some((matched, other_chars, full_runs)) =
         joined_alignment(u_text, &joined_new, old_content, new_content, profile)
     else {
         return false;
@@ -1183,7 +1122,6 @@ fn fold_expansion_window(
     {
         return false;
     }
-    let (_, full_runs) = word_spans_and_runs_with_profile(u_text, &joined_new, profile);
     let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, 2);
     strip_join_newlines(&mut v_runs);
     let mod_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
@@ -1681,11 +1619,13 @@ fn relocate_cross_slot_tokens(
                 .split_whitespace()
                 .any(|w| w.len() >= 3 && a_trim.contains(w))
             {
-                let spans = crate::lcs::word_spans(del_text, add_text);
-                if !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans) {
-                    let runs = crate::merge::merged_runs_from_texts(del_text, add_text, &spans);
+                let runs = merged_runs_for_texts_with_profile(del_text, add_text, profile);
+                let has_non_ws_ctx = runs
+                    .iter()
+                    .any(|r| r.kind == RunKind::Ctx && !r.text.trim().is_empty());
+                if has_non_ws_ctx {
                     for r in runs {
-                        if r.kind == crate::merge::RunKind::Ctx {
+                        if r.kind == RunKind::Ctx {
                             let t = r.text.trim();
                             if t.len() >= 3
                                 || (t.len() >= 2 && !t.chars().any(char::is_alphanumeric))

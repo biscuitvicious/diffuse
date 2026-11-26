@@ -845,4 +845,4 @@ characters:
 ### 8.2 Archive and Follow-Up Proposals
 
 - Archived to `plan/done/Unified Reflow Lattice.md`.
-- Follow-up proposals (two-sided inter-`Diag` gap partitioning + multi-`Diag` enclosing frames, and single-tape evidence alignment optimization) are tracked in [`plan/Two-Sided Gap Partitioning and Single-Tape Evidence.md`](../Two-Sided%20Gap%20Partitioning%20and%20Single-Tape%20Evidence.md).
+- Follow-up proposals (two-sided inter-`Diag` gap partitioning + multi-`Diag` enclosing frames, and single-tape evidence alignment optimization) are tracked in [`plan/done/Two-Sided Gap Partitioning and Single-Tape Evidence.md`](Two-Sided%20Gap%20Partitioning%20and%20Single-Tape%20Evidence.md).

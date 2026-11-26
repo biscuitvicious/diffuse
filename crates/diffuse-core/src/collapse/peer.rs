@@ -19,7 +19,7 @@ use crate::{
         reflow::{Segment, segment_path},
         slot::{PeerGroupRows, compute_slot_spans, has_salient_moved_link, type_window},
     },
-    lcs::word_spans_and_runs_with_profile,
+    lcs::owned_runs_for_texts_with_profile,
     merge::{RunKind, is_wholesale_replacement},
     parse::{AddLine, DelLine, GroupId, Hunk, PeerGroup, Row, Spans},
     shift::pass_shift_hunk,
@@ -463,7 +463,7 @@ fn emit_plain_pair(u: &Row, v: &Row, profile: Option<&LangProfile>, cluster_out:
         });
         return;
     }
-    let (_, runs) = word_spans_and_runs_with_profile(u.text(), v.text(), profile);
+    let runs = owned_runs_for_texts_with_profile(u.text(), v.text(), profile);
     let spans = compute_slot_spans(&runs);
     cluster_out.push(Row::Mod {
         old_line: DelLine::new(u_num, u.text()),

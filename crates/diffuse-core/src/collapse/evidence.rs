@@ -13,6 +13,7 @@
 //! statement about the constants below.
 
 use diffuse_syntax::{prelude::first_word, profile::LangProfile};
+use rustc_hash::FxHashSet;
 
 use crate::{
     collapse::{
@@ -21,9 +22,9 @@ use crate::{
     },
     lcs::{
         for_each_token, is_affix_pair, is_token_salient_in_context, line_has_salient_token,
-        tokenize_line, word_spans_and_runs_with_profile,
+        merged_runs_for_texts_with_profile, tokenize_line,
     },
-    merge::RunKind,
+    merge::{Run, RunKind},
 };
 
 /// Evidence of a pair of all-blank lines.
@@ -74,6 +75,129 @@ const MIN_MATCHED_SALIENT_CHARS: usize = 4;
 /// least this much of the line it is replacing to count as a modification.
 const MIN_MATCHED_SALIENT_RATIO: f64 = 0.30;
 
+/// Precomputed per-row metadata shared across all candidate pairs scored in a
+/// cluster so tokenization, salient checks, delimiter deltas, and snapshot
+/// rival lookups run once per row (`O(n + m)`) instead of once per cell.
+pub(crate) struct PreparedRow<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) trimmed: &'a str,
+    indent: usize,
+    char_count: usize,
+    is_comment: bool,
+    has_alnum: bool,
+    has_salient: bool,
+    decl_role: Option<&'static str>,
+    has_rival: bool,
+    pub(crate) head: Option<&'a str>,
+    pub(crate) assignment: Option<&'a str>,
+    pub(crate) field: Option<&'a str>,
+    delim_delta: i32,
+    all_tokens: FxHashSet<&'a str>,
+    salient_runs: Vec<(&'a str, usize)>,
+    pub(crate) salient_set: FxHashSet<&'a str>,
+    salient_chars: usize,
+}
+
+impl<'a> PreparedRow<'a> {
+    /// Builds precomputed evidence metadata for one cluster row using a
+    /// prebuilt set of trimmed opposite-side snapshot lines for rival checks.
+    pub(crate) fn from_cluster_row(
+        text: &'a str,
+        opposite_trimmed: Option<&FxHashSet<&str>>,
+        profile: Option<&LangProfile>,
+    ) -> Self {
+        let trimmed = text.trim();
+        let decl_role = if trimmed.is_empty() {
+            None
+        } else {
+            declaration_role(trimmed)
+        };
+        let has_rival =
+            decl_role.is_some() && opposite_trimmed.is_some_and(|set| set.contains(trimmed));
+        Self::build(text, trimmed, decl_role, has_rival, profile)
+    }
+
+    fn from_single_text(
+        text: &'a str,
+        opposite_content: Option<&[&str]>,
+        profile: Option<&LangProfile>,
+    ) -> Self {
+        let trimmed = text.trim();
+        let decl_role = if trimmed.is_empty() {
+            None
+        } else {
+            declaration_role(trimmed)
+        };
+        let has_rival = decl_role.is_some() && has_verbatim_rival(trimmed, opposite_content);
+        Self::build(text, trimmed, decl_role, has_rival, profile)
+    }
+
+    fn build(
+        text: &'a str,
+        trimmed: &'a str,
+        decl_role: Option<&'static str>,
+        has_rival: bool,
+        profile: Option<&LangProfile>,
+    ) -> Self {
+        if trimmed.is_empty() {
+            return Self {
+                text,
+                trimmed,
+                indent: indent_of(text),
+                char_count: 0,
+                is_comment: false,
+                has_alnum: false,
+                has_salient: false,
+                decl_role: None,
+                has_rival: false,
+                head: None,
+                assignment: None,
+                field: None,
+                delim_delta: 0,
+                all_tokens: FxHashSet::default(),
+                salient_runs: Vec::new(),
+                salient_set: FxHashSet::default(),
+                salient_chars: 0,
+            };
+        }
+
+        let tokens: Vec<&'a str> = tokenize_line(text).collect();
+        let mut all_tokens = FxHashSet::default();
+        let mut salient_runs = Vec::new();
+        let mut salient_set = FxHashSet::default();
+        let mut salient_chars = 0usize;
+        for (i, &token) in tokens.iter().enumerate() {
+            all_tokens.insert(token);
+            if is_token_salient_in_context(&tokens, i, profile) {
+                let len = token.chars().count();
+                salient_runs.push((token, len));
+                salient_set.insert(token);
+                salient_chars += len;
+            }
+        }
+
+        Self {
+            text,
+            trimmed,
+            indent: indent_of(text),
+            char_count: trimmed.chars().count(),
+            is_comment: is_comment(text, profile),
+            has_alnum: trimmed.chars().any(char::is_alphanumeric),
+            has_salient: line_has_salient_token(text, profile),
+            decl_role,
+            has_rival,
+            head: first_word(trimmed).filter(|w| is_statement_head_keyword(w, profile)),
+            assignment: assignment_target(trimmed),
+            field: field_label(trimmed),
+            delim_delta: robust_delim_delta(trimmed),
+            all_tokens,
+            salient_runs,
+            salient_set,
+            salient_chars,
+        }
+    }
+}
+
 /// Evidence that the pair is admissible and how much it explains, in matched
 /// content characters. `None` means the two lines must not correspond.
 pub fn pair_evidence(
@@ -83,16 +207,25 @@ pub fn pair_evidence(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Option<i64> {
-    let u_trim = u_text.trim();
-    let v_trim = v_text.trim();
+    let u = PreparedRow::from_single_text(u_text, new_content, profile);
+    let v = PreparedRow::from_single_text(v_text, old_content, profile);
+    pair_evidence_prepared(&u, &v, profile)
+}
 
-    if u_trim.is_empty() && v_trim.is_empty() {
+/// Scores a pair of precomputed cluster rows using a single borrowed alignment
+/// tape, rejecting compound-gate failures before building any tape.
+pub(crate) fn pair_evidence_prepared(
+    u: &PreparedRow<'_>,
+    v: &PreparedRow<'_>,
+    profile: Option<&LangProfile>,
+) -> Option<i64> {
+    if u.trimmed.is_empty() && v.trimmed.is_empty() {
         return Some(BLANK_PAIR_WEIGHT);
     }
-    if u_trim.is_empty() || v_trim.is_empty() {
+    if u.trimmed.is_empty() || v.trimmed.is_empty() {
         return None;
     }
-    if is_comment(u_text, profile) != is_comment(v_text, profile) {
+    if u.is_comment != v.is_comment {
         return None;
     }
 
@@ -100,64 +233,97 @@ pub fn pair_evidence(
     // a line that carries salient identifiers (e.g. `(` vs `x(` or `{` vs
     // `fn foo() {`). Structural delimiter-to-keyword transitions such as `}` vs
     // `} else {` remain eligible because keywords are not salient.
-    let u_has_alnum = u_trim.chars().any(char::is_alphanumeric);
-    let v_has_alnum = v_trim.chars().any(char::is_alphanumeric);
-    if (!u_has_alnum && line_has_salient_token(v_text, profile))
-        || (!v_has_alnum && line_has_salient_token(u_text, profile))
-    {
+    if (!u.has_alnum && v.has_salient) || (!v.has_alnum && u.has_salient) {
         return None;
     }
 
-    let indent_cost = (indent_of(u_text).abs_diff(indent_of(v_text)) as i64) * INDENT_PENALTY;
+    let indent_cost = (u.indent.abs_diff(v.indent) as i64) * INDENT_PENALTY;
 
-    if u_trim == v_trim {
-        let chars = u_trim.chars().count() as i64;
-        return Some(chars * MATCHED_CHAR_REWARD + EXACT_MATCH_BASE - indent_cost);
+    if u.trimmed == v.trimmed {
+        return Some(u.char_count as i64 * MATCHED_CHAR_REWARD + EXACT_MATCH_BASE - indent_cost);
     }
 
     // A declaration that still exists verbatim on the opposite side is a
     // relocation candidate owned by the move pre-pass; pairing it as a
     // modification would steal that line. Running this before alignment also
     // avoids building an LCS tape for vetoed declaration pairs.
-    let u_decl = declaration_role(u_trim);
-    if u_decl.is_some() && has_verbatim_rival(u_trim, new_content) {
-        return None;
-    }
-    let v_decl = declaration_role(v_trim);
-    if v_decl.is_some() && has_verbatim_rival(v_trim, old_content) {
+    if u.has_rival || v.has_rival {
         return None;
     }
 
-    // Build one profiled alignment tape and reuse it for wholesale rejection,
-    // admissibility, matched-character scoring, and salient context checks.
-    let (_spans, runs) = word_spans_and_runs_with_profile(u_text, v_text, profile);
+    let head_agrees = u.head.is_some() && u.head == v.head;
+    let key_agrees = (u.assignment.is_some() && u.assignment == v.assignment)
+        || (u.field.is_some() && u.field == v.field);
+    let head_link = head_agrees || key_agrees;
+
+    // Pre-tape compound token-bag gate: without a shared statement head,
+    // assignment target, or field label, a pair carrying salient identifiers on
+    // both sides must share at least one short identifier's worth of salient
+    // content covering the minimum fraction of the smaller side. Checking this
+    // on precomputed token tables skips building an alignment tape for most
+    // unrelated candidate pairs.
+    if !head_link && u.has_salient && v.has_salient {
+        let min_salient = u.salient_chars.min(v.salient_chars);
+        if min_salient > 0 {
+            let matched_salient: usize = u
+                .salient_runs
+                .iter()
+                .filter(|&&(token, _)| v.all_tokens.contains(token))
+                .map(|&(_, len)| len)
+                .sum();
+            if matched_salient < MIN_MATCHED_SALIENT_CHARS
+                || (matched_salient as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO
+            {
+                return None;
+            }
+        }
+    }
+
+    // Build one borrowed profiled alignment tape (no `WordSpans`, no per-run
+    // `String` clones) and reuse it for wholesale rejection, admissibility,
+    // matched-character scoring, and salient context checks.
+    let runs = merged_runs_for_texts_with_profile(u.text, v.text, profile);
     let matched = matched_chars(&runs);
     if matched == 0 {
         return None;
     }
 
+    let runs_have_salient_ctx = u.has_salient && v.has_salient && has_salient_ctx(&runs, profile);
+
     // An affix pair shares a verbatim run carrying salient content, so it is
     // admissible without asking the general predicate. Bare punctuation affixes
     // (`(`, `{`, `;`) must still pass `admissible_from_runs`.
-    let shared_affix = [u_trim, v_trim].iter().any(|longer| {
-        [u_trim, v_trim].iter().any(|shorter| {
-            longer.len() > shorter.len()
-                && (longer.starts_with(shorter) || longer.ends_with(shorter))
-                && line_has_salient_token(shorter, profile)
-        })
-    });
-    let decl_compat = matches!((u_decl, v_decl), (Some(ur), Some(vr))
-        if are_roles_compatible(ur, vr) && u_trim.ends_with('{') == v_trim.ends_with('{'));
-    if !(shared_affix || admissible_from_runs(u_text, v_text, &runs, profile) || decl_compat) {
+    let shared_affix = (u.trimmed.len() > v.trimmed.len()
+        && v.has_salient
+        && (u.trimmed.starts_with(v.trimmed) || u.trimmed.ends_with(v.trimmed)))
+        || (v.trimmed.len() > u.trimmed.len()
+            && u.has_salient
+            && (v.trimmed.starts_with(u.trimmed) || v.trimmed.ends_with(u.trimmed)));
+    let decl_compat = matches!((u.decl_role, v.decl_role), (Some(ur), Some(vr))
+        if are_roles_compatible(ur, vr) && u.trimmed.ends_with('{') == v.trimmed.ends_with('{'));
+    if !(shared_affix
+        || admissible_from_runs_prechecked(
+            u.text,
+            v.text,
+            &runs,
+            u.has_salient,
+            v.has_salient,
+            runs_have_salient_ctx,
+            profile,
+        )
+        || decl_compat)
+    {
         return None;
     }
 
-    let u_chars = u_trim.chars().count();
-    let v_chars = v_trim.chars().count();
-    let smaller = u_chars.min(v_chars);
-    let larger = u_chars.max(v_chars);
+    if !head_link && u.has_salient && v.has_salient && !runs_have_salient_ctx {
+        return None;
+    }
 
-    let mut score = if is_affix_pair(u_trim, v_trim) {
+    let smaller = u.char_count.min(v.char_count);
+    let larger = u.char_count.max(v.char_count);
+
+    let mut score = if is_affix_pair(u.trimmed, v.trimmed) {
         let coverage = smaller as f64 / larger.max(1) as f64;
         smaller as i64 * MATCHED_CHAR_REWARD - (larger - smaller) as i64 * UNMATCHED_CHAR_PENALTY
             + (AFFIX_CREDIT * coverage) as i64
@@ -168,23 +334,20 @@ pub fn pair_evidence(
             - indent_cost
     };
 
-    let head_agrees = shares_statement_head_keyword(u_trim, v_trim, profile);
     if head_agrees {
         score += HEAD_AGREE_BONUS;
-        let same_terminator = (u_trim.ends_with('{') && v_trim.ends_with('{'))
-            || (u_trim.ends_with(';') && v_trim.ends_with(';'));
+        let same_terminator = (u.trimmed.ends_with('{') && v.trimmed.ends_with('{'))
+            || (u.trimmed.ends_with(';') && v.trimmed.ends_with(';'));
         if same_terminator {
             score += TERMINATOR_AGREE_BONUS;
         }
     }
-    let key_agrees =
-        assignment_key(u_trim, v_trim).is_some() || field_key(u_trim, v_trim).is_some();
     if key_agrees {
         score += KEY_AGREE_BONUS;
     }
-    if indent_of(u_text) == indent_of(v_text) {
-        let is_prefix = u_trim.starts_with(v_trim) || v_trim.starts_with(u_trim);
-        let opens_container = robust_delim_delta(u_trim) > 0 || robust_delim_delta(v_trim) > 0;
+    if u.indent == v.indent {
+        let is_prefix = u.trimmed.starts_with(v.trimmed) || v.trimmed.starts_with(u.trimmed);
+        let opens_container = u.delim_delta > 0 || v.delim_delta > 0;
         if is_prefix && opens_container {
             score += CONTAINER_OPEN_BONUS;
         } else if is_prefix || (opens_container && head_agrees) {
@@ -192,35 +355,11 @@ pub fn pair_evidence(
         }
     }
 
-    // Compound gate: without a shared statement head, assignment target, or
-    // field label, a pair carrying salient identifiers on both sides must
-    // align at least one short identifier's worth of salient content covering
-    // the minimum fraction of the smaller side.
-    let head_link = head_agrees || key_agrees;
-    if !head_link
-        && line_has_salient_token(u_text, profile)
-        && line_has_salient_token(v_text, profile)
-    {
-        if !has_salient_ctx(&runs, profile) {
-            return None;
-        }
-        let u_tokens: Vec<&str> = tokenize_line(u_text).collect();
-        let v_tokens: Vec<&str> = tokenize_line(v_text).collect();
-        let (matched_salient, u_salient, v_salient) =
-            shared_salient_chars(&u_tokens, &v_tokens, profile);
-        let min_salient = u_salient.min(v_salient);
-        if min_salient > 0
-            && (matched_salient < MIN_MATCHED_SALIENT_CHARS
-                || (matched_salient as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO)
-        {
-            return None;
-        }
-    }
-
     (score > 0).then_some(score)
 }
 
 /// Whether `del_text` and `add_text` are admissible as a modification pair.
+#[cfg(test)]
 pub(crate) fn is_admissible_mod_pair(
     del_text: &str,
     add_text: &str,
@@ -230,16 +369,17 @@ pub(crate) fn is_admissible_mod_pair(
         return true;
     }
 
-    let (_spans, runs) = word_spans_and_runs_with_profile(del_text, add_text, profile);
+    let runs = merged_runs_for_texts_with_profile(del_text, add_text, profile);
     admissible_from_runs(del_text, add_text, &runs, profile)
 }
 
-/// The admissibility rule over an alignment that the caller has already built,
-/// so evidence scoring can share one tape instead of rebuilding it.
+/// The admissibility rule over a borrowed alignment that the caller has
+/// already built, so evidence scoring and slot folds share one tape instead of
+/// rebuilding it.
 pub(crate) fn admissible_from_runs(
     del_text: &str,
     add_text: &str,
-    runs: &[(RunKind, String)],
+    runs: &[Run<'_>],
     profile: Option<&LangProfile>,
 ) -> bool {
     if del_text == add_text {
@@ -248,24 +388,43 @@ pub(crate) fn admissible_from_runs(
 
     let del_has_salient = line_has_salient_token(del_text, profile);
     let add_has_salient = line_has_salient_token(add_text, profile);
+    let runs_have_salient_ctx =
+        del_has_salient && add_has_salient && has_salient_ctx(runs, profile);
 
+    admissible_from_runs_prechecked(
+        del_text,
+        add_text,
+        runs,
+        del_has_salient,
+        add_has_salient,
+        runs_have_salient_ctx,
+        profile,
+    )
+}
+
+fn admissible_from_runs_prechecked(
+    del_text: &str,
+    add_text: &str,
+    runs: &[Run<'_>],
+    del_has_salient: bool,
+    add_has_salient: bool,
+    runs_have_salient_ctx: bool,
+    profile: Option<&LangProfile>,
+) -> bool {
     if del_has_salient && add_has_salient {
-        let has_salient_ctx = runs
-            .iter()
-            .any(|(kind, text)| *kind == RunKind::Ctx && line_has_salient_token(text, profile));
-        if !has_salient_ctx {
+        if !runs_have_salient_ctx {
             // Safety fallback: if neither line shares any salient context,
             // check whether this is an entity declaration statement (let, fn,
             // const, def, struct, …). Declaration keywords do not confer
             // statement identity when both the declared entity name and value
             // expressions are replaced, unless common context accounts for the
             // majority (>= 50%) of the line.
-            let is_decl_head = runs.first().is_some_and(|(kind, text)| {
-                if *kind != RunKind::Ctx {
+            let is_decl_head = runs.first().is_some_and(|run| {
+                if run.kind != RunKind::Ctx {
                     return false;
                 }
                 let mut found = false;
-                for_each_token(text, |t| {
+                for_each_token(run.text, |t| {
                     if !found && profile.is_some_and(|p| p.is_declaration_keyword(t)) {
                         found = true;
                     }
@@ -275,8 +434,8 @@ pub(crate) fn admissible_from_runs(
             if is_decl_head {
                 let ctx_chars: usize = runs
                     .iter()
-                    .filter(|(k, _)| *k == RunKind::Ctx)
-                    .map(|(_, t)| t.chars().count())
+                    .filter(|run| run.kind == RunKind::Ctx)
+                    .map(|run| run.text.chars().count())
                     .sum();
                 let total_chars = del_text.chars().count().max(add_text.chars().count());
                 if ctx_chars * 2 < total_chars {
@@ -288,7 +447,7 @@ pub(crate) fn admissible_from_runs(
         // Context must not be purely whitespace
         let has_non_ws_ctx = runs
             .iter()
-            .any(|(kind, text)| *kind == RunKind::Ctx && !text.trim().is_empty());
+            .any(|run| run.kind == RunKind::Ctx && !run.text.trim().is_empty());
         if !has_non_ws_ctx && (!del_text.trim().is_empty() || !add_text.trim().is_empty()) {
             return false;
         }
@@ -322,70 +481,17 @@ fn is_comment(text: &str, profile: Option<&LangProfile>) -> bool {
     profile.is_some_and(|p| p.is_comment_line(text))
 }
 
-/// Characters explained by a set of owned runs from a single alignment tape.
-fn matched_chars(runs: &[(RunKind, String)]) -> usize {
+/// Characters explained by a set of borrowed runs from a single alignment tape.
+fn matched_chars(runs: &[Run<'_>]) -> usize {
     runs.iter()
-        .filter(|(kind, text)| *kind == RunKind::Ctx && !text.trim().is_empty())
-        .map(|(_, text)| text.chars().count())
+        .filter(|run| run.kind == RunKind::Ctx && !run.text.trim().is_empty())
+        .map(|run| run.text.chars().count())
         .sum()
 }
 
-fn has_salient_ctx(runs: &[(RunKind, String)], profile: Option<&LangProfile>) -> bool {
+fn has_salient_ctx(runs: &[Run<'_>], profile: Option<&LangProfile>) -> bool {
     runs.iter()
-        .any(|(kind, text)| *kind == RunKind::Ctx && line_has_salient_token(text, profile))
-}
-
-fn shared_salient_chars(
-    u_tokens: &[&str],
-    v_tokens: &[&str],
-    profile: Option<&LangProfile>,
-) -> (usize, usize, usize) {
-    let mut u_salient = 0usize;
-    let mut v_salient = 0usize;
-    for (i, token) in u_tokens.iter().enumerate() {
-        if is_token_salient_in_context(u_tokens, i, profile) {
-            u_salient += token.chars().count();
-        }
-    }
-    for (j, token) in v_tokens.iter().enumerate() {
-        if is_token_salient_in_context(v_tokens, j, profile) {
-            v_salient += token.chars().count();
-        }
-    }
-    let matched: usize = u_tokens
-        .iter()
-        .enumerate()
-        .filter(|&(i, _)| is_token_salient_in_context(u_tokens, i, profile))
-        .filter(|&(_, token)| v_tokens.contains(token))
-        .map(|(_, token)| token.chars().count())
-        .sum();
-    (matched, u_salient, v_salient)
-}
-
-fn assignment_key<'a>(u_trim: &'a str, v_trim: &'a str) -> Option<&'a str> {
-    let u_key = assignment_target(u_trim)?;
-    let v_key = assignment_target(v_trim)?;
-    (u_key == v_key).then_some(u_key)
-}
-
-fn field_key<'a>(u_trim: &'a str, v_trim: &'a str) -> Option<&'a str> {
-    let u_key = field_label(u_trim)?;
-    let v_key = field_label(v_trim)?;
-    (u_key == v_key).then_some(u_key)
-}
-
-/// Whether both lines open with the same statement-head keyword.
-fn shares_statement_head_keyword(
-    u_trim: &str,
-    v_trim: &str,
-    profile: Option<&LangProfile>,
-) -> bool {
-    match (first_word(u_trim), first_word(v_trim)) {
-        (Some(u_head), Some(v_head)) => {
-            u_head == v_head && is_statement_head_keyword(u_head, profile)
-        }
-        _ => false,
-    }
+        .any(|run| run.kind == RunKind::Ctx && line_has_salient_token(run.text, profile))
 }
 
 #[cfg(test)]
@@ -458,5 +564,43 @@ mod tests {
         // Salient-free lines sharing only whitespace are rejected
         assert!(!is_admissible_mod_pair("    {", "    )", rs));
         assert!(is_admissible_mod_pair("    }", "    };", rs));
+    }
+
+    #[test]
+    fn prepared_row_scoring_matches_standalone_pair_evidence() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old_snap = ["fn keep_me() {", "    let value = 1;"];
+        let new_snap = ["fn keep_me() {", "    let value = 2;"];
+        let old_set: FxHashSet<&str> = old_snap.iter().map(|l| l.trim()).collect();
+        let new_set: FxHashSet<&str> = new_snap.iter().map(|l| l.trim()).collect();
+
+        let cases = [
+            ("", ""),
+            ("", "non_empty();"),
+            ("// old comment", "let code = 1;"),
+            ("    let x = 1;", "        let x = 1;"),
+            ("fn keep_me() {", "fn renamed() {"),
+            ("    alpha_one(beta);", "    gamma_two(delta);"),
+            (
+                "    let total = compute(old_arg);",
+                "    let total = compute(new_arg);",
+            ),
+            ("    struct Foo {", "    enum Bar {"),
+            (
+                "    foo(alpha_long_token);",
+                "    foo(alpha_long_token, extra);",
+            ),
+            ("    }", "    };"),
+        ];
+        for (u_text, v_text) in cases {
+            let direct = pair_evidence(u_text, v_text, Some(&old_snap), Some(&new_snap), rs);
+            let u = PreparedRow::from_cluster_row(u_text, Some(&new_set), rs);
+            let v = PreparedRow::from_cluster_row(v_text, Some(&old_set), rs);
+            let prepared = pair_evidence_prepared(&u, &v, rs);
+            assert_eq!(
+                prepared, direct,
+                "PreparedRow score must match pair_evidence for ({u_text:?}, {v_text:?})"
+            );
+        }
     }
 }
