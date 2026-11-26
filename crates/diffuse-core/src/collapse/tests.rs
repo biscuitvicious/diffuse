@@ -2234,15 +2234,16 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_seed() {
         seed_runs
     );
 
-    // The path pairs the head `assert_eq!(`; the expansion fold distributes
-    // the deleted tail across the grouped continuation rows as moved text.
-    let head = c
+    // The path pairs the call body (`new 135`) while the enclosing
+    // `assert_eq!(` ... `);` frame attaches around it as a 1x4 formation,
+    // relocating the head wrapper and trailing argument out as moved text.
+    let body = c
         .iter()
         .find(|r| r.old_line_num() == Some(134))
-        .expect("head row");
-    assert_eq!(head.kind(), RowKind::Mod);
-    assert_eq!(head.new_line_num(), Some(134));
-    for new in [135, 136, 137] {
+        .expect("body mod row");
+    assert_eq!(body.kind(), RowKind::Mod);
+    assert_eq!(body.new_line_num(), Some(135));
+    for new in [134, 136, 137] {
         let row = c
             .iter()
             .find(|r| r.new_line_num() == Some(new))
@@ -2250,7 +2251,7 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_seed() {
         assert_eq!(row.kind(), RowKind::Add);
         assert!(
             row.group().is_some(),
-            "continuation row {new} belongs to the expansion formation"
+            "enclosing-frame row {new} belongs to the expansion formation"
         );
     }
     let moved: String = c
@@ -2260,8 +2261,8 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_seed() {
         .map(|r| r.text)
         .collect();
     assert!(
-        moved.contains("DiffuseTheme::dark()"),
-        "the deleted tail must move out as MovedSrc, got: {moved:?}"
+        moved.contains("assert_eq!(") && moved.contains("DiffuseTheme::dark()"),
+        "the reflowed wrapper and tail must move out as MovedSrc, got: {moved:?}"
     );
 }
 

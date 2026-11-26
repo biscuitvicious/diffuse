@@ -2640,34 +2640,45 @@ fn test_scrollbar_grab_drag_reference_formations_and_pairings() {
         "geometry.rs Hunk 3 1x7 signature expansion"
     );
 
-    // 6. geometry/tests.rs: former 5x8 hull splits cleanly into 2x4 + 3x4, and
-    //    the trailing `assert_eq!` expansion stays a 1x4 formation.
+    // 6. geometry/tests.rs: each kept `assert_eq!` (`0`, `73`, `1000`) pairs
+    //    with its own call-body line inside a crisp 1x4 enclosing frame (three
+    //    uniform 1x4 groups, zero criss-cross 2x4/3x4 groups), while the three
+    //    deleted assertions (`old 389..=391`) stay plain ungrouped Del rows.
     let gtests = file("crates/diffuse-tui/src/app/geometry/tests.rs");
     let gt1 = &gtests.hunks[0];
     assert_eq!(
         gt1.rows
             .iter()
-            .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (2, 4)))
-            .count(),
-        4,
-        "geometry/tests.rs first split 2x4 formation"
-    );
-    assert_eq!(
-        gt1.rows
-            .iter()
-            .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (3, 4)))
-            .count(),
-        5,
-        "geometry/tests.rs second split 3x4 formation"
-    );
-    assert_eq!(
-        gt1.rows
-            .iter()
             .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (1, 4)))
             .count(),
-        4,
-        "geometry/tests.rs trailing 1x4 assert_eq! formation"
+        12,
+        "geometry/tests.rs must form three uniform 1x4 assert_eq! formations"
     );
+    for (ol, nl) in [(387u32, 424u32), (388u32, 428u32), (393u32, 433u32)] {
+        let r = gt1
+            .rows
+            .iter()
+            .find(|r| r.old_line == Some(ol) && r.new_line == Some(nl))
+            .unwrap_or_else(|| panic!("geometry/tests.rs Mod {ol}->{nl} missing"));
+        assert_eq!(r.kind, RowKind::Mod);
+        assert!(r.group.is_some_and(|g| (g.n, g.m) == (1, 4)));
+    }
+    for ol in 389u32..=391 {
+        let r = gt1
+            .rows
+            .iter()
+            .find(|r| r.old_line == Some(ol))
+            .unwrap_or_else(|| panic!("geometry/tests.rs deleted line {ol} missing"));
+        assert_eq!(
+            r.kind,
+            RowKind::Del,
+            "geometry/tests.rs old line {ol} must stay plain Del"
+        );
+        assert_eq!(
+            r.group, None,
+            "geometry/tests.rs old line {ol} must not be absorbed into a criss-cross group"
+        );
+    }
 }
 
 #[test]

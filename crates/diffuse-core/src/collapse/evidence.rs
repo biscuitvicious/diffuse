@@ -323,15 +323,29 @@ pub(crate) fn pair_evidence_prepared(
     let smaller = u.char_count.min(v.char_count);
     let larger = u.char_count.max(v.char_count);
 
-    let mut score = if is_affix_pair(u.trimmed, v.trimmed) {
-        let coverage = smaller as f64 / larger.max(1) as f64;
+    let affix = is_affix_pair(u.trimmed, v.trimmed);
+    let raw_content = if affix {
         smaller as i64 * MATCHED_CHAR_REWARD - (larger - smaller) as i64 * UNMATCHED_CHAR_PENALTY
-            + (AFFIX_CREDIT * coverage) as i64
-            - indent_cost
     } else {
         matched as i64 * MATCHED_CHAR_REWARD
             - larger.saturating_sub(matched) as i64 * UNMATCHED_CHAR_PENALTY
-            - indent_cost
+    };
+
+    // A headless wrapper stub (e.g. `assert_eq!(` or `Some(` against a full
+    // statement) that leaves more of the line unexplained than its own content
+    // justifies (`raw_content <= 0`) belongs to the enclosing-frame layer
+    // (`reflow.rs`), not to line correspondence: granting affix or opener
+    // bonuses to it would let the path solver split one expanded statement
+    // across two adjacent lines.
+    if !head_link && raw_content <= 0 {
+        return None;
+    }
+
+    let mut score = if affix {
+        let coverage = smaller as f64 / larger.max(1) as f64;
+        raw_content + (AFFIX_CREDIT * coverage) as i64 - indent_cost
+    } else {
+        raw_content - indent_cost
     };
 
     if head_agrees {
@@ -602,5 +616,46 @@ mod tests {
                 "PreparedRow score must match pair_evidence for ({u_text:?}, {v_text:?})"
             );
         }
+    }
+
+    #[test]
+    fn headless_wrapper_stub_below_raw_content_floor_is_rejected() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // A short headless wrapper prefix (`assert_eq!(`) covering < 23% of a
+        // full statement belongs to enclosing-frame segmentation, not to a
+        // standalone Diag correspondence.
+        assert_eq!(
+            pair_evidence(
+                "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 0), 0);",
+                "    assert_eq!(",
+                None,
+                None,
+                rs,
+            ),
+            None,
+            "tiny headless wrapper stub must not score as a standalone Diag"
+        );
+        // Genuine substantial head expansions (signature / struct / let head)
+        // remain strongly positive.
+        assert!(
+            pair_evidence(
+                "    pub(crate) fn scrollbar_scroll_for_row(track_h: usize, max_scroll: usize, row: usize) -> usize {",
+                "    pub(crate) fn scrollbar_scroll_for_row(",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
+        assert!(
+            pair_evidence(
+                "    MouseScrollUp(usize),",
+                "    MouseScrollUp {",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
     }
 }

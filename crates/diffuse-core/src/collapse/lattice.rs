@@ -734,4 +734,47 @@ mod tests {
             "unpaired deletions must precede unpaired additions in forward path order"
         );
     }
+
+    /// Reproduces `scrollbar-grab-drag` `geometry/tests.rs` (`old 387..=391` ->
+    /// `new 423..=430`): five single-line `assert_eq!` calls reduced to two
+    /// 4-line expanded `assert_eq!` blocks must pair each kept call (`0`, `73`)
+    /// with its matching call-body line and drop the three deleted calls (`1`,
+    /// `72`, `2`), never criss-crossing onto `assert_eq!(`.
+    #[test]
+    fn repeated_assert_eq_expansions_do_not_criss_cross() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = [
+            "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 0), 0);",
+            "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 73), 2672);",
+            "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 1), 37);",
+            "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 72), 2672 - 37);",
+            "    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 2), 73);",
+        ];
+        let new = [
+            "    assert_eq!(",
+            "        AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 0),",
+            "        0",
+            "    );",
+            "    assert_eq!(",
+            "        AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 73),",
+            "        max_scroll",
+            "    );",
+        ];
+        let old_rows: Vec<Row> = old
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Row::del(DelLine::new(i as u32 + 1, *t)))
+            .collect();
+        let new_rows: Vec<Row> = new
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Row::add(AddLine::new(i as u32 + 1, *t)))
+            .collect();
+        let path = solve_cluster_path(&old_rows, &new_rows, None, None, rs);
+        assert_eq!(
+            path.diag_pairs(),
+            vec![(0, 1), (1, 5)],
+            "each kept assertion must pair with its own body line without criss-crossing"
+        );
+    }
 }

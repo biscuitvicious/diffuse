@@ -2277,15 +2277,15 @@ fn test_expand_anchor_marks_moved_source() {
         .map(|r| r.text.as_ref())
         .collect();
     assert!(
-        moved_text.contains("super::resolve_theme"),
-        "moved runs must cover the relocated call body, got: {moved_text:?}"
+        moved_text.contains("assert_eq!(") && moved_text.contains("DiffuseTheme::light()"),
+        "moved runs must cover the reflowed wrapper and tail, got: {moved_text:?}"
     );
     assert!(
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::Ctx && r.text.contains("assert_eq")),
-        "the shared call frame must survive as context, got: {:?}",
+            .any(|r| r.kind == crate::merge::RunKind::Ctx && r.text.contains("resolve_theme")),
+        "the shared callee must survive as context, got: {:?}",
         anchor.runs
     );
 }
