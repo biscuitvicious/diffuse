@@ -14,7 +14,7 @@ use crate::{
             check_context_old_line_monotonicity, check_del_add_topological_order,
             check_no_orphaned_continuation_dels,
         },
-        lattice::{PathStep, solve_cluster_path},
+        lattice::solve_cluster_path,
         normalize::{pass_normalize_identical_mods, recalibrate_peer_groups},
         reflow::{Segment, segment_path},
         slot::{PeerGroupRows, compute_slot_spans, has_salient_moved_link, type_window},
@@ -307,30 +307,28 @@ pub fn peer_reflow_pipeline(
                     // Each segment is emitted or typed on its own, with the
                     // correspondences the path already chose. Plain single rows
                     // bypass window typing completely; multi-row windows go
-                    // through `type_window`.
-                    let mut cursor = 0usize;
+                    // through `type_window`. Old and new row indices advance
+                    // monotonically and independently of 1D `DropOld`/`DropNew`
+                    // tie-break order in mixed inter-`Diag` gaps.
+                    let diag_pairs = path.diag_pairs();
+                    let mut diag_idx = 0usize;
                     let (mut oi, mut ni) = (0usize, 0usize);
                     for segment in segments {
                         match segment {
                             Segment::Del { old } => {
-                                debug_assert_eq!(path.steps[cursor], PathStep::DropOld);
                                 debug_assert_eq!(oi, old);
-                                cursor += 1;
                                 oi += 1;
                                 cluster_out.push(old_rows[old].clone());
                             }
                             Segment::Add { new } => {
-                                debug_assert_eq!(path.steps[cursor], PathStep::DropNew);
                                 debug_assert_eq!(ni, new);
-                                cursor += 1;
                                 ni += 1;
                                 cluster_out.push(new_rows[new].clone());
                             }
                             Segment::Pair { old, new } => {
-                                debug_assert_eq!(path.steps[cursor], PathStep::Diag);
-                                debug_assert_eq!(oi, old);
-                                debug_assert_eq!(ni, new);
-                                cursor += 1;
+                                debug_assert_eq!(diag_pairs[diag_idx], (old, new));
+                                debug_assert_eq!((oi, ni), (old, new));
+                                diag_idx += 1;
                                 oi += 1;
                                 ni += 1;
                                 emit_plain_pair(
@@ -344,18 +342,18 @@ pub fn peer_reflow_pipeline(
                                 debug_assert_eq!(oi, old.start);
                                 debug_assert_eq!(ni, new.start);
                                 let mut pairs = Vec::new();
-                                while oi < old.end || ni < new.end {
-                                    match path.steps[cursor] {
-                                        PathStep::Diag => {
-                                            pairs.push((oi - old.start, ni - new.start));
-                                            oi += 1;
-                                            ni += 1;
-                                        }
-                                        PathStep::DropOld => oi += 1,
-                                        PathStep::DropNew => ni += 1,
+                                while diag_idx < diag_pairs.len() {
+                                    let (o, n) = diag_pairs[diag_idx];
+                                    if o < old.end && n < new.end {
+                                        debug_assert!(old.contains(&o) && new.contains(&n));
+                                        pairs.push((o - old.start, n - new.start));
+                                        diag_idx += 1;
+                                    } else {
+                                        break;
                                     }
-                                    cursor += 1;
                                 }
+                                oi = old.end;
+                                ni = new.end;
                                 let formation = Formation {
                                     id: GroupId(group_id_counter),
                                     old_range: old,
@@ -373,6 +371,10 @@ pub fn peer_reflow_pipeline(
                             }
                         }
                     }
+                    debug_assert_eq!(
+                        (oi, ni, diag_idx),
+                        (old_rows.len(), new_rows.len(), diag_pairs.len())
+                    );
                     out.extend(topological_sort_cluster(cluster_out));
                 }
             }

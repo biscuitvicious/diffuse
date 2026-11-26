@@ -2524,14 +2524,14 @@ fn test_scrollbar_grab_drag_reference_formations_and_pairings() {
             members[0]
                 .runs
                 .iter()
-                .any(|run| run.kind == diffuse::core::merge::RunKind::MovedSrc && run.text == ","),
+                .any(|run| run.kind == RunKind::MovedSrc && run.text == ","),
             "command.rs group {gid} slot 0 must relocate comma"
         );
         assert!(
             members[4]
                 .runs
                 .iter()
-                .any(|run| run.kind == diffuse::core::merge::RunKind::MovedTgt && run.text == ","),
+                .any(|run| run.kind == RunKind::MovedTgt && run.text == ","),
             "command.rs group {gid} slot 4 must receive comma"
         );
     }
@@ -2586,18 +2586,48 @@ fn test_scrollbar_grab_drag_reference_formations_and_pairings() {
         "dispatch.rs 1x2 self.vis_line formation"
     );
 
-    // 5. geometry.rs: 2x1 `.round()` collapse in Hunk 1, plus 2x1 doc comment
-    //    and 1x7 `scrollbar_scroll_for_row` signature expansion in Hunk 3.
+    // 5. geometry.rs: hull-free 5x2 `Some(` ... `)` enclosing frame in Hunk 1
+    //    (with pure adds 238..=242 emitted ahead as plain Add rows), plus 2x1
+    //    doc comment and 1x7 `scrollbar_scroll_for_row` signature expansion in
+    //    Hunk 3.
     let geometry = file("crates/diffuse-tui/src/app/geometry.rs");
+    for nl in 238u32..=242 {
+        let r = geometry.hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.new_line == Some(nl))
+            .unwrap_or_else(|| panic!("geometry.rs new line {nl} missing"));
+        assert_eq!(
+            r.kind,
+            RowKind::Add,
+            "geometry.rs new line {nl} must be plain Add"
+        );
+        assert_eq!(
+            r.group, None,
+            "geometry.rs new line {nl} must not be pulled into a hull"
+        );
+    }
     let gh1_group: Vec<_> = geometry.hunks[0]
         .rows
         .iter()
-        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (2, 1)))
+        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (5, 2)))
         .collect();
     assert_eq!(
         gh1_group.len(),
-        2,
-        "geometry.rs Hunk 1 2x1 .round() collapse"
+        5,
+        "geometry.rs Hunk 1 hull-free 5x2 Some(...) enclosing frame"
+    );
+    let gh1_moved_src: String = gh1_group
+        .iter()
+        .flat_map(|r| r.runs.iter())
+        .filter(|run| run.kind == RunKind::MovedSrc)
+        .map(|run| &*run.text)
+        .collect();
+    assert!(
+        gh1_moved_src.contains("Some(")
+            && gh1_moved_src.contains(".round()")
+            && gh1_moved_src.contains(')'),
+        "geometry.rs Hunk 1 5x2 frame must relocate Some(, .round(), and ): got {gh1_moved_src:?}"
     );
     let gh3_sig: Vec<_> = geometry.hunks[2]
         .rows

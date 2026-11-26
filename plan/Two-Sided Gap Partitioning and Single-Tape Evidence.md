@@ -1,6 +1,6 @@
 # Two-Sided Gap Partitioning and Single-Tape Evidence
 
-- [ ] **Phase 1: Two-Sided Inter-`Diag` Gap Queues and Multi-`Diag` Enclosing Frames**
+- [x] **Phase 1: Two-Sided Inter-`Diag` Gap Queues and Multi-`Diag` Enclosing Frames**
 - [ ] **Phase 2: Single-Tape Evidence Scoring Optimization**
 
 ---

@@ -66,6 +66,24 @@ impl ClusterPath {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
     }
+
+    /// Monotone sequence of `(old_idx, new_idx)` correspondences on the path.
+    pub fn diag_pairs(&self) -> Vec<(usize, usize)> {
+        let mut pairs = Vec::new();
+        let (mut o, mut n) = (0usize, 0usize);
+        for step in &self.steps {
+            match step {
+                PathStep::Diag => {
+                    pairs.push((o, n));
+                    o += 1;
+                    n += 1;
+                }
+                PathStep::DropOld => o += 1,
+                PathStep::DropNew => n += 1,
+            }
+        }
+        pairs
+    }
 }
 
 /// Solve one cluster as a single monotone path.

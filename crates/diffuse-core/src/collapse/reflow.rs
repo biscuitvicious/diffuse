@@ -1,19 +1,23 @@
 //! Path segmentation: turns a cluster path into formations and plain rows.
 //!
-//! A **plateau** is a run of `Diag` steps with no skip between them; each step
-//! is one plain modification. A **window** is a path interval in which at least
-//! one skip participates in a formation, and its members are read off the path
-//! in order. Membership is decided by information, never by position:
+//! A solved cluster path is decomposed into its monotone sequence of `Diag`
+//! correspondences and the `K + 1` two-sided gaps `(gap.old, gap.new)` between
+//! them, making segmentation invariant to arbitrary 1D `DropOld`/`DropNew`
+//! tie-break ordering in mixed gaps. Membership in a formation window is
+//! decided by information, never by position:
 //!
 //! - **Construct continuity.** Each line reduces to its unmatched leading
-//!   closers and trailing openers via `UniversalDelimiterClassifier`. A skip
-//!   joins a correspondence while the two sides' Dyck stacks diverge, or when a
-//!   balanced correspondence sits inside an enclosing skip frame; speculative
-//!   extensions commit only when the two sides converge.
+//!   closers and trailing openers via `UniversalDelimiterClassifier`. Skips on
+//!   each side join a correspondence independently while the two sides' Dyck
+//!   stacks diverge, or when one or more interior correspondences sit inside a
+//!   balanced single-side enclosing frame (with multi-`Diag` frames restricted
+//!   to non-brace expression wrappers); speculative extensions commit only when
+//!   the two sides converge.
 //! - **Unmatched salient evidence.** When a balanced correspondence does not
-//!   extend by delimiter balance, an immediately adjacent skip sharing
-//!   unmatched salient content (tracked by token multiplicity) joins the
-//!   window, guarded against verbatim pairs and symmetric block boundaries.
+//!   extend by delimiter balance, the immediately adjacent skip on each side
+//!   sharing unmatched salient content (tracked by token multiplicity) joins
+//!   the window independently, guarded against verbatim pairs and symmetric
+//!   block boundaries.
 //!
 //! Everything else stays a plain deletion or addition. This is what prevents a
 //! hull: rows that took part in no correspondence never become members.
@@ -30,7 +34,7 @@ use crate::{
     parse::Row,
 };
 
-use super::lattice::{ClusterPath, PathStep};
+use super::lattice::ClusterPath;
 
 /// One position of a segmented cluster, in emission order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,25 +62,44 @@ pub fn segment_path(
     PathSegmenter::new(path, old_rows, new_rows, profile).segment()
 }
 
-/// One step of a path with its resolved cluster row indices.
-#[derive(Clone, Copy, Debug)]
-struct ResolvedStep {
-    old: Option<usize>,
-    new: Option<usize>,
+/// Two independent ordered skip queues between consecutive `Diag` anchors.
+#[derive(Clone, Debug)]
+struct Gap {
+    old: Range<usize>,
+    new: Range<usize>,
 }
 
-impl ResolvedStep {
-    fn is_diag(&self) -> bool {
-        self.old.is_some() && self.new.is_some()
+/// Which side of a cluster owns an enclosing delimiter frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Old,
+    New,
+}
+
+/// A segmented window over `diags[first_diag..=last_diag]` claiming `old` and
+/// `new` cluster row ranges.
+#[derive(Clone, Debug)]
+struct WindowSpan {
+    first_diag: usize,
+    last_diag: usize,
+    old: Range<usize>,
+    new: Range<usize>,
+}
+
+impl WindowSpan {
+    fn single_pair(diag_idx: usize, old: usize, new: usize) -> Self {
+        Self {
+            first_diag: diag_idx,
+            last_diag: diag_idx,
+            old: old..old + 1,
+            new: new..new + 1,
+        }
     }
-}
 
-/// Unconverged per-side Dyck opener stacks handed from `pair_span` to the
-/// multi-pair tentative fold when a forward scan reaches the next `Diag` step.
-struct OpenResidual {
-    next_scan: usize,
-    old_stack: Vec<u8>,
-    new_stack: Vec<u8>,
+    fn has_skips(&self) -> bool {
+        let diag_count = self.last_diag - self.first_diag + 1;
+        self.old.len() > diag_count || self.new.len() > diag_count
+    }
 }
 
 /// Reduced unmatched delimiters of a single line, ignoring string literals,
@@ -164,9 +187,11 @@ impl LineDelims {
     }
 }
 
-/// Precomputed per-row delimiter and salient-token tables for one path.
+/// Precomputed per-row delimiter and salient-token tables for one path,
+/// decomposed into monotone `Diag` anchors and two-sided inter-`Diag` gaps.
 struct PathSegmenter<'a> {
-    steps: Vec<ResolvedStep>,
+    diags: Vec<(usize, usize)>,
+    gaps: Vec<Gap>,
     old_rows: &'a [Row],
     new_rows: &'a [Row],
     old_tokens: Vec<FxHashMap<&'a str, usize>>,
@@ -182,8 +207,10 @@ impl<'a> PathSegmenter<'a> {
         new_rows: &'a [Row],
         profile: Option<&LangProfile>,
     ) -> Self {
+        let (diags, gaps) = decompose_path(path, old_rows.len(), new_rows.len());
         Self {
-            steps: resolve_steps(path),
+            diags,
+            gaps,
             old_rows,
             new_rows,
             old_tokens: salient_tokens(old_rows, profile),
@@ -194,368 +221,594 @@ impl<'a> PathSegmenter<'a> {
     }
 
     fn segment(&self) -> Vec<Segment> {
-        let plateaus = self.plateaus();
-        let pairs: Vec<usize> = plateaus
-            .iter()
-            .flat_map(|plateau| plateau.clone())
-            .collect();
-        let mut windows: Vec<Range<usize>> = Vec::new();
-        let mut a = 0;
+        let mut windows: Vec<WindowSpan> = Vec::new();
+        let mut floor_old = 0usize;
+        let mut floor_new = 0usize;
+        let mut p = 0usize;
 
-        while a < pairs.len() {
-            let seed = pairs[a];
-            let floor = windows.last().map_or(0, |prev| prev.end);
-            let (mut span, residual) = if self.blank_at(&plateaus, seed) {
-                (seed..seed + 1, None)
+        while p < self.diags.len() {
+            let gap_in = &self.gaps[p];
+            let f_old = floor_old.max(gap_in.old.start);
+            let f_new = floor_new.max(gap_in.new.start);
+
+            let win = if self.is_blank_pair(p) {
+                let (o, n) = self.diags[p];
+                WindowSpan::single_pair(p, o, n)
             } else {
-                self.pair_span(seed, floor)
+                self.build_window(p, f_old, f_new)
             };
 
-            let mut b = a + 1;
-            if let Some(open) = residual
-                && let Some((end, next_b)) = self.fold_multi_pair(&plateaus, &pairs, a, open)
-            {
-                span.end = end;
-                b = next_b;
-            }
-
-            windows.push(span);
-            a = b;
+            floor_old = win.old.end;
+            floor_new = win.new.end;
+            p = win.last_diag + 1;
+            windows.push(win);
         }
 
-        emit_segments(&self.steps, &windows)
+        self.emit_segments(&windows)
     }
 
-    /// Maximal runs of consecutive `Diag` steps: the plateaus of the path.
-    fn plateaus(&self) -> Vec<Range<usize>> {
-        let mut plateaus = Vec::new();
-        let mut index = 0;
-        while index < self.steps.len() {
-            if self.steps[index].is_diag() {
-                let start = index;
-                while index < self.steps.len() && self.steps[index].is_diag() {
-                    index += 1;
-                }
-                plateaus.push(start..index);
-            } else {
-                index += 1;
-            }
-        }
-        plateaus
+    fn is_blank_pair(&self, diag_idx: usize) -> bool {
+        let (o, n) = self.diags[diag_idx];
+        is_blank(&self.old_rows[o]) && is_blank(&self.new_rows[n])
     }
 
-    fn apply_step_fwd(
-        &self,
-        step: &ResolvedStep,
-        old_stack: &mut Vec<u8>,
-        new_stack: &mut Vec<u8>,
-    ) -> bool {
-        let old_ok = step
-            .old
-            .is_none_or(|o| apply_delims_forward(old_stack, &self.old_delims[o]));
-        let new_ok = step
-            .new
-            .is_none_or(|n| apply_delims_forward(new_stack, &self.new_delims[n]));
-        old_ok && new_ok
-    }
-
-    fn apply_step_bwd(
-        &self,
-        step: &ResolvedStep,
-        old_closes: &mut Vec<u8>,
-        new_closes: &mut Vec<u8>,
-    ) -> bool {
-        let old_ok = step
-            .old
-            .is_none_or(|o| apply_delims_backward(old_closes, &self.old_delims[o]));
-        let new_ok = step
-            .new
-            .is_none_or(|n| apply_delims_backward(new_closes, &self.new_delims[n]));
-        old_ok && new_ok
-    }
-
-    fn step_blank(&self, step: &ResolvedStep) -> bool {
-        match (step.old, step.new) {
-            (Some(o), _) => is_blank(&self.old_rows[o]),
-            (None, Some(n)) => is_blank(&self.new_rows[n]),
-            (None, None) => true,
+    fn side_rows(&self, side: Side) -> &'a [Row] {
+        match side {
+            Side::Old => self.old_rows,
+            Side::New => self.new_rows,
         }
     }
 
-    fn is_blank_pair(&self, index: usize) -> bool {
-        match (self.steps[index].old, self.steps[index].new) {
-            (Some(o), Some(n)) => is_blank(&self.old_rows[o]) && is_blank(&self.new_rows[n]),
-            _ => false,
+    fn side_delims(&self, side: Side) -> &[LineDelims] {
+        match side {
+            Side::Old => &self.old_delims,
+            Side::New => &self.new_delims,
         }
     }
 
-    fn blank_at(&self, plateaus: &[Range<usize>], i: usize) -> bool {
-        plateaus
-            .iter()
-            .any(|plateau| plateau.len() == 1 && plateau.start == i && self.is_blank_pair(i))
+    fn gap_side(&self, gap_idx: usize, side: Side) -> Range<usize> {
+        match side {
+            Side::Old => self.gaps[gap_idx].old.clone(),
+            Side::New => self.gaps[gap_idx].new.clone(),
+        }
     }
 
-    fn shares_unmatched_salient(&self, step: &ResolvedStep, anchor: &ResolvedStep) -> bool {
-        let (Some(ao), Some(an)) = (anchor.old, anchor.new) else {
-            return false;
-        };
+    fn shares_unmatched_salient(&self, side: Side, skip: usize, ao: usize, an: usize) -> bool {
         if self.old_rows[ao].text().trim() == self.new_rows[an].text().trim() {
             return false;
         }
-        let matches_tokens = |skip_tokens: &FxHashMap<&str, usize>,
-                              donor: &FxHashMap<&str, usize>,
-                              already_kept: &FxHashMap<&str, usize>| {
-            skip_tokens.keys().any(|t| {
-                t.len() >= 4
-                    && donor.iter().any(|(a, &donor_count)| {
-                        let kept_count = already_kept.get(a).copied().unwrap_or(0);
-                        a.len() >= 4 && donor_count > kept_count && is_salient_word_match(t, a)
-                    })
-            })
-        };
-        match (step.old, step.new) {
-            (None, Some(sn)) => matches_tokens(
-                &self.new_tokens[sn],
-                &self.old_tokens[ao],
-                &self.new_tokens[an],
-            ),
-            (Some(so), None) => matches_tokens(
-                &self.old_tokens[so],
+        match side {
+            Side::Old => matches_unmatched_tokens(
+                &self.old_tokens[skip],
                 &self.new_tokens[an],
                 &self.old_tokens[ao],
             ),
-            _ => false,
+            Side::New => matches_unmatched_tokens(
+                &self.new_tokens[skip],
+                &self.old_tokens[ao],
+                &self.new_tokens[an],
+            ),
         }
     }
 
-    /// Computes `(span, residual)` for correspondence `i`, bounded on the left
-    /// by `floor`.
-    fn pair_span(&self, i: usize, floor: usize) -> (Range<usize>, Option<OpenResidual>) {
-        let mut start = i;
-        let mut end = i;
-        let (Some(ao), Some(an)) = (self.steps[i].old, self.steps[i].new) else {
-            return (i..i + 1, None);
-        };
-
-        // Backwards: close any leading unmatched closers that differ between
-        // the two sides of row `i`, bounded by `floor`.
-        let mut bwd_old = self.old_delims[ao].closes.clone();
-        let mut bwd_new = self.new_delims[an].closes.clone();
-        if bwd_old != bwd_new {
-            let mut j = i;
-            let mut ok = true;
-            while j > floor
-                && bwd_old != bwd_new
-                && !self.steps[j - 1].is_diag()
-                && !self.step_blank(&self.steps[j - 1])
-            {
-                if !self.apply_step_bwd(&self.steps[j - 1], &mut bwd_old, &mut bwd_new) {
-                    ok = false;
-                    break;
-                }
-                j -= 1;
-            }
-            if ok && bwd_old == bwd_new {
-                start = j;
-            }
-        }
-
-        // Forwards: extend while the two sides' trailing opener stacks differ,
-        // committing only when they converge.
-        let mut fwd_old = self.old_delims[ao].opens.clone();
-        let mut fwd_new = self.new_delims[an].opens.clone();
-        let mut residual: Option<OpenResidual> = None;
-        if fwd_old != fwd_new {
-            let mut j = i + 1;
-            let mut ok = true;
-            while j < self.steps.len()
-                && fwd_old != fwd_new
-                && !self.steps[j].is_diag()
-                && !self.step_blank(&self.steps[j])
-            {
-                if !self.apply_step_fwd(&self.steps[j], &mut fwd_old, &mut fwd_new) {
-                    ok = false;
-                    break;
-                }
-                j += 1;
-            }
-            if ok && fwd_old == fwd_new {
-                end = j - 1;
-            } else if ok && j < self.steps.len() && self.steps[j].is_diag() {
-                residual = Some(OpenResidual {
-                    next_scan: j,
-                    old_stack: fwd_old,
-                    new_stack: fwd_new,
-                });
-            }
-        }
-
-        // Enclosing frame: claim `[op_start..=closer]` when a balanced row sits
-        // inside an open skip construct (e.g. `check!(` ... `Mod(arg)` ...
-        // `);`).
-        if start == i
-            && end == i
-            && residual.is_none()
-            && self.old_delims[ao].closes == self.new_delims[an].closes
-            && self.old_delims[ao].opens == self.new_delims[an].opens
-            && let Some((frame_start, frame_end)) = self.try_enclosing_frame(i, floor)
-        {
-            start = frame_start;
-            end = frame_end;
-        }
-
-        let is_symmetric_opener = !self.old_delims[ao].opens.is_empty()
-            && self.old_delims[ao].opens == self.new_delims[an].opens;
-        let is_symmetric_closer = !self.old_delims[ao].closes.is_empty()
-            && self.old_delims[ao].closes == self.new_delims[an].closes;
-
-        let delim_extended = start < i || end > i || residual.is_some();
-        if !delim_extended
-            && !is_symmetric_closer
-            && i > floor
-            && !self.steps[i - 1].is_diag()
-            && !self.step_blank(&self.steps[i - 1])
-            && self.shares_unmatched_salient(&self.steps[i - 1], &self.steps[i])
-        {
-            start = i - 1;
-        }
-        if !delim_extended
-            && !is_symmetric_opener
-            && i + 1 < self.steps.len()
-            && !self.steps[i + 1].is_diag()
-            && !self.step_blank(&self.steps[i + 1])
-            && self.shares_unmatched_salient(&self.steps[i + 1], &self.steps[i])
-        {
-            end = i + 1;
-        }
-
-        (start..end + 1, residual)
-    }
-
-    fn try_enclosing_frame(&self, i: usize, floor: usize) -> Option<(usize, usize)> {
-        let mut opener_idx = None;
-        let mut j = i;
-        while j > floor && !self.steps[j - 1].is_diag() && !self.step_blank(&self.steps[j - 1]) {
-            let delims = match (self.steps[j - 1].old, self.steps[j - 1].new) {
-                (Some(o), None) => &self.old_delims[o],
-                (None, Some(n)) => &self.new_delims[n],
-                _ => break,
-            };
-            if !delims.opens.is_empty() {
-                opener_idx = Some(j - 1);
-            }
-            j -= 1;
-        }
-        let op_start = opener_idx?;
-
-        let mut enc_old = Vec::new();
-        let mut enc_new = Vec::new();
-        for step in &self.steps[op_start..i] {
-            if !self.apply_step_fwd(step, &mut enc_old, &mut enc_new) {
-                return None;
-            }
-        }
-        if enc_old == enc_new {
+    fn salient_preceding_skip(
+        &self,
+        side: Side,
+        p: usize,
+        floor: usize,
+        ao: usize,
+        an: usize,
+    ) -> Option<usize> {
+        let gap_end = self.gap_side(p, side).end;
+        if gap_end <= floor {
             return None;
         }
-        let mut k = i + 1;
-        while k < self.steps.len()
-            && enc_old != enc_new
-            && !self.steps[k].is_diag()
-            && !self.step_blank(&self.steps[k])
+        let skip = gap_end - 1;
+        (!is_blank(&self.side_rows(side)[skip])
+            && self.shares_unmatched_salient(side, skip, ao, an))
+        .then_some(skip)
+    }
+
+    fn salient_following_skip(&self, side: Side, p: usize, ao: usize, an: usize) -> Option<usize> {
+        let gap = self.gap_side(p + 1, side);
+        if gap.is_empty() {
+            return None;
+        }
+        let skip = gap.start;
+        (!is_blank(&self.side_rows(side)[skip])
+            && self.shares_unmatched_salient(side, skip, ao, an))
+        .then_some(skip)
+    }
+
+    /// Computes the maximal window starting at correspondence `p`, bounded on
+    /// the left by `(floor_old, floor_new)` within `gaps[p]`.
+    fn build_window(&self, p: usize, floor_old: usize, floor_new: usize) -> WindowSpan {
+        let (ao, an) = self.diags[p];
+        let mut old_start = ao;
+        let mut new_start = an;
+        let mut old_end = ao + 1;
+        let mut new_end = an + 1;
+        let mut last_diag = p;
+
+        // 1. Backwards: close leading unmatched closers that differ between the
+        //    two sides of row `p`, scanning `gaps[p].old` and `gaps[p].new`
+        //    independently so unrelated opposite-side skips are never absorbed.
+        let bwd_old = &self.old_delims[ao].closes;
+        let bwd_new = &self.new_delims[an].closes;
+        if bwd_old != bwd_new
+            && let Some((os, ns)) =
+                self.converge_backward(p, floor_old, floor_new, bwd_old, bwd_new)
         {
-            if !self.apply_step_fwd(&self.steps[k], &mut enc_old, &mut enc_new) {
+            old_start = os;
+            new_start = ns;
+        }
+
+        // 2. Forwards: extend while trailing opener stacks differ, first within
+        //    `gaps[p + 1]` independently per side, then tentatively folding
+        //    subsequent correspondences if still open.
+        let fwd_old = &self.old_delims[ao].opens;
+        let fwd_new = &self.new_delims[an].opens;
+        if fwd_old != fwd_new {
+            if let Some((oe, ne)) = self.converge_forward(p + 1, fwd_old, fwd_new) {
+                old_end = oe;
+                new_end = ne;
+            } else if p + 1 < self.diags.len()
+                && let Some((end_diag, oe, ne)) = self.fold_multi_pair(p, fwd_old, fwd_new)
+            {
+                last_diag = end_diag;
+                old_end = oe;
+                new_end = ne;
+            }
+        }
+
+        let delim_extended = old_start < ao
+            || new_start < an
+            || old_end > ao + 1
+            || new_end > an + 1
+            || last_diag > p;
+
+        // 3. Enclosing frame: claim an `old`-only or `new`-only balanced outer
+        //    delimiter frame spanning one or more interior `Diag` steps while
+        //    leaving unrelated opposite-side skips outside the window.
+        if !delim_extended
+            && bwd_old == bwd_new
+            && fwd_old == fwd_new
+            && let Some(frame) = self.try_enclosing_frame(p, floor_old, floor_new)
+        {
+            return frame;
+        }
+
+        // 4. Unmatched salient evidence: when delimiter balance did not extend
+        //    the correspondence, check the immediately adjacent skip on each
+        //    side independently (invariant to 1D `DropOld`/`DropNew` order).
+        let is_symmetric_opener = !fwd_old.is_empty() && fwd_old == fwd_new;
+        let is_symmetric_closer = !bwd_old.is_empty() && bwd_old == bwd_new;
+
+        if !delim_extended && !is_symmetric_closer {
+            if let Some(so) = self.salient_preceding_skip(Side::Old, p, floor_old, ao, an) {
+                old_start = so;
+            }
+            if let Some(sn) = self.salient_preceding_skip(Side::New, p, floor_new, ao, an) {
+                new_start = sn;
+            }
+        }
+        if !delim_extended && !is_symmetric_opener {
+            if let Some(so) = self.salient_following_skip(Side::Old, p, ao, an) {
+                old_end = so + 1;
+            }
+            if let Some(sn) = self.salient_following_skip(Side::New, p, ao, an) {
+                new_end = sn + 1;
+            }
+        }
+
+        WindowSpan {
+            first_diag: p,
+            last_diag,
+            old: old_start..old_end,
+            new: new_start..new_end,
+        }
+    }
+
+    /// Scans backward within `gaps[gap_idx]` (bounded by
+    /// `floor_old`/`floor_new`) to make `bwd_old` and `bwd_new` converge
+    /// without pulling unrelated opposite-side skips into a single-side
+    /// delimiter closure.
+    fn converge_backward(
+        &self,
+        gap_idx: usize,
+        floor_old: usize,
+        floor_new: usize,
+        bwd_old: &[u8],
+        bwd_new: &[u8],
+    ) -> Option<(usize, usize)> {
+        let gap = &self.gaps[gap_idx];
+        let common = common_suffix_len(bwd_old, bwd_new);
+        let common_slice = &bwd_old[bwd_old.len() - common..];
+        converge_gap_sides(
+            bwd_old,
+            bwd_new,
+            common_slice,
+            (gap.old.end, gap.new.end),
+            |target| self.scan_side_backward(Side::Old, floor_old..gap.old.end, bwd_old, target),
+            |target| self.scan_side_backward(Side::New, floor_new..gap.new.end, bwd_new, target),
+        )
+    }
+
+    fn scan_side_backward(
+        &self,
+        side: Side,
+        range: Range<usize>,
+        start_closes: &[u8],
+        target_closes: &[u8],
+    ) -> Option<usize> {
+        let rows = self.side_rows(side);
+        let delims = self.side_delims(side);
+        let mut stack = start_closes.to_vec();
+        let mut idx = range.end;
+        while idx > range.start && stack != target_closes {
+            let prev = idx - 1;
+            if is_blank(&rows[prev]) || !apply_delims_backward(&mut stack, &delims[prev]) {
                 return None;
             }
-            k += 1;
+            idx = prev;
         }
-        (enc_old == enc_new && k > i + 1).then_some((op_start, k - 1))
+        (stack == target_closes).then_some(idx)
+    }
+
+    /// Scans forward within `gaps[gap_idx]` to make `fwd_old` and `fwd_new`
+    /// converge without pulling unrelated opposite-side skips into a
+    /// single-side delimiter closure.
+    fn converge_forward(
+        &self,
+        gap_idx: usize,
+        fwd_old: &[u8],
+        fwd_new: &[u8],
+    ) -> Option<(usize, usize)> {
+        let gap = &self.gaps[gap_idx];
+        let common = common_prefix_len(fwd_old, fwd_new);
+        let common_slice = &fwd_old[..common];
+        converge_gap_sides(
+            fwd_old,
+            fwd_new,
+            common_slice,
+            (gap.old.start, gap.new.start),
+            |target| self.scan_side_forward(Side::Old, gap.old.clone(), fwd_old, target),
+            |target| self.scan_side_forward(Side::New, gap.new.clone(), fwd_new, target),
+        )
+    }
+
+    fn scan_side_forward(
+        &self,
+        side: Side,
+        range: Range<usize>,
+        start_opens: &[u8],
+        target_opens: &[u8],
+    ) -> Option<usize> {
+        let rows = self.side_rows(side);
+        let delims = self.side_delims(side);
+        let mut stack = start_opens.to_vec();
+        let mut idx = range.start;
+        while idx < range.end && stack != target_opens {
+            if is_blank(&rows[idx]) || !apply_delims_forward(&mut stack, &delims[idx]) {
+                return None;
+            }
+            idx += 1;
+        }
+        (stack == target_opens).then_some(idx)
+    }
+
+    /// Detects an `old`-only or `new`-only balanced outer delimiter frame
+    /// starting in `gaps[p]` and closing in `gaps[q + 1]` across one or more
+    /// interior `Diag` steps (`p..=q`), while leaving unrelated skips on the
+    /// opposite side outside the window.
+    fn try_enclosing_frame(
+        &self,
+        p: usize,
+        floor_old: usize,
+        floor_new: usize,
+    ) -> Option<WindowSpan> {
+        self.try_enclosing_frame_side(Side::Old, p, floor_old)
+            .or_else(|| self.try_enclosing_frame_side(Side::New, p, floor_new))
+    }
+
+    fn try_enclosing_frame_side(&self, side: Side, p: usize, floor: usize) -> Option<WindowSpan> {
+        let gap_in = self.gap_side(p, side);
+        let rows = self.side_rows(side);
+        let delims = self.side_delims(side);
+
+        // Collect candidate opener rows in `floor..gap_in.end` before any blank
+        // line, ordered outermost first.
+        let mut candidates = Vec::new();
+        let mut j = gap_in.end;
+        while j > floor {
+            let prev = j - 1;
+            if is_blank(&rows[prev]) {
+                break;
+            }
+            if !delims[prev].opens.is_empty() {
+                candidates.push(prev);
+            }
+            j = prev;
+        }
+        candidates.reverse();
+
+        let brace_id = match UniversalDelimiterClassifier.classify_char('{') {
+            Some(DelimiterCategory::Open(id)) => Some(id),
+            _ => None,
+        };
+
+        for op_start in candidates {
+            let Some(enc_stack) = open_frame_stack(&delims[op_start..gap_in.end]) else {
+                continue;
+            };
+
+            // Multi-`Diag` enclosing frames are restricted to expression
+            // wrappers (`(`, `[`), never `{` statement blocks (`for`/`while`/
+            // `if`/`fn` bodies), so unwrapping a multi-statement control-flow
+            // block never drags its entire body into one giant formation.
+            let max_q = if brace_id.is_some_and(|id| enc_stack.contains(&id)) {
+                p + 1
+            } else {
+                self.diags.len()
+            };
+
+            let (mut old_stack, mut new_stack) = match side {
+                Side::Old => (enc_stack, Vec::new()),
+                Side::New => (Vec::new(), enc_stack),
+            };
+
+            for q in p..max_q {
+                if q > p && !self.apply_full_gap_fwd(q, &mut old_stack, &mut new_stack) {
+                    break;
+                }
+                if self.is_blank_pair(q) {
+                    break;
+                }
+                let (qo, qn) = self.diags[q];
+                if !apply_delims_forward(&mut old_stack, &self.old_delims[qo])
+                    || !apply_delims_forward(&mut new_stack, &self.new_delims[qn])
+                {
+                    break;
+                }
+
+                // Check whether the frame side closes cleanly in `gaps[q + 1]`.
+                let gap_out = self.gap_side(q + 1, side);
+                let (frame_stack, other_stack) = match side {
+                    Side::Old => (&old_stack, &new_stack),
+                    Side::New => (&new_stack, &old_stack),
+                };
+                if let Some(close_end) =
+                    self.scan_side_forward(side, gap_out.clone(), frame_stack, other_stack)
+                    && (close_end > gap_out.start || q > p)
+                {
+                    let (p_old, p_new) = self.diags[p];
+                    let (old, new) = match side {
+                        Side::Old => (op_start..close_end, p_new..qn + 1),
+                        Side::New => (p_old..qo + 1, op_start..close_end),
+                    };
+                    return Some(WindowSpan {
+                        first_diag: p,
+                        last_diag: q,
+                        old,
+                        new,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn apply_full_gap_fwd(
+        &self,
+        gap_idx: usize,
+        old_stack: &mut Vec<u8>,
+        new_stack: &mut Vec<u8>,
+    ) -> bool {
+        let gap = &self.gaps[gap_idx];
+        for o in gap.old.clone() {
+            if is_blank(&self.old_rows[o]) || !apply_delims_forward(old_stack, &self.old_delims[o])
+            {
+                return false;
+            }
+        }
+        for n in gap.new.clone() {
+            if is_blank(&self.new_rows[n]) || !apply_delims_forward(new_stack, &self.new_delims[n])
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Tentatively absorbs subsequent correspondences while the two sides'
-    /// opener stacks remain divergent, returning `(span_end, next_pair_index)`
-    /// only if they converge cleanly.
+    /// opener stacks remain divergent, returning `(last_diag, old_end,
+    /// new_end)` only if they converge cleanly.
     fn fold_multi_pair(
         &self,
-        plateaus: &[Range<usize>],
-        pairs: &[usize],
-        seed_pair_idx: usize,
-        open: OpenResidual,
-    ) -> Option<(usize, usize)> {
-        let OpenResidual {
-            next_scan: mut tent_end,
-            old_stack: mut tent_old,
-            new_stack: mut tent_new,
-        } = open;
-        let mut tent_b = seed_pair_idx + 1;
+        seed_diag: usize,
+        start_old: &[u8],
+        start_new: &[u8],
+    ) -> Option<(usize, usize, usize)> {
+        let mut tent_old = start_old.to_vec();
+        let mut tent_new = start_new.to_vec();
 
-        while tent_b < pairs.len() && tent_old != tent_new {
-            let next = pairs[tent_b];
-            if self.blank_at(plateaus, next) {
+        for q in (seed_diag + 1)..self.diags.len() {
+            if !self.apply_full_gap_fwd(q, &mut tent_old, &mut tent_new) {
                 return None;
             }
-            let mut j = tent_end;
-            while j < next && tent_old != tent_new && !self.step_blank(&self.steps[j]) {
-                if !self.apply_step_fwd(&self.steps[j], &mut tent_old, &mut tent_new) {
-                    return None;
-                }
-                j += 1;
+            if tent_old == tent_new {
+                let prev_gap = &self.gaps[q];
+                return Some((q - 1, prev_gap.old.end, prev_gap.new.end));
             }
-            if j < next {
-                return (tent_old == tent_new).then_some((j, tent_b));
-            }
-            if !self.apply_step_fwd(&self.steps[next], &mut tent_old, &mut tent_new) {
+            if self.is_blank_pair(q) {
                 return None;
             }
-            let mut k = next + 1;
-            while k < self.steps.len()
-                && tent_old != tent_new
-                && !self.steps[k].is_diag()
-                && !self.step_blank(&self.steps[k])
+            let (qo, qn) = self.diags[q];
+            if !apply_delims_forward(&mut tent_old, &self.old_delims[qo])
+                || !apply_delims_forward(&mut tent_new, &self.new_delims[qn])
             {
-                if !self.apply_step_fwd(&self.steps[k], &mut tent_old, &mut tent_new) {
-                    return None;
-                }
-                k += 1;
+                return None;
             }
-            tent_end = k;
-            tent_b += 1;
+            if tent_old == tent_new {
+                return Some((q, qo + 1, qn + 1));
+            }
+            if let Some((oe, ne)) = self.converge_forward(q + 1, &tent_old, &tent_new) {
+                return Some((q, oe, ne));
+            }
+        }
+        None
+    }
+
+    /// Emits segments in canonical order: unclaimed deletions before unclaimed
+    /// additions in every gap between windows, plain `Pair`s for skip-free
+    /// windows, and `Window`s for formations carrying at least one skip.
+    fn emit_segments(&self, windows: &[WindowSpan]) -> Vec<Segment> {
+        let mut segments = Vec::new();
+        let (mut oi, mut ni) = (0usize, 0usize);
+
+        for win in windows {
+            while oi < win.old.start {
+                segments.push(Segment::Del { old: oi });
+                oi += 1;
+            }
+            while ni < win.new.start {
+                segments.push(Segment::Add { new: ni });
+                ni += 1;
+            }
+
+            if win.has_skips() {
+                segments.push(Segment::Window {
+                    old: win.old.clone(),
+                    new: win.new.clone(),
+                });
+            } else {
+                for &(old, new) in &self.diags[win.first_diag..=win.last_diag] {
+                    segments.push(Segment::Pair { old, new });
+                }
+            }
+            oi = win.old.end;
+            ni = win.new.end;
         }
 
-        (tent_old == tent_new).then_some((tent_end, tent_b))
+        while oi < self.old_rows.len() {
+            segments.push(Segment::Del { old: oi });
+            oi += 1;
+        }
+        while ni < self.new_rows.len() {
+            segments.push(Segment::Add { new: ni });
+            ni += 1;
+        }
+
+        segments
     }
 }
 
-fn resolve_steps(path: &ClusterPath) -> Vec<ResolvedStep> {
-    let mut steps = Vec::with_capacity(path.steps.len());
-    let (mut old, mut new) = (0usize, 0usize);
-    for step in &path.steps {
-        match step {
-            PathStep::Diag => {
-                steps.push(ResolvedStep {
-                    old: Some(old),
-                    new: Some(new),
-                });
-                old += 1;
-                new += 1;
-            }
-            PathStep::DropOld => {
-                steps.push(ResolvedStep {
-                    old: Some(old),
-                    new: None,
-                });
-                old += 1;
-            }
-            PathStep::DropNew => {
-                steps.push(ResolvedStep {
-                    old: None,
-                    new: Some(new),
-                });
-                new += 1;
-            }
+fn decompose_path(
+    path: &ClusterPath,
+    old_len: usize,
+    new_len: usize,
+) -> (Vec<(usize, usize)>, Vec<Gap>) {
+    let diags = path.diag_pairs();
+    let mut gaps = Vec::with_capacity(diags.len() + 1);
+    let (mut prev_o, mut prev_n) = (0usize, 0usize);
+    for &(do_idx, dn_idx) in &diags {
+        gaps.push(Gap {
+            old: prev_o..do_idx,
+            new: prev_n..dn_idx,
+        });
+        prev_o = do_idx + 1;
+        prev_n = dn_idx + 1;
+    }
+    gaps.push(Gap {
+        old: prev_o..old_len,
+        new: prev_n..new_len,
+    });
+    (diags, gaps)
+}
+
+/// Resolves a stack divergence `(old_stack, new_stack)` whose shared base is
+/// `common_slice` (a common suffix backward or common prefix forward) by
+/// trying: (1) closing the excess side(s), (2) letting the shorter side catch
+/// up, and (3) closing both sides independently down to `common_slice`.
+fn converge_gap_sides(
+    old_stack: &[u8],
+    new_stack: &[u8],
+    common_slice: &[u8],
+    unchanged: (usize, usize),
+    mut scan_old: impl FnMut(&[u8]) -> Option<usize>,
+    mut scan_new: impl FnMut(&[u8]) -> Option<usize>,
+) -> Option<(usize, usize)> {
+    let common = common_slice.len();
+    // 1. Prefer closing the side(s) with excess unmatched delimiters.
+    if old_stack.len() > common
+        && let Some(o) = scan_old(new_stack)
+    {
+        return Some((o, unchanged.1));
+    }
+    if new_stack.len() > common
+        && let Some(n) = scan_new(old_stack)
+    {
+        return Some((unchanged.0, n));
+    }
+    // 2. Otherwise allow the shorter side to catch up (e.g. a reflowed `{` or
+    //    `=> {` moved onto an adjacent line).
+    if old_stack.len() == common
+        && let Some(o) = scan_old(new_stack)
+    {
+        return Some((o, unchanged.1));
+    }
+    if new_stack.len() == common
+        && let Some(n) = scan_new(old_stack)
+    {
+        return Some((unchanged.0, n));
+    }
+    // 3. Finally, close both sides independently down to their shared base.
+    if old_stack.len() > common
+        && new_stack.len() > common
+        && let Some(o) = scan_old(common_slice)
+        && let Some(n) = scan_new(common_slice)
+    {
+        return Some((o, n));
+    }
+    None
+}
+
+/// Accumulates the strictly-open delimiter stack across a candidate frame
+/// prefix, returning `None` if any row closes outside the frame or empties it.
+fn open_frame_stack(delims: &[LineDelims]) -> Option<Vec<u8>> {
+    let mut stack = Vec::new();
+    for delim in delims {
+        if !apply_delims_forward(&mut stack, delim) || stack.is_empty() {
+            return None;
         }
     }
-    steps
+    (!stack.is_empty()).then_some(stack)
+}
+
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+}
+
+fn common_suffix_len(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+fn matches_unmatched_tokens(
+    skip_tokens: &FxHashMap<&str, usize>,
+    donor: &FxHashMap<&str, usize>,
+    already_kept: &FxHashMap<&str, usize>,
+) -> bool {
+    skip_tokens.keys().any(|t| {
+        t.len() >= 4
+            && donor.iter().any(|(a, &donor_count)| {
+                let kept_count = already_kept.get(a).copied().unwrap_or(0);
+                a.len() >= 4 && donor_count > kept_count && is_salient_word_match(t, a)
+            })
+    })
 }
 
 /// Applies `delims` forward onto an active opener stack. Returns `false` if a
@@ -618,74 +871,13 @@ fn salient_tokens<'a>(
         .collect()
 }
 
-/// Projects step windows onto cluster row spans, in path order, emitting the
-/// rows no window claims as plain deletions and additions.
-fn emit_segments(steps: &[ResolvedStep], window_steps: &[Range<usize>]) -> Vec<Segment> {
-    let mut segments = Vec::new();
-    let mut index = 0usize;
-    for window in window_steps {
-        while index < window.start {
-            segments.push(segment_for_step(&steps[index]));
-            index += 1;
-        }
-        let mut old_range: Option<Range<usize>> = None;
-        let mut new_range: Option<Range<usize>> = None;
-        let mut skips = 0usize;
-        for step in &steps[window.clone()] {
-            if let Some(o) = step.old {
-                old_range = Some(extend(old_range, o));
-            }
-            if let Some(n) = step.new {
-                new_range = Some(extend(new_range, n));
-            }
-            if !step.is_diag() {
-                skips += 1;
-            }
-        }
-        index = window.end;
-        match (old_range, new_range) {
-            // No skip is a member, so every correspondence is a plain
-            // modification and no formation exists.
-            (Some(_), Some(_)) if skips == 0 => {
-                for step in &steps[window.clone()] {
-                    if let (Some(o), Some(n)) = (step.old, step.new) {
-                        segments.push(Segment::Pair { old: o, new: n });
-                    }
-                }
-            }
-            (Some(old), Some(new)) => segments.push(Segment::Window { old, new }),
-            (Some(old), None) => segments.extend(old.map(|o| Segment::Del { old: o })),
-            (None, Some(new)) => segments.extend(new.map(|n| Segment::Add { new: n })),
-            (None, None) => {}
-        }
-    }
-    while index < steps.len() {
-        segments.push(segment_for_step(&steps[index]));
-        index += 1;
-    }
-    segments
-}
-
-fn extend(range: Option<Range<usize>>, value: usize) -> Range<usize> {
-    match range {
-        Some(range) => range.start.min(value)..range.end.max(value + 1),
-        None => value..value + 1,
-    }
-}
-
-fn segment_for_step(step: &ResolvedStep) -> Segment {
-    match (step.old, step.new) {
-        (Some(o), Some(n)) => Segment::Pair { old: o, new: n },
-        (Some(o), None) => Segment::Del { old: o },
-        (None, Some(n)) => Segment::Add { new: n },
-        (None, None) => unreachable!("a path step consumes at least one row"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::{AddLine, DelLine};
+    use crate::{
+        collapse::lattice::PathStep,
+        parse::{AddLine, DelLine},
+    };
 
     fn del_row(num: u32, text: &str) -> Row {
         Row::del(DelLine::new(num, text))
@@ -1129,6 +1321,179 @@ mod tests {
                 old: 0..4,
                 new: 0..1,
             }]
+        );
+    }
+
+    /// Reproduces `scrollbar-grab-drag` `geometry.rs` (`old 230..=235` ->
+    /// `new 237..=244`): an `old`-only `Some(` ... `)` wrapper spans two
+    /// `Diag` correspondences while 5 unrelated pure additions sit in the
+    /// preceding gap. Both 1D `DropOld`/`DropNew` tie-break orders must yield
+    /// the same hull-free `5x2` window with the 5 pure additions emitted ahead
+    /// as plain `Add` rows.
+    #[test]
+    fn two_sided_gap_enclosing_frame_wraps_multiple_diags_without_hull() {
+        let old = [
+            "        let max_thumb = track_h.saturating_sub(1).max(2);",
+            "        Some(",
+            "            ((vh as f64 / total_vis_lines as f64) * track_h as f64)",
+            "                .round()",
+            "                .clamp(2.0, max_thumb as f64) as usize,",
+            "        )",
+        ];
+        let new = [
+            "        let max_thumb = track_h.saturating_sub(1);",
+            "        if max_thumb < Self::SCROLLBAR_MIN_THUMB_LINES {",
+            "            return None;",
+            "        }",
+            "        let min_thumb = ((track_h as f64 * Self::SCROLLBAR_MIN_PERCENT).round() as usize)",
+            "            .clamp(Self::SCROLLBAR_MIN_THUMB_LINES, max_thumb);",
+            "        let prop_thumb = ((vh as f64 / total_vis_lines as f64) * track_h as f64).round() as usize;",
+            "        Some(prop_thumb.clamp(min_thumb, max_thumb))",
+        ];
+        let expected = vec![
+            Segment::Pair { old: 0, new: 0 },
+            Segment::Add { new: 1 },
+            Segment::Add { new: 2 },
+            Segment::Add { new: 3 },
+            Segment::Add { new: 4 },
+            Segment::Add { new: 5 },
+            Segment::Window {
+                old: 1..6,
+                new: 6..8,
+            },
+        ];
+
+        // Order 1: DropOld before DropNew in the mixed gap.
+        let steps_old_first = [
+            PathStep::Diag,
+            PathStep::DropOld,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::Diag,
+            PathStep::DropOld,
+            PathStep::Diag,
+            PathStep::DropOld,
+        ];
+        assert_eq!(
+            segment(&old, &new, &steps_old_first),
+            expected,
+            "DropOld-first mixed gap must form hull-free 5x2 window"
+        );
+
+        // Order 2: DropNew before DropOld in the mixed gap.
+        let steps_new_first = [
+            PathStep::Diag,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropOld,
+            PathStep::Diag,
+            PathStep::DropOld,
+            PathStep::Diag,
+            PathStep::DropOld,
+        ];
+        assert_eq!(
+            segment(&old, &new, &steps_new_first),
+            expected,
+            "DropNew-first mixed gap must produce identical hull-free 5x2 window"
+        );
+    }
+
+    /// A mixed inter-`Diag` gap must attach a salient skip on one side
+    /// regardless of whether the 1D path emitted `DropOld` or `DropNew` first,
+    /// without dragging the opposite side's unrelated skip into the window.
+    #[test]
+    fn two_sided_gap_salient_attachment_ignores_tie_break_order() {
+        let old = ["    let value = compute_alpha();", "    input_token_extra"];
+        let new = [
+            "    let value = compute_alpha(input_token);",
+            "    unrelated_added_line();",
+        ];
+        // Even if DropNew precedes DropOld in the 1D path, `old[1]` shares
+        // unmatched salient `input_token` with `new[0]` (relocated into the
+        // Mod) and joins while `new[1]` stays a plain Add.
+        let steps = [PathStep::Diag, PathStep::DropNew, PathStep::DropOld];
+        assert_eq!(
+            segment(&old, &new, &steps),
+            vec![
+                Segment::Window {
+                    old: 0..2,
+                    new: 0..1,
+                },
+                Segment::Add { new: 1 },
+            ]
+        );
+    }
+
+    /// A `{` statement block (`for`/`if`/`while`) wrapping multiple `Diag`
+    /// correspondences must not be absorbed into one multi-`Diag` enclosing
+    /// frame.
+    #[test]
+    fn brace_block_wrapping_multiple_diags_stays_plain() {
+        let old = [
+            "    for item in items {",
+            "        let a = compute_old(item);",
+            "        let b = finish_old(a);",
+            "    }",
+        ];
+        let new = [
+            "    let a = compute_new(item);",
+            "    let b = finish_new(a);",
+        ];
+        let steps = [
+            PathStep::DropOld,
+            PathStep::Diag,
+            PathStep::Diag,
+            PathStep::DropOld,
+        ];
+        assert_eq!(
+            segment(&old, &new, &steps),
+            vec![
+                Segment::Del { old: 0 },
+                Segment::Pair { old: 1, new: 0 },
+                Segment::Pair { old: 2, new: 1 },
+                Segment::Del { old: 3 },
+            ]
+        );
+    }
+
+    /// Symmetric `new`-side multi-`Diag` enclosing frame (`Some(` ... `)`)
+    /// wraps multiple interior correspondences while leaving unrelated `old`
+    /// deletions outside the window.
+    #[test]
+    fn new_side_enclosing_frame_wraps_multiple_diags_without_hull() {
+        let old = [
+            "    let deleted_before = 1;",
+            "    let x = alpha(1);",
+            "    let y = beta(2);",
+        ];
+        let new = [
+            "    Some(",
+            "        let x = alpha(10);",
+            "        let y = beta(20);",
+            "    )",
+        ];
+        let steps = [
+            PathStep::DropOld,
+            PathStep::DropNew,
+            PathStep::Diag,
+            PathStep::Diag,
+            PathStep::DropNew,
+        ];
+        assert_eq!(
+            segment(&old, &new, &steps),
+            vec![
+                Segment::Del { old: 0 },
+                Segment::Window {
+                    old: 1..3,
+                    new: 0..4,
+                },
+            ]
         );
     }
 }
