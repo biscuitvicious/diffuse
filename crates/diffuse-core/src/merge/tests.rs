@@ -584,7 +584,8 @@ fn test_is_wholesale_replacement_branches() {
     );
     assert!(!is_wholesale_replacement(&r_partial));
 
-    // Common indent alone without non-whitespace context returns true (wholesale)
+    // Common indent alone without non-whitespace context returns true
+    // (wholesale)
     let r_indent = Row::mod_with_spans(
         DelLine::new(1, "  foo"),
         AddLine::new(1, "  bar"),

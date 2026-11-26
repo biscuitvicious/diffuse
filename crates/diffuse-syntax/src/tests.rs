@@ -1211,7 +1211,8 @@ fn test_continuation_phrase_profile_and_default() {
     assert!(rs.is_continuation_phrase("=> ｛"));
     assert!(rs.is_continuation_phrase("） ｛"));
 
-    // Negative tests: delimiters alone or with commas are NOT continuation phrases
+    // Negative tests: delimiters alone or with commas are NOT continuation
+    // phrases
     assert!(!rs.is_continuation_phrase("}"));
     assert!(!rs.is_continuation_phrase(")"));
     assert!(!rs.is_continuation_phrase("};"));

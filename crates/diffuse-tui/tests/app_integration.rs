@@ -917,8 +917,8 @@ fn test_reproduce_expand_file5_scrollbar_grab_drag() {
         "File header visual Y must be preserved across expand (expected {y_before}, got {y_after})"
     );
 
-    // Collapsing File 5 again adapts width back to 3 and must also preserve visual
-    // Y
+    // Collapsing File 5 again adapts width back to 3 and must also preserve
+    // visual Y
     state.toggle_file_collapse(5);
     assert_eq!(
         state.new_line_num.width, 3,
@@ -975,7 +975,8 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
     }
     assert!(hunk_header_count > 0, "must find at least one hunk header");
 
-    // 2. Identify a hunk with a leading gap (e.g. hunk 0 of file 0 or another hunk)
+    // 2. Identify a hunk with a leading gap (e.g. hunk 0 of file 0 or another
+    //    hunk)
     let (fi, hi) = state
         .hunk_starts
         .iter()
@@ -1012,7 +1013,8 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         "first diff row gutter col 0 must render ⇑ icon"
     );
 
-    // Verify cell (0, first_row_screen + 1) has no stem icon (single char arrow)
+    // Verify cell (0, first_row_screen + 1) has no stem icon (single char
+    // arrow)
     let stem_cell = buf
         .cell((0, (first_row_screen + 1) as u16))
         .map(|c| c.symbol())
@@ -1055,8 +1057,8 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
     state.row_idx = 0;
     state.vis_line = 0;
 
-    // 3. Click at col 0 on the top arrow row: expands by 10 lines (default expand
-    //    lines) and swallows click
+    // 3. Click at col 0 on the top arrow row: expands by 10 lines (default
+    //    expand lines) and swallows click
     state.execute(TuiCommand::MouseClick {
         row: first_row_screen,
         col: 0,
@@ -1073,8 +1075,8 @@ fn test_tui_gutter_expansion_arrows_from_golden() {
         "clicking col 0 must swallow click without moving cursor"
     );
 
-    // 4. Click at col 1 (stretch 1 column to the right) on the top arrow row: also
-    //    expands and swallows click
+    // 4. Click at col 1 (stretch 1 column to the right) on the top arrow row:
+    //    also expands and swallows click
     state.execute(TuiCommand::MouseClick {
         row: first_row_screen,
         col: 1,
@@ -1201,7 +1203,8 @@ fn test_tui_collapsible_old_line_gutter_from_golden() {
             .collect()
     };
 
-    // Find a diff row that has both old and new line numbers (e.g. Ctx row in hunk
+    // Find a diff row that has both old and new line numbers (e.g. Ctx row in
+    // hunk
     // 0) The dual gutter layout: [expand: 1][old: 4][space: 1][new: 4][marker:
     // 2] -> 12 cols
     let dual_prefix = (0..buf_wide.area().height)
@@ -1209,8 +1212,8 @@ fn test_tui_collapsible_old_line_gutter_from_golden() {
         .find(|pfx| pfx.contains("84") || pfx.contains("85") || pfx.contains("86"))
         .expect("must find a diff row with line numbers");
 
-    // Verify dual line number gutter structure: old line number at cols 1..5, space
-    // at col 5, new line number at 6..10
+    // Verify dual line number gutter structure: old line number at cols 1..5,
+    // space at col 5, new line number at 6..10
     assert_eq!(
         dual_prefix.chars().nth(5),
         Some(' '),
@@ -1247,8 +1250,8 @@ fn test_tui_collapsible_old_line_gutter_from_golden() {
     // Reset back to auto mode for narrow testing
     state.show_old_line_gutter = None;
 
-    // Automatic collapse when terminal is narrower: width 100 -> content width <=
-    // 100 -> diff content < 100 cols
+    // Automatic collapse when terminal is narrower: width 100 -> content width
+    // <= 100 -> diff content < 100 cols
     let (w_narrow, h_narrow) = (100, 40);
     assert!(!state.is_old_line_gutter_active(99));
     assert!(!state.is_old_line_gutter_active(100));
@@ -1315,8 +1318,8 @@ fn test_side_by_side_toggle_and_viewport_rendering() {
 
     let buf_split = state.render_to_buffer(w, h);
 
-    // Assert that the center column divider '│' appears in diff rows in the split
-    // buffer
+    // Assert that the center column divider '│' appears in diff rows in the
+    // split buffer
     let (left_w, _right_w) = diffuse_render::split_pane_widths(w.saturating_sub(1) as usize);
     let divider_col = left_w as u16;
 
@@ -1372,7 +1375,8 @@ fn test_side_by_side_diff_layout_and_toggle() {
     assert_eq!(left_w + 1 + right_w, content_w);
     let divider_col = left_w as u16;
 
-    // Check that center column divider '│' appears in diff rows in the split buffer
+    // Check that center column divider '│' appears in diff rows in the split
+    // buffer
     let divider_rows: Vec<u16> = (0..buf_split.area().height)
         .filter(|&y| buf_split[(divider_col, y)].symbol() == "│")
         .collect();
@@ -1508,7 +1512,8 @@ fn test_compound_mod_group_side_by_side_moved_src_struck() {
             line_str.push_str(buf[(x, y)].symbol());
         }
         if line_str.contains("wrapped_glyph_hit") {
-            // Verify old line 294 has |pat: &str| on the left pane and it is struck out
+            // Verify old line 294 has |pat: &str| on the left pane and it is
+            // struck out
             assert!(
                 line_str.contains("|pat: &str| "),
                 "left pane must include moved source text:\n{line_str}"
@@ -1720,8 +1725,8 @@ fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
         "Row 288 must contain '|pat: &str| ' with trailing space as MovedTgt"
     );
 
-    // Row 289 (Mod paired with old 294) must have MovedSrc "|pat: &str| " and NO
-    // Del whitespace
+    // Row 289 (Mod paired with old 294) must have MovedSrc "|pat: &str| " and
+    // NO Del whitespace
     let row_289 = file
         .hunks
         .iter()
@@ -1747,7 +1752,8 @@ fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
         "Row 289 must not have any struck whitespace Del runs"
     );
 
-    // Now render in TUI buffer to ensure visual display does not strike out space
+    // Now render in TUI buffer to ensure visual display does not strike out
+    // space
     let target_idx = state.flat.iter().position(|it| {
         it.file_idx == fi && state.row_of(it).is_some_and(|r| r.new_line == Some(289))
     });
@@ -1771,8 +1777,8 @@ fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
         }
         if line_str.contains("wrapped_glyph_hit") {
             found_289 = true;
-            // The cells before wrapped_glyph_hit on this visual line must not have
-            // CROSSED_OUT modifier
+            // The cells before wrapped_glyph_hit on this visual line must not
+            // have CROSSED_OUT modifier
             let wgh_pos = line_str.find("wrapped_glyph_hit").unwrap();
             for x in 0..wgh_pos {
                 let cell = &buf[(x as u16, y)];
@@ -1890,7 +1896,8 @@ fn test_side_by_side_suppresses_expanded_mods_and_returns_on_unified() {
         "mod row must be rendered exactly once in side-by-side mode, but appeared {mod_occurrences} times:\n{screen_sbs}"
     );
 
-    // 3. Key shortcut 'e' (ToggleExpandAllMods) must be disabled in side-by-side
+    // 3. Key shortcut 'e' (ToggleExpandAllMods) must be disabled in
+    //    side-by-side
     state.execute(TuiCommand::ToggleExpandAllMods);
     assert!(
         !state.flat.iter().any(|r| r.is_expanded_mod()),
@@ -2003,8 +2010,8 @@ fn test_branch_badge_single_commit_range_vs_merge_commit() {
         assert!(!row_0.contains(&format!("{s3}^!")));
     }
 
-    // 3. Merge commit range (c1..merge): merge commit has > 1 parent so end^! is
-    //    not the same range based on git semantics; stays start..end
+    // 3. Merge commit range (c1..merge): merge commit has > 1 parent so end^!
+    //    is not the same range based on git semantics; stays start..end
     {
         let target = ReviewTarget::from_repo_args(
             Repo::from_root(dir),
@@ -2130,7 +2137,8 @@ fn test_raw_diff_always_unified_not_split() {
         "visual side-by-side mode must render center divider"
     );
 
-    // 2. Toggle raw diff [R] -> raw diff mode must ALWAYS be unified (not split)
+    // 2. Toggle raw diff [R] -> raw diff mode must ALWAYS be unified (not
+    //    split)
     state.execute(TuiCommand::ToggleRawDiff);
     assert!(state.raw_diff);
     assert!(state.side_by_side); // preference preserved
@@ -2229,8 +2237,8 @@ fn test_raw_diff_file_and_hunk_headers_colored() {
 
     assert_eq!(py, my + 1, "+++ line must immediately follow --- line");
 
-    // Check color of current file headers: current file header yellow (220 in dark
-    // mode)
+    // Check color of current file headers: current file header yellow (220 in
+    // dark mode)
     let minus_cell = &buf[(0, my)];
     assert_eq!(
         minus_cell.fg,
@@ -2397,8 +2405,8 @@ fn test_theme_scrollbar_palette_agents_md_moved_tgt_renders_as_context() {
     );
 
     // Render row 21 in the TUI buffer and verify "the pi review extension"
-    // carries the same neutral/context background as "The workspace also holds",
-    // not the add-fill highlight background.
+    // carries the same neutral/context background as "The workspace also
+    // holds", not the add-fill highlight background.
     let target_idx = state
         .flat
         .iter()

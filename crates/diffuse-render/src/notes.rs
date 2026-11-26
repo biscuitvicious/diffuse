@@ -489,8 +489,8 @@ mod tests {
         assert_eq!(hidden.len(), 1);
         assert!(!strip_ansi(&hidden[0]).contains("let x = 42;"));
 
-        // Shown: snapshot rows appear *above* the callout box mimicking original code
-        // placement.
+        // Shown: snapshot rows appear *above* the callout box mimicking
+        // original code placement.
         let shown =
             render_note_callout_lines(NoteStatus::Open, "note", &rows, true, true, &theme, 80);
         assert_eq!(shown.len(), 2);

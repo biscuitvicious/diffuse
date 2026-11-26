@@ -1054,7 +1054,8 @@ fn test_cli_notes_subcommand_suite() {
 
     let notes_file_arg = notes_path.to_str().unwrap();
 
-    // 1. Default notes list: shows Open and InProgress, with resolved summary count
+    // 1. Default notes list: shows Open and InProgress, with resolved summary
+    //    count
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
         .arg("--notes-file")
@@ -1300,8 +1301,8 @@ fn test_cli_notes_add_subcommand() {
     )
     .unwrap();
 
-    // 1. Create a note with coordinates in the target string: the stored rows are
-    //    the actual diff rows the note was created against.
+    // 1. Create a note with coordinates in the target string: the stored rows
+    //    are the actual diff rows the note was created against.
     let out1 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
@@ -1535,8 +1536,8 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(list_v["notes"].as_array().unwrap().len(), 1);
     assert_eq!(list_v["notes"][0]["text"], "Range note");
 
-    // Query back using diffuse notes <c1>..<c3> (positional range arg, default list
-    // action)
+    // Query back using diffuse notes <c1>..<c3> (positional range arg, default
+    // list action)
     let out_pos = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
@@ -1754,8 +1755,8 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(stdout_short_rev.contains("Note on c1 file b"));
     assert!(!stdout_short_rev.contains("Note on c2 file a"));
 
-    // 7. Shorthand `diffuse notes -- doc/readme.txt`: defaults to list with path
-    //    filter
+    // 7. Shorthand `diffuse notes -- doc/readme.txt`: defaults to list with
+    //    path filter
     let out_short_path = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
         .arg("--notes-file")
@@ -1818,7 +1819,8 @@ fn test_cli_notes_markdown_highlighting() {
 
     let notes_file_arg = notes_path.to_str().unwrap();
 
-    // 1. Without color: plain markdown preserved verbatim with 2-space indentation
+    // 1. Without color: plain markdown preserved verbatim with 2-space
+    //    indentation
     let out_plain = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
         .arg("--notes-file")
@@ -1839,8 +1841,8 @@ fn test_cli_notes_markdown_highlighting() {
     assert!(stdout_plain.contains("  ```"));
     assert!(!stdout_plain.contains("\x1b["));
 
-    // 2. With --color=always: ANSI SGR highlighting applied to markdown tokens and
-    //    fences
+    // 2. With --color=always: ANSI SGR highlighting applied to markdown tokens
+    //    and fences
     let out_color = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
         .arg("--notes-file")
@@ -2026,8 +2028,8 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                // Golden acceptance test suites store historical corpus snapshots
-                // which must not be inspected as live workspace code.
+                // Golden acceptance test suites store historical corpus
+                // snapshots which must not be inspected as live workspace code.
                 if entry.file_name() != "golden" {
                     collect_rs_files(&path, out);
                 }

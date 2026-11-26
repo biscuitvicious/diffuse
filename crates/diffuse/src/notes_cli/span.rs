@@ -101,8 +101,8 @@ pub(crate) fn relocate_span(
         .filter(|r| DiffCoord::row_in_span(r, start_coord, end_coord))
         .collect();
 
-    // Verify all requested lines on the key side (or both sides) are present and in
-    // order
+    // Verify all requested lines on the key side (or both sides) are present
+    // and in order
     if key_is_old {
         let old_lines: Vec<u32> = window.iter().filter_map(|r| r.old_line).collect();
         if old_lines != (start..=end).collect::<Vec<_>>() {

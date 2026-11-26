@@ -519,11 +519,12 @@ impl OutputFile {
             let profile = diffuse_syntax::registry::lang_profile(ext);
 
             // Universal closed-economy thermodynamic invariant:
-            // Across the entire file, the multiset of characters in RunKind::MovedSrc
-            // must exactly equal the multiset of characters in RunKind::MovedTgt.
-            // (Note: characters rather than token runs are checked here because `OutputRun`
-            // on the new side is partitioned into syntactic highlight tokens, whereas
-            // `MovedSrc` on the old side is emitted whole).
+            // Across the entire file, the multiset of characters in
+            // RunKind::MovedSrc must exactly equal the multiset of characters
+            // in RunKind::MovedTgt. (Note: characters rather than token runs
+            // are checked here because `OutputRun` on the new side is
+            // partitioned into syntactic highlight tokens, whereas `MovedSrc`
+            // on the old side is emitted whole).
             let mut file_moved_src = Vec::new();
             let mut file_moved_tgt = Vec::new();
             for h in &self.hunks {

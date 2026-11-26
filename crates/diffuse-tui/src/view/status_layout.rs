@@ -418,13 +418,14 @@ mod tests {
         let layout = status_layout(&c);
         assert_eq!(plain(&layout), "expanded mods");
 
-        // When in raw mode, expanded mods badge is suppressed in favor of raw diff
+        // When in raw mode, expanded mods badge is suppressed in favor of raw
+        // diff
         c.raw_diff = true;
         let layout = status_layout(&c);
         assert_eq!(plain(&layout), "raw diff");
 
-        // When in split mode, expanded mods badge is suppressed and split badge is
-        // omitted
+        // When in split mode, expanded mods badge is suppressed and split badge
+        // is omitted
         c.raw_diff = false;
         c.side_by_side = true;
         let layout = status_layout(&c);

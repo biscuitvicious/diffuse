@@ -1301,8 +1301,8 @@ fn test_render_markdown_lines_colorized_applies_markdown_highlighting_and_fences
     let lines = super::render_markdown_lines(md, &theme, true, "  ");
     assert_eq!(lines.len(), 6);
 
-    // Line 0: Header - starts with indent, contains ANSI bold and Delimiter color,
-    // ends with SGR reset
+    // Line 0: Header - starts with indent, contains ANSI bold and Delimiter
+    // color, ends with SGR reset
     assert!(lines[0].starts_with("  "));
     assert!(lines[0].ends_with("\x1b[0m"));
     assert!(lines[0].contains("Header"));

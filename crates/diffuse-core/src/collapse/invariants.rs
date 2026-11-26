@@ -33,8 +33,8 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
             || (t.starts_with('.') && !t.starts_with(".."));
         if is_continuation {
             let prev_old = d.num.saturating_sub(1);
-            // Walk backwards in res to see if a context line intervened between prev_old
-            // and d.
+            // Walk backwards in res to see if a context line intervened between
+            // prev_old and d.
             let mut ctx_intervened = false;
             for prev in res[..i].iter().rev() {
                 if matches!(prev, Row::Ctx { .. }) {
@@ -44,7 +44,8 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
                 if let Some(ol) = prev.old_line()
                     && ol <= prev_old
                 {
-                    // Found a non-context row at or before prev_old in the same change cluster.
+                    // Found a non-context row at or before prev_old in the same
+                    // change cluster.
                     break;
                 }
             }
@@ -145,7 +146,8 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
             let cluster_adds: FxHashSet<u32> =
                 cluster.new_rows.iter().filter_map(Row::new_line).collect();
 
-            // Find all Mod or Ctx reference rows in res that belong to this cluster
+            // Find all Mod or Ctx reference rows in res that belong to this
+            // cluster
             let cluster_mods: Vec<(u32, u32)> = res
                 .iter()
                 .filter_map(|r| match r {
@@ -174,8 +176,9 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                 } = r
                     && cluster_dels.contains(&d.num)
                 {
-                    // Find the seed new line for deletion d: the new line of the
-                    // latest Mod/Ctx row in the cluster with old_line <= d.num.
+                    // Find the seed new line for deletion d: the new line of
+                    // the latest Mod/Ctx row in the cluster with old_line <=
+                    // d.num.
                     let d_seed_new = cluster_mods
                         .iter()
                         .filter(|&&(old_num, _)| old_num <= d.num)

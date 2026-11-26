@@ -1419,7 +1419,8 @@ index 1111111..2222222 100644
         .with_options(opts_u0)
         .run();
 
-    // 1. Unwrapped: wide screen (140 cols). Single-line hunk collapses icon to ⇕
+    // 1. Unwrapped: wide screen (140 cols). Single-line hunk collapses icon to
+    //    ⇕
     let mut state = AppState::new(
         output.clone(),
         "test_repo".into(),
@@ -1453,7 +1454,8 @@ index 1111111..2222222 100644
         "clicking ⇕ must expand below"
     );
 
-    // 2. Wrapped: narrow screen (40 cols). Single-line hunk with wrapped segments
+    // 2. Wrapped: narrow screen (40 cols). Single-line hunk with wrapped
+    //    segments
     // displays ⇑ on segment 0 and ⇓ on final segment.
     let mut state_narrow = AppState::new(
         output,
@@ -1880,7 +1882,8 @@ fn test_scrollbar_click_on_thumb_does_not_snap() {
     assert!(!state.is_dragging_scrollbar);
     assert_eq!(state.scrollbar_drag_grab, None);
 
-    // Clicking outside the thumb on the track (at top row 0) MUST snap immediately
+    // Clicking outside the thumb on the track (at top row 0) MUST snap
+    // immediately
     assert!(thumb_off > 0);
     state.execute(TuiCommand::MouseClick {
         row: 0,
@@ -2036,8 +2039,8 @@ fn test_scrollbar_touch_scroll_inverts_and_scales_speed() {
 
     assert_eq!(state.scroll, 0);
 
-    // In scrollbar column (col >= cw), MouseScrollUp (finger moving down on mobile
-    // touch) scrolls DOWN by the scaled track step:
+    // In scrollbar column (col >= cw), MouseScrollUp (finger moving down on
+    // mobile touch) scrolls DOWN by the scaled track step:
     state.execute(TuiCommand::MouseScrollUp {
         n: 3,
         row: 10,
@@ -2054,7 +2057,8 @@ fn test_scrollbar_touch_scroll_inverts_and_scales_speed() {
     });
     assert_eq!(state.scroll, 0);
 
-    // In content area further in (col < cw - 1), normal viewport scrolling applies:
+    // In content area further in (col < cw - 1), normal viewport scrolling
+    // applies:
     state.execute(TuiCommand::MouseScrollDown {
         n: 3,
         row: 10,
@@ -2940,8 +2944,8 @@ index 1111111..2222222 100644
     state.row_idx = 0;
     state.vis_line = 0;
 
-    // 1. Click at col 0 (on the ▲ icon): expands and swallows click (cursor stays
-    //    on row 0)
+    // 1. Click at col 0 (on the ▲ icon): expands and swallows click (cursor
+    //    stays on row 0)
     state.execute(TuiCommand::MouseClick {
         row: click_row,
         col: 0,
@@ -2957,7 +2961,8 @@ index 1111111..2222222 100644
         "expand icon click must be swallowed and not move cursor"
     );
 
-    // 2. Click at col 1 (1 column right of the icon): expands and swallows click
+    // 2. Click at col 1 (1 column right of the icon): expands and swallows
+    //    click
     state.execute(TuiCommand::MouseClick {
         row: click_row,
         col: 1,
@@ -2973,7 +2978,8 @@ index 1111111..2222222 100644
         "expand icon hit area click must be swallowed and not move cursor"
     );
 
-    // 3. Click at col 2 (outside the 2-col hit area): does NOT expand, moves cursor
+    // 3. Click at col 2 (outside the 2-col hit area): does NOT expand, moves
+    //    cursor
     state.execute(TuiCommand::MouseClick {
         row: click_row,
         col: 2,
@@ -4614,7 +4620,8 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     );
 
     // When scroll = b_vis:
-    // b.rs banner reaches screen row 0, pushing a.rs banner completely off-screen!
+    // b.rs banner reaches screen row 0, pushing a.rs banner completely
+    // off-screen!
     state.scroll_to_visual(b_vis);
     let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
@@ -4825,8 +4832,8 @@ fn test_sticky_hunk_header_pushed_by_next_file() {
     let (starts, _, _, _) = state.visual_geometry(80);
     let b_vis = starts[b_banner_row];
 
-    // Scroll so b.rs header is at row 2 (below sticky a.rs at row 0 and sticky H1
-    // at row 1)
+    // Scroll so b.rs header is at row 2 (below sticky a.rs at row 0 and sticky
+    // H1 at row 1)
     state.scroll_to_visual(b_vis.saturating_sub(2));
     state.row_idx = b_banner_row;
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
@@ -5489,8 +5496,8 @@ fn test_explicit_line_num_width_override() {
         .iter()
         .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
         .expect("must find del row");
-    // With line_num_width 0, gutter has 3 columns: expand icon column (" "), space
-    // span, and '-' span
+    // With line_num_width 0, gutter has 3 columns: expand icon column (" "),
+    // space span, and '-' span
     assert_eq!(del_line.spans[0].content, " ");
     assert_eq!(del_line.spans[1].content, " ");
     assert_eq!(del_line.spans[2].content, "-");
@@ -5505,8 +5512,8 @@ fn test_explicit_line_num_width_override() {
         .iter()
         .find(|l| l.spans.iter().any(|s| s.content.contains("old 1")))
         .expect("must find del row");
-    // Expand column " ", then 1000 truncated to width 2 becomes "1…" followed by "
-    // " and "-"
+    // Expand column " ", then 1000 truncated to width 2 becomes "1…" followed
+    // by " " and "-"
     assert_eq!(del_line_w2.spans[0].content, " ");
     assert_eq!(del_line_w2.spans[1].content, "1…");
     assert_eq!(del_line_w2.spans[2].content, " ");

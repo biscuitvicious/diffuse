@@ -55,8 +55,8 @@ pub fn split_trivial_ctx_rows(
     for r in rows {
         match r {
             Row::Ctx { line: c, group } if should_split_ctx(&c.text, &c.text, profile) => {
-                // Splitting a context row into its two sides does not change the
-                // formation it anchors: both halves keep the group.
+                // Splitting a context row into its two sides does not change
+                // the formation it anchors: both halves keep the group.
                 let di = out.len();
                 out.push(Row::del(DelLine::new(c.old_pos, c.text.clone())).with_group(group));
                 out.push(Row::add(AddLine::new(c.new_pos, c.text)).with_group(group));

@@ -334,13 +334,13 @@ fn test_notes_commit_for_ranges() {
     // 1. Working tree / no range -> keys off HEAD (c4)
     assert_eq!(notes_commit(dir, &[]), Some(c4.clone()));
 
-    // 2. Single-commit range c1..c2 -> next newest in range is c1 (commit before
-    //    c2)
+    // 2. Single-commit range c1..c2 -> next newest in range is c1 (commit
+    //    before c2)
     let r_1_2 = vec![format!("{c1}..{c2}")];
     assert_eq!(notes_commit(dir, &r_1_2), Some(c1.clone()));
 
-    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> base c1, parent of tip
-    //    c4 is c3 -> c1..c3
+    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> base c1, parent of
+    //    tip c4 is c3 -> c1..c3
     let r_1_4 = vec![format!("{c1}..{c4}")];
     assert_eq!(notes_commit(dir, &r_1_4), Some(format!("{c1}..{c3}")));
 
@@ -348,8 +348,8 @@ fn test_notes_commit_for_ranges() {
     let r_c3_head = vec![format!("{c3}^!")];
     assert_eq!(notes_commit(dir, &r_c3_head), Some(c2.clone()));
 
-    // 5. Two ref arguments [c1, c3] (commits: c2, c3) -> base c1, parent of tip c3
-    //    is c2 -> c1..c2
+    // 5. Two ref arguments [c1, c3] (commits: c2, c3) -> base c1, parent of tip
+    //    c3 is c2 -> c1..c2
     let r_two_refs = vec![c1.clone(), c3.clone()];
     assert_eq!(notes_commit(dir, &r_two_refs), Some(format!("{c1}..{c2}")));
 }
@@ -1016,7 +1016,8 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     assert_eq!(standalone.len(), 1);
     assert_eq!(standalone[0].id, "n2");
 
-    // 4. Missing repo returns empty vec (fail-fast: notes disabled outside repo)
+    // 4. Missing repo returns empty vec (fail-fast: notes disabled outside
+    //    repo)
     let missing_repo = query_notes_for_file(&db, None, None, "src/lib.rs");
     assert!(missing_repo.is_empty());
 
@@ -1353,8 +1354,8 @@ fn test_coord_and_location_label_formatting() {
     assert_eq!(new_only.label(), "42");
     assert_eq!(NoteLocation::line(new_only).label(), "42");
 
-    // 2. Single coordinate with both old and new (same): shows line number without
-    //    labelling it
+    // 2. Single coordinate with both old and new (same): shows line number
+    //    without labelling it
     let both_same = DiffCoord::both(15, 15);
     assert_eq!(both_same.label(), "15");
     assert_eq!(NoteLocation::line(both_same).label(), "15");
@@ -1371,8 +1372,8 @@ fn test_coord_and_location_label_formatting() {
     assert_eq!(old_only.label(), "old 10");
     assert_eq!(NoteLocation::line(old_only).label(), "old 10");
 
-    // 5. Range over modification rows: old 1615/new 1617 to old 1616/new 1618 ->
-    //    simply "1617-1618"
+    // 5. Range over modification rows: old 1615/new 1617 to old 1616/new 1618
+    //    -> simply "1617-1618"
     let mod_start = DiffCoord::both(1615, 1617);
     let mod_end = DiffCoord::both(1616, 1618);
     let range_mod = NoteLocation::range(mod_start, mod_end);

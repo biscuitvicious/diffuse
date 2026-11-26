@@ -181,8 +181,8 @@ impl Repository {
             return Some("HEAD".to_string());
         }
 
-        // 2. Check if rev itself resolves to a reference (branch, tag, or remote
-        //    branch)
+        // 2. Check if rev itself resolves to a reference (branch, tag, or
+        //    remote branch)
         if let Ok(Some(r)) = self.inner.try_find_reference(rev) {
             let full_name = r.name().as_bstr();
             if full_name.starts_with(b"refs/heads/")

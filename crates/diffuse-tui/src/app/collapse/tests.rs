@@ -1126,8 +1126,8 @@ fn test_adapt_side_by_side_to_width() {
     state.adapt_side_by_side_to_width(180);
     assert!(state.side_by_side);
 
-    // Auto adapts to narrow (129 cols: left text cols is 59 < 60) -> side_by_side
-    // false
+    // Auto adapts to narrow (129 cols: left text cols is 59 < 60) ->
+    // side_by_side false
     state.adapt_side_by_side_to_width(129);
     assert!(!state.side_by_side);
     assert_eq!(state.explicit_side_by_side, None);

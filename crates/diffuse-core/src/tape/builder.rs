@@ -161,12 +161,12 @@ impl<'a> AlignmentTape<'a> {
             pairs
         };
 
-        // Level B defense-in-depth: Delimiter Container Invariance & Subword Cohesion.
-        // Purge any matched pair where both tokens sit inside active but
-        // mismatched delimiter containers (e.g. `()` vs `{}` or `[]` vs `()`).
-        // Also purge any subword match with discordant boundary context across
-        // differing container depths or enclosing containers, which would slice
-        // compound identifiers open across container boundaries.
+        // Level B defense-in-depth: Delimiter Container Invariance & Subword
+        // Cohesion. Purge any matched pair where both tokens sit inside active
+        // but mismatched delimiter containers (e.g. `()` vs `{}` or `[]` vs
+        // `()`). Also purge any subword match with discordant boundary context
+        // across differing container depths or enclosing containers, which
+        // would slice compound identifiers open across container boundaries.
         let classifier = diffuse_algo::UniversalDelimiterClassifier;
         let c_old = diffuse_algo::track_enclosing_containers(&ot, &classifier);
         let c_new = diffuse_algo::track_enclosing_containers(&nt, &classifier);
@@ -202,11 +202,11 @@ impl<'a> AlignmentTape<'a> {
 
         // Delimiter Container Invariance & Inner Salience Admission Gate.
         // Purge any delimiter pair where:
-        // 1. The caller expression sits inside incompatible container contexts (e.g.
-        //    Paren in `Vec::with_capacity` vs Bracket in `vec![...]`).
-        // 2. The container contents share NO common salient tokens across distinct
-        //    callers (e.g. `is_none()` vs `is_some_and(|c| c.is_quoted())`, or `foo(a)`
-        //    vs `bar(b)`).
+        // 1. The caller expression sits inside incompatible container contexts
+        //    (e.g. Paren in `Vec::with_capacity` vs Bracket in `vec![...]`).
+        // 2. The container contents share NO common salient tokens across
+        //    distinct callers (e.g. `is_none()` vs `is_some_and(|c|
+        //    c.is_quoted())`, or `foo(a)` vs `bar(b)`).
         let find_matching_close = |tokens: &[&str], open_idx: usize| -> Option<usize> {
             let cat = classifier.classify(&tokens[open_idx])?;
             let open_id = match cat {
@@ -259,7 +259,8 @@ impl<'a> AlignmentTape<'a> {
                         let is_empty_new = n2 == n1 + 1;
 
                         if is_empty_old && is_empty_new {
-                            // Condition A: Incompatible caller containers for empty delimiter pairs
+                            // Condition A: Incompatible caller containers for
+                            // empty delimiter pairs
                             let c_caller_a =
                                 c_old[pa].and_then(crate::token::ContainerKind::from_id);
                             let c_caller_b =
@@ -272,8 +273,9 @@ impl<'a> AlignmentTape<'a> {
                                 continue;
                             }
                         } else if is_empty_old != is_empty_new {
-                            // Condition B: An empty delimiter pair cannot match against a non-empty
-                            // container across distinct call sites. Function declarations (`fn
+                            // Condition B: An empty delimiter pair cannot match
+                            // against a non-empty container across distinct
+                            // call sites. Function declarations (`fn
                             // foo(...)` vs `fn bar()`) share formal
                             // parameter list boundaries and are exempt.
                             let is_fn_decl = |tokens: &[&str], subword_idx: usize| -> bool {

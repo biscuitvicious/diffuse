@@ -174,8 +174,8 @@ pub fn filter_cohesion_runs<P, I, F, N>(
             }
         }
 
-        // Trivial lines must only move if they are contiguous with a moved predecessor
-        // in BOTH source and target.
+        // Trivial lines must only move if they are contiguous with a moved
+        // predecessor in BOTH source and target.
         for i in 0..run.len() {
             let pos = run[i];
             if target_of.contains_key(&pos) && is_trivial(&pos) {

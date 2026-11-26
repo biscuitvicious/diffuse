@@ -910,8 +910,8 @@ fn test_render_file_diff_expanded_mod_continuation_lines_extend_box_glyph() {
 
 #[test]
 fn test_render_file_diff_expanded_mod_multi_segment_continuation_box_glyphs() {
-    // Both old and new lines are ~180 chars, wrapping into 3 segments each at width
-    // 80
+    // Both old and new lines are ~180 chars, wrapping into 3 segments each at
+    // width 80
     let long_line_old = "old_val_prefix_".repeat(12);
     let long_line_new = "new_val_prefix_".repeat(12);
     let diff = format!(

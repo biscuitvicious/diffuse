@@ -158,10 +158,12 @@ impl AppState {
                     && let Some(c) = self.flat_row_coord(row)
                 {
                     let range = self.compute_selection().and_then(|sel| {
-                        // Editor ranges use new-side line numbers (the post-image).
+                        // Editor ranges use new-side line numbers (the
+                        // post-image).
                         let s = sel.start.new_line_num.or(sel.start.old_line_num)?;
                         let e = sel.end.new_line_num.or(sel.end.old_line_num)?;
-                        // Only pass a range if the selection is on the new side.
+                        // Only pass a range if the selection is on the new
+                        // side.
                         sel.start.new_line_num?;
                         Some((s.get(), e.get()))
                     });
@@ -272,8 +274,9 @@ impl AppState {
                                     0
                                 };
 
-                                // Clicking the context expansion arrow in the gutter
-                                // (columns 0 and 1) expands context and swallows the click.
+                                // Clicking the context expansion arrow in the
+                                // gutter (columns 0 and 1) expands context and
+                                // swallows the click.
                                 if target_vis >= s + div_lines {
                                     let r_vis = target_vis - s - div_lines;
                                     let item_info = self
@@ -302,9 +305,9 @@ impl AppState {
                                     }
                                 }
 
-                                // Clicking the collapse/expand triangle on a file
-                                // header toggles the file — the click is swallowed
-                                // and does not select the row.
+                                // Clicking the collapse/expand triangle on a
+                                // file header toggles the file — the click is
+                                // swallowed and does not select the row.
                                 if let Some(item) = self.flat.get(i)
                                     && item.is_file_header()
                                 {

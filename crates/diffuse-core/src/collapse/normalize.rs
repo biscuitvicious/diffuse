@@ -118,7 +118,8 @@ pub(crate) fn repair_peer_group_atomicity(rows: &mut [Row]) {
                 seen_groups.insert(id);
                 current_group = Some(id);
             } else {
-                // Group was seen before, but was interrupted! Split into new group!
+                // Group was seen before, but was interrupted! Split into new
+                // group!
                 max_group_id += 1;
                 let new_id = GroupId(max_group_id);
                 let orig_id = gid.unwrap();

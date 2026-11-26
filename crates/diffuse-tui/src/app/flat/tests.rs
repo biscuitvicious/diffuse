@@ -704,7 +704,8 @@ index 1111111..2222222 100644
     state.execute(crate::command::TuiCommand::ToggleExpandAllMods);
     assert_eq!(state.expanded_mods.len(), 3);
 
-    // Flat rows should now be: Ctx, Del 0, Del 1, Del 2, Add 0, Add 1, Add 2, Ctx
+    // Flat rows should now be: Ctx, Del 0, Del 1, Del 2, Add 0, Add 1, Add 2,
+    // Ctx
     let diff_rows_expanded: Vec<_> = state.flat.iter().filter(|r| r.is_diff_row()).collect();
     assert_eq!(diff_rows_expanded.len(), 8);
 

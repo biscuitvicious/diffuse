@@ -230,7 +230,8 @@ fn test_page_up_with_sticky_header_scrolls_one_third() {
     state.render_diff_viewport_lines(80, 20, 20);
     assert_eq!(state.scroll, 30);
 
-    // 1st page_up moves cursor to first visible content line (under sticky headers)
+    // 1st page_up moves cursor to first visible content line (under sticky
+    // headers)
     state.page_up();
     state.render_diff_viewport_lines(80, 20, 20);
     assert_eq!(state.scroll, 30, "first page_up must not shift scroll");
@@ -356,8 +357,8 @@ fn test_goto_line_preserves_scroll_when_visible_anywhere_in_view() {
 
     // Sticky headers take 2 lines (file banner + hunk header).
     // Visible window below sticky headers is visual rows [17..35).
-    // Line 16 has target_vis 17 (screen row 17 - 15 = 2, first line below sticky
-    // headers). 2 is visible in the view! Scroll must NOT change!
+    // Line 16 has target_vis 17 (screen row 17 - 15 = 2, first line below
+    // sticky headers). 2 is visible in the view! Scroll must NOT change!
     state.goto_line(16);
     assert_eq!(
         state.scroll, 15,
@@ -1525,8 +1526,8 @@ fn test_jump_to_opposing_move_side() {
     assert!(!state.goto_opposing_move());
     assert_eq!(state.row_idx, 0);
 
-    // 2. Position cursor at MovSrc -> jump to MovTgt (outside view: places target
-    //    at 80%)
+    // 2. Position cursor at MovSrc -> jump to MovTgt (outside view: places
+    //    target at 80%)
     state.row_idx = src_pos;
     state.scroll = 0;
     assert!(state.goto_opposing_move());

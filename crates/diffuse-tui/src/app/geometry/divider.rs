@@ -164,9 +164,9 @@ impl AppState {
         let fi = item.file_idx;
         let hi = item.hunk_idx()?;
 
-        // Fast-path for interior rows: if flat_idx has >= 1 diff row before it and
-        // >= 1 diff row after it within the same hunk, it can never match visual
-        // line 0 or total_vis - 1, and returns None in O(1).
+        // Fast-path for interior rows: if flat_idx has >= 1 diff row before it
+        // and >= 1 diff row after it within the same hunk, it can never match
+        // visual line 0 or total_vis - 1, and returns None in O(1).
         let is_same_hunk_diff = |idx: usize| {
             self.flat
                 .get(idx)

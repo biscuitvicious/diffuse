@@ -172,8 +172,8 @@ fn test_alignment_tape_backtick_path_not_fragmented() {
     let runs = tape.to_merged_runs();
     let tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
 
-    // Generic alignment aligns identical subwords and punctuation (`scripts/` and
-    // `.sh`) without path-specific fragmentation bans:
+    // Generic alignment aligns identical subwords and punctuation (`scripts/`
+    // and `.sh`) without path-specific fragmentation bans:
     assert_eq!(
         tuples,
         vec![
@@ -221,8 +221,8 @@ fn test_paths_with_different_roots_and_basenames_not_fragmented() {
     let runs = tape.to_merged_runs();
     let tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
 
-    // Generic alignment aligns identical subwords and punctuation (`scripts/` and
-    // `.sh`) without path-specific heuristics:
+    // Generic alignment aligns identical subwords and punctuation (`scripts/`
+    // and `.sh`) without path-specific heuristics:
     assert_eq!(
         tuples,
         vec![

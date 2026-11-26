@@ -271,7 +271,8 @@ fn test_resolve_commit_range_in_repo() {
     let r1 = resolve_commit_range(dir, &["HEAD~1..HEAD".into()]);
     assert_eq!(r1, Some("HEAD^!".into()));
 
-    // Two-dot range representing 1 commit with raw hashes resolves to end_hash^!
+    // Two-dot range representing 1 commit with raw hashes resolves to
+    // end_hash^!
     let r1_hash = resolve_commit_range(dir, &[format!("{c2_hash}..{c3_hash}")]);
     assert_eq!(r1_hash, Some(format!("{c3_hash}^!")));
 

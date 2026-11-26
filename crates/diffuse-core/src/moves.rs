@@ -95,9 +95,9 @@ pub fn mark_moves_with_profile(
     // delimiter context (like `};` or blank lines) keeps adjacent change groups
     // in the same cluster. Trimmed-only matches (indentation reflows) are only
     // accepted when the source and target are in different clusters, preventing
-    // nearby indentation changes from being misclassified as relocations. Exact-
-    // text matches are always allowed regardless of cluster membership (see the
-    // bypass inside `mark_moves_internal`'s `full_can_match`).
+    // nearby indentation changes from being misclassified as relocations.
+    // Exact- text matches are always allowed regardless of cluster membership
+    // (see the bypass inside `mark_moves_internal`'s `full_can_match`).
     let row_clusters: Vec<Vec<usize>> = f
         .hunks
         .iter()
@@ -351,7 +351,8 @@ where
 
     if require_contiguous_group {
         // Enforce that both source AND target lines form a contiguous block
-        // of >= 2 lines in the same target hunk, containing at least one salient line.
+        // of >= 2 lines in the same target hunk, containing at least one
+        // salient line.
         let mut target_of: rustc_hash::FxHashMap<(usize, usize), (usize, usize)> =
             rustc_hash::FxHashMap::default();
         for m in &matches_vec {

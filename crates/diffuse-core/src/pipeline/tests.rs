@@ -293,7 +293,8 @@ runner = "scripts/android-test-runner"
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let rows = &output.files[0].rows;
 
-    // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
+    // 1. Assert that there is NO floating del under [env] (between lines 1 and
+    //    6)
     for r in &rows[..6] {
         assert_ne!(
             r.kind,
@@ -302,8 +303,8 @@ runner = "scripts/android-test-runner"
         );
     }
 
-    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 10 -> new 14)
+    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1
+    //    Mod (old 10 -> new 14)
     let musl_runner = rows.iter().find(|r| r.new_line == Some(14));
     assert!(musl_runner.is_some());
     assert_eq!(musl_runner.unwrap().kind, RowKind::Mod);
@@ -316,8 +317,8 @@ runner = "scripts/android-test-runner"
     assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(gnu_runner.unwrap().old_line, Some(15));
 
-    // 4. The aarch64-musl runner is replaced wholesale: the old short command is
-    //    deleted and the new scripted runner is added.
+    // 4. The aarch64-musl runner is replaced wholesale: the old short command
+    //    is deleted and the new scripted runner is added.
     let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
     assert!(aarch64_musl_runner.is_some());
     assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Add);
@@ -327,10 +328,10 @@ runner = "scripts/android-test-runner"
             .any(|r| r.kind == RowKind::Del && r.old_line == Some(23))
     );
 
-    // 5. The aarch64-linux-android target appears again further down, so its rows
-    //    are not the only candidates: the old entries pair with the trailing copies
-    //    (old 28 -> new 38, old 29 -> new 39) and the earlier new rows are
-    //    additions.
+    // 5. The aarch64-linux-android target appears again further down, so its
+    //    rows are not the only candidates: the old entries pair with the
+    //    trailing copies (old 28 -> new 38, old 29 -> new 39) and the earlier
+    //    new rows are additions.
     let android_runner = rows.iter().find(|r| r.new_line == Some(33));
     assert!(android_runner.is_some());
     assert_eq!(android_runner.unwrap().kind, RowKind::Add);
@@ -1326,8 +1327,8 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         },
     );
 
-    // 4. Note without a content_hash on an existing line -> kept (displayed on file
-    //    banner)
+    // 4. Note without a content_hash on an existing line -> kept (displayed on
+    //    file banner)
     add_note(
         &mut db,
         "myrepo",
@@ -1951,8 +1952,8 @@ diff --git a/test.rs b/test.rs
     new_content.insert("test.rs".to_string(), full_content);
 
     let mut db = HashMap::new();
-    // Note 1 at line 60, Note 2 at line 65. Distance is 5 <= 2*N = 8, so cluster
-    // together.
+    // Note 1 at line 60, Note 2 at line 65. Distance is 5 <= 2*N = 8, so
+    // cluster together.
     add_note(
         &mut db,
         "repo",
@@ -2048,8 +2049,8 @@ fn test_note_on_old_side_gap_line_mapping() {
     }
     let old_content = old_lines.join("\n");
 
-    // New file: lines 1..9 unchanged, line 10 replaced with 4 lines (+3 net lines),
-    // lines 11..100 shifted by +3
+    // New file: lines 1..9 unchanged, line 10 replaced with 4 lines (+3 net
+    // lines), lines 11..100 shifted by +3
     let mut new_lines = Vec::new();
     for i in 1..=9 {
         new_lines.push(format!("old line {i}"));
@@ -2136,7 +2137,8 @@ fn test_synthetic_note_hunk_anchoring() {
     let mut old_map = HashMap::new();
     old_map.insert("test.rs".to_string(), old_content);
 
-    // Note 1: multi-line note (lines 50..=52) that matches cleanly and is unique.
+    // Note 1: multi-line note (lines 50..=52) that matches cleanly and is
+    // unique.
     let mut db = HashMap::new();
     crate::notes::add_note(
         &mut db,
@@ -3049,7 +3051,8 @@ fn test_tier2_residual_rival_in_content_prevents_theft() {
 "#;
 
     let mut new_content = std::collections::HashMap::new();
-    // Simulate that `pub enum Side {` was moved elsewhere in the new file snapshot.
+    // Simulate that `pub enum Side {` was moved elsewhere in the new file
+    // snapshot.
     new_content.insert(
         "src/types.rs".to_string(),
         "ctx_before\npub struct DiffCoord {\n    pub line: u32,\n}\nctx_after\npub enum Side {\n    Old,\n    New,\n}\n".to_string(),
@@ -3110,7 +3113,8 @@ fn test_cross_cluster_strong_move_group_guards_against_spurious_mod() {
 
     let rows: Vec<_> = out.hunks.iter().flat_map(|h| &h.rows).collect();
 
-    // Verify that Old line 330 is NOT stolen into a spurious Mod with New line 352
+    // Verify that Old line 330 is NOT stolen into a spurious Mod with New line
+    // 352
     let spurious_mod = rows.iter().find(|r| {
         r.kind == crate::parse::RowKind::Mod && r.old_line == Some(330) && r.new_line == Some(352)
     });

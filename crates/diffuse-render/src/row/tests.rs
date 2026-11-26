@@ -1519,8 +1519,8 @@ fn test_mov_row_prefix_line_number_colors() {
     let mov_gutter = &theme.palette[Cursor::Rest][DiffKind::Mov].gutter;
     let r#mod_gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
 
-    // MovSrc: line number carries Del rendering (red + italic), icons stay mov.icon
-    // and del.icon
+    // MovSrc: line number carries Del rendering (red + italic), icons stay
+    // mov.icon and del.icon
     let src_spans = styled_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Src),
@@ -1544,8 +1544,8 @@ fn test_mov_row_prefix_line_number_colors() {
     assert_eq!(src_spans[2].text, "≈");
     assert_eq!(span_text(&src_spans), "   42 ≈");
 
-    // MovTgt: line number carries Add rendering (green), icons stay mov.icon and
-    // add.icon
+    // MovTgt: line number carries Add rendering (green), icons stay mov.icon
+    // and add.icon
     let tgt_spans = styled_prefix_spans(
         RowKind::Mov,
         Some(MovSide::Tgt),
@@ -3061,7 +3061,8 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         &ctx_row, 0, left_w, right_w, l_pref, r_pref, false, false, 0, false, true, &theme,
     );
     assert_eq!(crate::span::spans_width(&line.spans), 80);
-    // Left pane has width 39, divider has width 1 ("│"), right pane has width 40
+    // Left pane has width 39, divider has width 1 ("│"), right pane has width
+    // 40
     let div_idx = line
         .spans
         .iter()
@@ -3129,7 +3130,8 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
             .any(|s| s.text.contains("old_calc") && s.strikethrough)
     );
     assert!(!left_spans.iter().any(|s| s.text.contains("new_calc")));
-    // Right pane has new_calc() with fill bg and no strikethrough, no old_calc()
+    // Right pane has new_calc() with fill bg and no strikethrough, no
+    // old_calc()
     assert!(
         right_spans
             .iter()
@@ -3421,8 +3423,8 @@ fn test_side_by_side_row_segment_spans_and_ansi_serialization() {
         .iter()
         .position(|s| s.text == "│")
         .expect("missing divider");
-    // Left pane s_idx = 1 has continuation prefix and blank spaces, but maintains
-    // del_tint_bg
+    // Left pane s_idx = 1 has continuation prefix and blank spaces, but
+    // maintains del_tint_bg
     let l_text: String = line_s1.spans[..div_idx]
         .iter()
         .map(|s| s.text.as_str())

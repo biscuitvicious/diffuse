@@ -40,8 +40,9 @@ impl AppState {
             Self::scrollbar_thumb_for(track_h, vh, total_vis, self.scroll, header_vis)
         {
             if row >= thumb_off && row < thumb_off + thumb_size {
-                // Clicked directly on the thumb: preserve current scroll position
-                // and record the relative grab offset within the thumb.
+                // Clicked directly on the thumb: preserve current scroll
+                // position and record the relative grab offset within the
+                // thumb.
                 self.scrollbar_drag_grab = Some(row - thumb_off);
                 tracing::debug!(
                     row,

@@ -164,7 +164,8 @@ pub fn dispatch(args: &Args) -> io::Result<()> {
 
     let no_tui = args.no_tui || args.pager || is_markdown || is_raw || is_json || is_jsonl;
 
-    // Direct path diffing: `diffuse <file1> <file2>` or `diffuse <dir1> <dir2>`.
+    // Direct path diffing: `diffuse <file1> <file2>` or `diffuse <dir1>
+    // <dir2>`.
     if explicit_cmd.is_none() && git_revs.len() == 2 {
         let p1 = Path::new(&git_revs[0]);
         let p2 = Path::new(&git_revs[1]);

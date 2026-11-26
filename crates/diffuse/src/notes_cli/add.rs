@@ -132,7 +132,8 @@ pub fn handle_add(
         );
         process::exit(1);
     }
-    // A both-side anchor locates one set of rows: the spans must be equally long.
+    // A both-side anchor locates one set of rows: the spans must be equally
+    // long.
     let span_len = |sp: (u32, u32)| sp.1 - sp.0 + 1;
     if let (Some(os), Some(ns)) = (old_span, new_span)
         && span_len(os) != span_len(ns)
@@ -183,10 +184,10 @@ pub fn handle_add(
 
     // 4. The note stores the diff rows it was created against. When the file is
     //    part of the reviewed diff, the pipeline runs with the provisional note
-    //    registered (so gap synthesis includes its span) and the note is relocated
-    //    onto the produced rows. Files outside the reviewed diff fall back to plain
-    //    rows read from the working-tree content; the note then displays on the
-    //    file banner.
+    //    registered (so gap synthesis includes its span) and the note is
+    //    relocated onto the produced rows. Files outside the reviewed diff fall
+    //    back to plain rows read from the working-tree content; the note then
+    //    displays on the file banner.
     //
     //    Review input precedence: an explicit `--diff` file always wins (even
     //    inside a work tree, mirroring diff-stream routing), hydrated from
@@ -360,8 +361,8 @@ pub fn handle_add(
     };
 
     // 5. Finalize: coordinates come from the located rows (fixing provisional
-    //    single-side coordinates), the stored rows are the actual output rows, and
-    //    the hash covers them completely.
+    //    single-side coordinates), the stored rows are the actual output rows,
+    //    and the hash covers them completely.
     let final_note = ReviewNote {
         id: note_id.clone(),
         file: file_path.clone(),

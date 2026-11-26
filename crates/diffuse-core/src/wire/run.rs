@@ -271,8 +271,9 @@ pub fn compress_and_batch_runs(runs: &[OutputRun]) -> Vec<Batch> {
                     continue;
                 }
 
-                // Rule 2: Absorb trailing whitespace into preceding run if neither has SGR
-                // and the preceding run's syntax color allows whitespace absorption.
+                // Rule 2: Absorb trailing whitespace into preceding run if
+                // neither has SGR and the preceding run's syntax color allows
+                // whitespace absorption.
                 if cur.sgr.is_none()
                     && last.sgr.is_none()
                     && cur.text.chars().all(|c| c.is_whitespace())
@@ -283,8 +284,8 @@ pub fn compress_and_batch_runs(runs: &[OutputRun]) -> Vec<Batch> {
                 }
             }
 
-            // Rule 3: If this run has no SGR and allows leading whitespace, and the
-            // preceding run in this batch was whitespace-only (and not line
+            // Rule 3: If this run has no SGR and allows leading whitespace, and
+            // the preceding run in this batch was whitespace-only (and not line
             // indentation), absorb the leading whitespace.
             if syntax_runs.len() == 1
                 && !is_first_batch

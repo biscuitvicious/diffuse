@@ -312,7 +312,8 @@ fn test_terminal_dyck_stack_and_small_stack_equality() {
 fn test_has_trailing_delimiter_expansion() {
     let u = UniversalDelimiterClassifier;
 
-    // Both lines end with '{', same net count -> false (scrollbar-grab-drag case)
+    // Both lines end with '{', same net count -> false (scrollbar-grab-drag
+    // case)
     let del1 = "TuiCommand::MouseScrollUp(n) => {";
     let add1 = "TuiCommand::MouseScrollUp { n, row, col } => {";
     assert!(!super::containers::has_trailing_delimiter_expansion(

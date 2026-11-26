@@ -150,10 +150,10 @@ pub fn multi_token_phrase_anchors(
             let mut a_end = a_start + trimmed_len;
             let mut b_end = b_start + trimmed_len;
 
-            // Landmark boundary invariant: A phrase landmark must begin and end on
-            // valid syntactic phrase boundaries (alphanumerics, balanced container
-            // delimiters, or quotes), trimming dangling operators, separators, or
-            // whitespace.
+            // Landmark boundary invariant: A phrase landmark must begin and end
+            // on valid syntactic phrase boundaries (alphanumerics, balanced
+            // container delimiters, or quotes), trimming dangling operators,
+            // separators, or whitespace.
             while a_start < a_end && is_dangling_prefix_token(a[a_start], profile) {
                 a_start += 1;
                 b_start += 1;
@@ -261,9 +261,10 @@ pub fn multi_token_phrase_anchors(
                 continue;
             }
 
-            // Information symmetry / bilateral ungroundedness check for phrases:
-            // An isolated phrase flanked by edits on both sides must share
-            // context with at least one side and match Dyck nesting depth.
+            // Information symmetry / bilateral ungroundedness check for
+            // phrases: An isolated phrase flanked by edits on both sides must
+            // share context with at least one side and match Dyck nesting
+            // depth.
             let a_end = a_start + trimmed_len;
             let b_end = b_start + trimmed_len;
             let left_content_a = a[..a_start].iter().any(|&x| !token_is_ws(x));
@@ -406,9 +407,9 @@ pub fn entropy_anchors(
                 && is_compatible_with_phrases(idx_a, idx_b)
                 && ContainerKind::is_compatible_with(a_containers[idx_a], b_containers[idx_b])
             {
-                // Information symmetry / bilateral ungroundedness & depth concordance check:
-                // An isolated single token flanked by edits on both sides
-                // must share context with at least one side.
+                // Information symmetry / bilateral ungroundedness & depth
+                // concordance check: An isolated single token flanked by edits
+                // on both sides must share context with at least one side.
                 let mut left_bound_a = idx_a;
                 while left_bound_a > 0
                     && (is_subword_token(a[left_bound_a - 1]) || a[left_bound_a - 1] == "::")

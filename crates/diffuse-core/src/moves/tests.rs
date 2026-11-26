@@ -186,7 +186,8 @@ fn moved_method_chain_block_marks_all_lines_moved() {
             add(98, "        .rows"),
             add(99, "        .iter()"),
             add(103, "        .collect();"),
-            // Another addition in the diff that happens to contain substring `.iter()`
+            // Another addition in the diff that happens to contain substring
+            // `.iter()`
             add(200, "    tokens.iter().map(|t| t.id).collect()"),
         ]),
     ]);
@@ -490,8 +491,8 @@ fn test_cross_cluster_moves_accepts_contiguous_group() {
 
 #[test]
 fn test_cross_cluster_moves_ignores_intra_cluster_matches() {
-    // Within the same cluster (no Row::Ctx between del and add), pre-pass ignores
-    // it
+    // Within the same cluster (no Row::Ctx between del and add), pre-pass
+    // ignores it
     let mut f = file(vec![hunk(vec![
         del(10, "first_statement();"),
         del(11, "second_statement();"),
@@ -504,8 +505,8 @@ fn test_cross_cluster_moves_ignores_intra_cluster_matches() {
     assert!(!f.hunks[0].rows[2].is_moved());
     assert!(!f.hunks[0].rows[3].is_moved());
 
-    // When separated by Row::Ctx into different clusters within the same hunk, it
-    // matches
+    // When separated by Row::Ctx into different clusters within the same hunk,
+    // it matches
     let mut f2 = file(vec![hunk(vec![
         del(10, "first_statement();"),
         del(11, "second_statement();"),
@@ -1067,10 +1068,10 @@ fn test_tail_absorption_stops_before_mod_or_already_moved_row() {
 
 #[test]
 fn test_tail_absorption_hunk_boundary_confinement() {
-    // Core spans hunk 0 (source dels) and hunk 1 (target adds). Neither hunk has
-    // subsequent rows. Hunk 2 contains candidates with matching text and delta,
-    // but residing in an unrelated hunk. Tail absorption must remain confined to
-    // the hunks containing the core move block.
+    // Core spans hunk 0 (source dels) and hunk 1 (target adds). Neither hunk
+    // has subsequent rows. Hunk 2 contains candidates with matching text and
+    // delta, but residing in an unrelated hunk. Tail absorption must remain
+    // confined to the hunks containing the core move block.
     let mut f = file(vec![
         hunk(vec![del(10, "    core_a();"), del(11, "        core_b();")]),
         hunk(vec![

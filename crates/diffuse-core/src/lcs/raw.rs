@@ -53,7 +53,8 @@ fn token_match_reward(t: &str) -> i32 {
     } else if char_len(t) <= 1 {
         // Low-entropy isolated punctuation and single-character operators
         // are weighted strictly below affine gap opening + extension (20),
-        // preventing isolated punctuation matches across disjoint semantic units.
+        // preventing isolated punctuation matches across disjoint semantic
+        // units.
         4
     } else {
         10

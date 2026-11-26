@@ -407,7 +407,8 @@ fn test_scrollbar_thumb_minimum_twelve_percent() {
         "small document preserves proportional thumb size"
     );
 
-    // Track too short to fit the minimum thumb plus 1 line of travel returns None:
+    // Track too short to fit the minimum thumb plus 1 line of travel returns
+    // None:
     assert!(AppState::scrollbar_thumb_size(2, 1, 10).is_none());
 
     // Track of height 3 gives thumb of 2 rows (leaving 1 row room to travel):
@@ -487,7 +488,8 @@ fn test_scrollbar_scroll_for_row_no_edge_snapping() {
         AppState::scrollbar_thumb_for(track_h, vh, total, s_last, header_vis).unwrap();
     assert_eq!(off_last, span);
 
-    // Every pointer row maps monotonically to thumb offsets with step at most 1:
+    // Every pointer row maps monotonically to thumb offsets with step at most
+    // 1:
     let mut prev_off = 0;
     for r in 0..track_h {
         let s = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, r);
@@ -620,8 +622,9 @@ fn test_scrollbar_step_kinematic_scaling() {
     //    max_scroll=480 round(480 / 21) = 23
     assert_eq!(AppState::scrollbar_step(24, 20, 500, 3), 23);
 
-    // 5. Short diff with small max_scroll clamps to min_step: track_h=24, vh=20,
-    //    total=25 -> max_scroll=5, span=21, round(5/21)=0 -> clamped to 3
+    // 5. Short diff with small max_scroll clamps to min_step: track_h=24,
+    //    vh=20, total=25 -> max_scroll=5, span=21, round(5/21)=0 -> clamped to
+    //    3
     assert_eq!(AppState::scrollbar_step(24, 20, 25, 3), 3);
 }
 
@@ -741,8 +744,8 @@ fn test_scrollbar_subcell_glyphs_and_inversion() {
     assert!(ansi_half.contains(&p.scrollbar_thumb.fg_code()));
     assert!(ansi_half.contains(&p.scrollbar_track.bg_code()));
 
-    // Other BottomEdge eighths: lower block 8 - frac with FG = track, BG = thumb
-    // (inverted)
+    // Other BottomEdge eighths: lower block 8 - frac with FG = track, BG =
+    // thumb (inverted)
     for frac in [1, 2, 3, 5, 6, 7] {
         let cell = ScrollbarCell::BottomEdge { eighths: frac };
         let ch = cell.glyph();
@@ -823,8 +826,8 @@ fn test_hunk_expand_icon_for_segment_branches() {
     use crate::types::HunkExpandIcon;
 
     // 1. Single-line hunk with context above and below (lines 10..10 in 20-line
-    //    file). The replacement must pair into one Mod row, so the lines share a
-    //    salient token; a pair sharing only the digit would stay two rows.
+    //    file). The replacement must pair into one Mod row, so the lines share
+    //    a salient token; a pair sharing only the digit would stay two rows.
     let diff_mid = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -10,1 +10,1 @@\n-old value ten\n+new value ten\n";
     let mut old_lines = (1..=20).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
     old_lines[9] = "old value ten\n".into();
@@ -970,8 +973,8 @@ fn test_hunk_expand_icon_for_segment_branches() {
         Some(HunkExpandIcon::Down)
     );
 
-    // 4. 1-line hunk at bottom of file (context above only: 1 line added at bottom
-    //    of 10-line file)
+    // 4. 1-line hunk at bottom of file (context above only: 1 line added at
+    //    bottom of 10-line file)
     let diff_bot =
         "diff --git a/bot.rs b/bot.rs\n--- a/bot.rs\n+++ b/bot.rs\n@@ -10,0 +10,1 @@\n+new 10\n";
     let old_bot = (1..=9).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
@@ -1002,7 +1005,8 @@ fn test_hunk_expand_icon_for_segment_branches() {
         state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[1]),
         Some(HunkExpandIcon::Up)
     );
-    // When wrapped into 4 visual segments, segment 0 is Up and segment 1 is None
+    // When wrapped into 4 visual segments, segment 0 is Up and segment 1 is
+    // None
     assert_eq!(
         state_bot.hunk_expand_icon_for_segment(row_bot, 0, &[4]),
         Some(HunkExpandIcon::Up)
@@ -1169,7 +1173,8 @@ fn test_line_num_tracking_and_collapsible_gutter_boundaries() {
     assert!(!state.is_old_line_gutter_active(48));
     assert_eq!(state.gutter_width_for(48), 5);
 
-    // Forced on: Some(true) forces active even on narrow screen / phone (48 cols)
+    // Forced on: Some(true) forces active even on narrow screen / phone (48
+    // cols)
     state.show_old_line_gutter = Some(true);
     assert!(state.is_old_line_gutter_active(48));
     assert_eq!(state.gutter_width_for(48), 8);

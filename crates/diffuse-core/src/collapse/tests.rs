@@ -1793,8 +1793,8 @@ fn test_import_block_expansion_delimiter_hijacking() {
         "io row must not claim MovedTgt tokens from donor line, but claimed: {io_moved_runs:?}"
     );
 
-    // Line 4 (sync::{Arc, Mutex, MutexGuard},) is the true reflow destination of
-    // sync::{Arc, Mutex}. Its own ::{ must NOT be an Add while sync is
+    // Line 4 (sync::{Arc, Mutex, MutexGuard},) is the true reflow destination
+    // of sync::{Arc, Mutex}. Its own ::{ must NOT be an Add while sync is
     // MovedTgt.
     let sync_row = c
         .iter()
@@ -1812,8 +1812,8 @@ fn test_import_block_expansion_delimiter_hijacking() {
     );
 
     // Concatenating the non-add tokens across the visual reflow group:
-    // Seed context + tail MovedTgt tokens must reconstruct the exact original old
-    // line.
+    // Seed context + tail MovedTgt tokens must reconstruct the exact original
+    // old line.
     let mut reconstructed = String::new();
     for r in &c {
         for run in merged_runs(r) {
@@ -1893,8 +1893,8 @@ fn test_import_expansion_reaches_terminal_close_delimiter() {
         "Seed row must reconstruct the old line"
     );
 
-    // Concatenating surviving runs (Ctx + MovedTgt) across the reflow rows matches
-    // surviving tokens.
+    // Concatenating surviving runs (Ctx + MovedTgt) across the reflow rows
+    // matches surviving tokens.
     let surviving: String = c
         .iter()
         .flat_map(merged_runs)
@@ -1909,7 +1909,8 @@ fn test_import_expansion_reaches_terminal_close_delimiter() {
 
 #[test]
 fn test_import_expansion_with_misaligned_brace_indentation() {
-    // Del line is indented with 4 spaces; terminal brace has 8 spaces (misaligned).
+    // Del line is indented with 4 spaces; terminal brace has 8 spaces
+    // (misaligned).
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -1956,8 +1957,8 @@ fn test_import_expansion_with_misaligned_brace_indentation() {
         "seed row must not strike out ';' when terminal '}};' is part of reflow group"
     );
 
-    // Terminal row must have }; marked as MovedTgt, with leading indent marked as
-    // Add
+    // Terminal row must have }; marked as MovedTgt, with leading indent marked
+    // as Add
     let tgt_runs: Vec<_> = merged_runs(last_row)
         .into_iter()
         .filter(|r| r.kind == RunKind::MovedTgt)
@@ -1992,8 +1993,8 @@ fn test_import_nesting_outer_wrapper_braces_are_add_fill() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Reconstruction invariant: concatenating non-add runs across the group must
-    // yield the original line "use std::io::{BufRead, Write};"
+    // Reconstruction invariant: concatenating non-add runs across the group
+    // must yield the original line "use std::io::{BufRead, Write};"
     let reconstructed: String = c
         .iter()
         .flat_map(merged_runs)

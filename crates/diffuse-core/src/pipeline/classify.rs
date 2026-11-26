@@ -131,8 +131,8 @@ pub fn colored_runs_with_next(
         let mut full_tokens = cell.borrow_mut();
         full_tokens.clear();
         for_each_ctx_line_token(&target_text, new_line, next_line, profile, regions, |t| {
-            // Safety: tokens are only accessed within this block while target_text
-            // is alive.
+            // Safety: tokens are only accessed within this block while
+            // target_text is alive.
             let tok_static =
                 unsafe { mem::transmute::<ClassifiedToken<'_>, ClassifiedToken<'static>>(t) };
             full_tokens.push(tok_static);

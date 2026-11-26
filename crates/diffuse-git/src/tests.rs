@@ -320,8 +320,8 @@ fn test_repository_load_blob_gitattributes_binary() {
     let dir = tmp.path();
     init_test_git_repo(dir);
 
-    // Configure .gitattributes to mark text files as binary via -diff and binary
-    // macro
+    // Configure .gitattributes to mark text files as binary via -diff and
+    // binary macro
     fs::write(
         dir.join(".gitattributes"),
         "*.custombin -diff\n*.fakebin binary\n",
@@ -354,7 +354,8 @@ fn test_repository_load_blob_gitattributes_binary() {
     );
     assert_eq!(custom_blob.as_str(), None);
 
-    // 2. Check clean.fakebin - must be detected as binary via binary macro metadata
+    // 2. Check clean.fakebin - must be detected as binary via binary macro
+    //    metadata
     let fake_blob = repo
         .load_blob("HEAD", "clean.fakebin")
         .expect("fakebin blob");
@@ -892,14 +893,16 @@ fn other() {
     let (hunks, patch) =
         crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::TrimEquality);
     assert!(!hunks.is_empty());
-    // Verify that the indentation of closing braces at different indentation levels
-    // is preserved accurately without interning bleed. In a unified diff, context
-    // lines are prefixed with ' ', so 4 leading spaces becomes 5 leading spaces.
+    // Verify that the indentation of closing braces at different indentation
+    // levels is preserved accurately without interning bleed. In a unified
+    // diff, context lines are prefixed with ' ', so 4 leading spaces becomes 5
+    // leading spaces.
     assert!(patch.contains("     }\n }\n"));
     for hunk in &hunks {
         for row in &hunk.rows {
             if row.text().trim() == "}" {
-                // Must be either "    }" (4 spaces) or "}" (0 spaces), not corrupted
+                // Must be either "    }" (4 spaces) or "}" (0 spaces), not
+                // corrupted
                 assert!(row.text() == "    }" || row.text() == "}");
             }
         }
@@ -1200,8 +1203,8 @@ fn test_notes_scope_resolution() {
     // 5. Single commit ref c1: resolves to c1
     assert_eq!(repo.notes_commit(&[c1.to_string()]), Some(c1.to_string()));
 
-    // 6. Range c1.. (equivalent to c1..HEAD): base c1, parent of tip c3 (HEAD) is
-    //    c2 -> "c1..c2"
+    // 6. Range c1.. (equivalent to c1..HEAD): base c1, parent of tip c3 (HEAD)
+    //    is c2 -> "c1..c2"
     assert_eq!(
         repo.notes_commit(&[format!("{c1}..")]),
         Some(format!("{c1}..{c2}"))
@@ -1356,7 +1359,8 @@ fn test_resolve_commit_display_name() {
         Some("HEAD^!".to_string())
     );
 
-    // Single-commit range c1..scrollbar-grab-drag resolves to scrollbar-grab-drag^!
+    // Single-commit range c1..scrollbar-grab-drag resolves to
+    // scrollbar-grab-drag^!
     assert_eq!(
         repo.resolve_commit_range(&[format!("{c1}..scrollbar-grab-drag")]),
         Some("scrollbar-grab-drag^!".to_string())

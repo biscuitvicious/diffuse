@@ -1847,9 +1847,9 @@ fn compute_contextual_affinity(
         .map(|w| w.len())
         .sum();
 
-    // Adjacent operand bonus: if a neighboring pre-image line in the reflow block
-    // shares operands with the post-image target (e.g. multi-line expression
-    // whose operands precede or follow the line carrying the method
+    // Adjacent operand bonus: if a neighboring pre-image line in the reflow
+    // block shares operands with the post-image target (e.g. multi-line
+    // expression whose operands precede or follow the line carrying the method
     // call/token). The neighbor must be an unclosed continuation line (not
     // terminated by `;`, `{`, or `}`).
     let mut neighbor_shared_chars: usize = 0;
@@ -1918,7 +1918,8 @@ fn is_generic_subtoken(token: &str, profile: Option<&LangProfile>) -> bool {
     if t.is_empty() {
         return true;
     }
-    // Method call <= 8 chars without underscore: e.g. .round(), .len(), .clone()
+    // Method call <= 8 chars without underscore: e.g. .round(), .len(),
+    // .clone()
     if t.starts_with('.') && t.len() <= 8 && !t.contains('_') {
         return true;
     }
@@ -2202,7 +2203,8 @@ fn expand_match(
     let mut end_a = a_pos + token_len + expand_right;
 
     // Do not slice across alphanumeric word boundaries: if expanding left or
-    // right halted inside an alphanumeric token, roll back to the token boundary.
+    // right halted inside an alphanumeric token, roll back to the token
+    // boundary.
     while start_d < d_pos
         && start_d > 0
         && del_str[..start_d]
@@ -2669,7 +2671,8 @@ mod tests {
     fn test_pure_add_row_anti_scavenging_floor_rejects_minor_scraps() {
         let profile = diffuse_syntax::registry::lang_profile("rs");
         // Slot 0 (Del): let x = calculate();
-        // Slot 1 (Add): let very_long_brand_new_statement_with_many_tokens_and_args =
+        // Slot 1 (Add): let
+        // very_long_brand_new_statement_with_many_tokens_and_args =
         // calculate();
         let mut slot_runs: Vec<Vec<(RunKind, String)>> = vec![
             vec![(RunKind::Del, "let x = calculate();".to_string())],
@@ -2721,9 +2724,9 @@ mod tests {
         let is_pure_add = vec![false, false, false, true];
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
 
-        // Under single-donor rule: pure Add slot 3 cannot accept tokens from both slot
-        // 0 and slot 2 (which are disjoint). It may accept from slot 0 OR slot
-        // 2, but NOT both!
+        // Under single-donor rule: pure Add slot 3 cannot accept tokens from
+        // both slot 0 and slot 2 (which are disjoint). It may accept from slot
+        // 0 OR slot 2, but NOT both!
         let has_alpha = slot_runs[3]
             .iter()
             .any(|(k, t)| *k == RunKind::MovedTgt && t.contains("compute_alpha"));

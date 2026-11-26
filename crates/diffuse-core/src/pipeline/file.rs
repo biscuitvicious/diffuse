@@ -327,7 +327,8 @@ pub fn process_single_diff_file(
     }
     // The post-collapse return value (newly absorbed pairs) is not used: a
     // subsequent index-shifting pass does not follow, so there is no caller
-    // that needs to re-resolve positions. The side-effect on `f` is what matters.
+    // that needs to re-resolve positions. The side-effect on `f` is what
+    // matters.
     let t3 = Instant::now();
     T_STAGE[2].fetch_add(
         t3.duration_since(t2).as_micros() as u64,
@@ -773,7 +774,8 @@ pub fn render_file_from_source(
             old_content,
         } => {
             // The stored fallback is the exact input validated on first parse,
-            // so a mismatch here signals an internal logic error, not user input.
+            // so a mismatch here signals an internal logic error, not user
+            // input.
             let parsed = crate::parse::parse_diff(diff)
                 .expect("stored raw fallback was validated when first parsed");
             let f = parsed

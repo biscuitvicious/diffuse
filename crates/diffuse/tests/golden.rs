@@ -570,7 +570,8 @@ fn assert_diff_invariants(
             }
         }
 
-        // Apply oracle: verify reconstructed hunks apply cleanly to the old snapshot.
+        // Apply oracle: verify reconstructed hunks apply cleanly to the old
+        // snapshot.
         if let Some(snap) = &old_lines {
             let snap_vec: Vec<String> = snap.iter().map(|s| s.to_string()).collect();
             let reconstructed_hunks: Vec<_> = of.hunks.iter().map(|h| h.reconstruct()).collect();
@@ -739,7 +740,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
         let mut mods = 0usize;
         let mut movs = 0usize;
         for h in &f.hunks {
-            // Grouped peer row texts in this hunk, for the moved-out tripwire below.
+            // Grouped peer row texts in this hunk, for the moved-out tripwire
+            // below.
             let member_texts: Vec<String> = h
                 .rows
                 .iter()
@@ -1023,9 +1025,10 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness (only when present — lib_leg
-        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
-        //    as of the slim format, so we skip these checks when the vecs are empty).
+        // 1. Verify reconstructed content completeness (only when present —
+        //    lib_leg populates these in-memory; bin_leg decodes from wire JSON
+        //    which omits them as of the slim format, so we skip these checks
+        //    when the vecs are empty).
         if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
             check!(
                 f.new_content.len() == f.new_line_count,
@@ -1473,7 +1476,8 @@ fn assert_tui_render_matches(name: &str, fixture: &Fixture, output: &PipelineOut
         for (dim_name, width, height) in TUI_DIMENSIONS {
             let (w, h) = (*width as usize, *height as usize);
 
-            // 1. init: pre-streaming / frame 0 (empty files, is_streaming: true)
+            // 1. init: pre-streaming / frame 0 (empty files, is_streaming:
+            //    true)
             let init_output = PipelineOutput {
                 files: Vec::new(),
                 branch: output.branch.clone(),

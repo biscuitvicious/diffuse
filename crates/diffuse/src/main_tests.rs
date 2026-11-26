@@ -787,14 +787,16 @@ fn test_relocate_span_interleaved_rows() {
 
 #[test]
 fn test_cli_expand_mods_flag_resolution() {
-    // 1. Default (no flag) in pager/TUI mode -> Some(false); non-pager/TUI -> None
+    // 1. Default (no flag) in pager/TUI mode -> Some(false); non-pager/TUI ->
+    //    None
     let args = Args::try_parse_from(["diffuse"]).expect("parse default");
     assert!(!args.expand_mods);
     assert!(!args.no_expand_mods);
     assert_eq!(args.resolved_expand_mods(true), Some(false));
     assert_eq!(args.resolved_expand_mods(false), None);
 
-    // 2. --expand-mods flag in pager/TUI mode -> Some(true); non-pager/TUI -> None
+    // 2. --expand-mods flag in pager/TUI mode -> Some(true); non-pager/TUI ->
+    //    None
     let args = Args::try_parse_from(["diffuse", "--expand-mods"]).expect("parse expand-mods");
     assert!(args.expand_mods);
     assert!(!args.no_expand_mods);
@@ -834,8 +836,8 @@ fn test_cli_expand_mods_flag_resolution() {
     for non_pager_arg in ["--raw", "--markdown", "-m", "--json", "--jsonl"] {
         let args = Args::try_parse_from(["diffuse", non_pager_arg, "--expand-mods"])
             .expect("parse non-pager mode with expand-mods");
-        // Although the CLI flag was parsed, when evaluated for non-pager/TUI mode it
-        // returns None
+        // Although the CLI flag was parsed, when evaluated for non-pager/TUI
+        // mode it returns None
         assert_eq!(args.resolved_expand_mods(false), None);
     }
 }

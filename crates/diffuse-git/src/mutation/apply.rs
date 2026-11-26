@@ -43,8 +43,8 @@ pub fn apply_hunk_to_buffer(buffer: &[u8], hunk: &Hunk, reverse: bool) -> Result
         (nominal, exp, rep)
     };
 
-    // If buffer is empty and we expect nothing, replacement lines form the entire
-    // output.
+    // If buffer is empty and we expect nothing, replacement lines form the
+    // entire output.
     if buffer_lines.is_empty() && expected_texts.is_empty() {
         let mut out = Vec::new();
         for r in &replacement_lines {

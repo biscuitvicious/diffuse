@@ -1479,8 +1479,8 @@ fn test_show_source_only_on_unanchored_notes() {
         "anchored notes must NEVER display source lines in the TUI even when show_note_source is on"
     );
 
-    // Unanchored note at banner_idx MUST display original source rows *above* the
-    // note callout!
+    // Unanchored note at banner_idx MUST display original source rows *above*
+    // the note callout!
     let banner_callout_on = &callouts_on[&banner_idx];
     let src_idx = banner_callout_on
         .iter()
@@ -1724,8 +1724,8 @@ diff --git a/test.rs b/test.rs
         .with_visual_context(4);
 
     let out = run_pipeline_full(diff, Some(new_map), None, opts);
-    // The synthetic context bridges the gap, causing merge_adjacent_hunks to merge
-    // them into 1!
+    // The synthetic context bridges the gap, causing merge_adjacent_hunks to
+    // merge them into 1!
     assert_eq!(
         out.files[0].hunks.len(),
         1,
@@ -1949,7 +1949,8 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
     assert_eq!(state.output.files[0].counts.notes, 0);
     assert_eq!(state.output.files[0].counts.resolved_notes, 1);
 
-    // When show_resolved_notes is false (default), resolved note is hidden/removed
+    // When show_resolved_notes is false (default), resolved note is
+    // hidden/removed
     assert!(!state.show_resolved_notes);
     let callouts_after = state.note_callouts(80);
     assert!(
@@ -2017,7 +2018,8 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
     // Reload from disk (show_resolved_notes is false)
     let _ = state.reload_notes_from_disk();
 
-    // vis_line must be clamped back to 0 (parent row), without out-of-bounds index
+    // vis_line must be clamped back to 0 (parent row), without out-of-bounds
+    // index
     assert_eq!(state.vis_line, 0);
 }
 

@@ -329,11 +329,13 @@ impl OutputHunk {
 
     fn validate_reflow_groups(&self, _profile: Option<&LangProfile>) -> Result<(), String> {
         // Validate Peer Groups:
-        // 1. Peer group atomicity: all rows with the same GroupId must form an unbroken
-        //    contiguous slice.
+        // 1. Peer group atomicity: all rows with the same GroupId must form an
+        //    unbroken contiguous slice.
         // 2. Peer group slots: slot indices must be strictly monotonic.
-        // 3. Peer group lines: old_line and new_line must be strictly monotonic.
-        // 4. Closed-economy conservation: sum(MovedSrc chars) == sum(MovedTgt chars).
+        // 3. Peer group lines: old_line and new_line must be strictly
+        //    monotonic.
+        // 4. Closed-economy conservation: sum(MovedSrc chars) == sum(MovedTgt
+        //    chars).
         let mut peer_groups: rustc_hash::FxHashMap<GroupId, Vec<(usize, &OutputRow)>> =
             rustc_hash::FxHashMap::default();
         for (i, r) in self.rows.iter().enumerate() {
