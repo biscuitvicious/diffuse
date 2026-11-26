@@ -1,8 +1,9 @@
 //! Raw dynamic programming token alignment and Gotoh 3-state affine gap
 //! scoring.
 
+use std::{cell::RefCell, ops::Range};
+
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 
 use super::{
     arena::{LcsScratchArena, Weights},
@@ -11,6 +12,23 @@ use super::{
         token_ws_kind, tokens_can_match,
     },
 };
+
+/// Per-token line, slot, and line-boundary metadata for 2D multi-line Gotoh
+/// sequence alignment.
+pub(crate) struct SlotAffinity<'a> {
+    pub(crate) full_a: &'a [&'a str],
+    pub(crate) full_b: &'a [&'a str],
+    pub(crate) offset_a: usize,
+    pub(crate) offset_b: usize,
+    pub(crate) line_a: &'a [usize],
+    pub(crate) line_b: &'a [usize],
+    pub(crate) line_ranges_a: &'a [Range<usize>],
+    pub(crate) line_ranges_b: &'a [Range<usize>],
+    pub(crate) slot_of_old: &'a [usize],
+    pub(crate) slot_of_new: &'a [usize],
+    pub(crate) max_slot_distance: usize,
+    pub(crate) same_slot_bonus: i32,
+}
 
 thread_local! {
     static SCRATCH_ARENA: RefCell<LcsScratchArena> = RefCell::new(LcsScratchArena::default());
@@ -96,6 +114,49 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
     next_a: Option<&str>,
     next_b: Option<&str>,
     weights: &Weights,
+) -> FxHashMap<usize, usize> {
+    raw_lcs_dp(arena, a, b, prev_a, prev_b, next_a, next_b, weights, None)
+}
+
+/// 2D slot-aware Gotoh alignment over an interval `(a, b)` using thread-local
+/// scratch memory, enforcing cross-slot whitespace prohibition, slot distance
+/// bounds, line-bounded subword contiguity, and same-slot affinity.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn raw_lcs_pairs_with_slots_context(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+    slots: &SlotAffinity<'_>,
+) -> FxHashMap<usize, usize> {
+    SCRATCH_ARENA.with_borrow_mut(|arena| {
+        raw_lcs_dp(
+            arena,
+            a,
+            b,
+            prev_a,
+            prev_b,
+            next_a,
+            next_b,
+            &Weights::DEFAULT,
+            Some(slots),
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn raw_lcs_dp(
+    arena: &mut LcsScratchArena,
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+    weights: &Weights,
+    slots: Option<&SlotAffinity<'_>>,
 ) -> FxHashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
@@ -190,35 +251,95 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
             tb_y[idx(i, j)] = to_y;
 
             // State M: match a[i] with b[j]
-            if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
+            let is_ws = token_is_ws(a[i]);
+            let (
+                can_match,
+                same_slot_bonus,
+                same_line_prev_a,
+                same_line_next_a,
+                same_line_prev_b,
+                same_line_next_b,
+            ) = if let Some(s) = slots {
+                let gi = s.offset_a + i;
+                let gj = s.offset_b + j;
+                let la_line = s.line_a[gi];
+                let lb_line = s.line_b[gj];
+                let sa = s.slot_of_old[la_line];
+                let sb = s.slot_of_new[lb_line];
+                if sa.abs_diff(sb) > s.max_slot_distance || (sa != sb && is_ws) {
+                    continue;
+                }
+                let ra = &s.line_ranges_a[la_line];
+                let rb = &s.line_ranges_b[lb_line];
+                let matched = tokens_can_match(
+                    &s.full_a[ra.clone()],
+                    &s.full_b[rb.clone()],
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    gi - ra.start,
+                    gj - rb.start,
+                );
+                let affinity = if sa == sb && !is_ws {
+                    s.same_slot_bonus
+                } else {
+                    0
+                };
+                (
+                    matched,
+                    affinity,
+                    i > 0 && s.line_a[gi - 1] == la_line,
+                    i + 1 < n && s.line_a[gi + 1] == la_line,
+                    j > 0 && s.line_b[gj - 1] == lb_line,
+                    j + 1 < m && s.line_b[gj + 1] == lb_line,
+                )
+            } else {
+                (
+                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j),
+                    0,
+                    i > 0,
+                    i + 1 < n,
+                    j > 0,
+                    j + 1 < m,
+                )
+            };
+
+            if can_match {
                 let ca = crate::token::ContainerKind::from_id(container_a[i]);
                 let cb = crate::token::ContainerKind::from_id(container_b[j]);
                 if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
                     continue;
                 }
 
-                if is_subword_token(a[i]) {
-                    let la = i > 0
-                        && is_subword_token(a[i - 1])
-                        && are_contiguous_subwords(a[i - 1], a[i]);
-                    let ra = i + 1 < n
-                        && is_subword_token(a[i + 1])
-                        && are_contiguous_subwords(a[i], a[i + 1]);
-                    let lb = j > 0
-                        && is_subword_token(b[j - 1])
-                        && are_contiguous_subwords(b[j - 1], b[j]);
-                    let rb = j + 1 < m
-                        && is_subword_token(b[j + 1])
-                        && are_contiguous_subwords(b[j], b[j + 1]);
-                    if (la != lb || ra != rb) && (depth_a[i] != depth_b[j] || ca != cb) {
-                        continue;
-                    }
+                let is_subword = is_subword_token(a[i]);
+                let (la, ra, lb, rb) = if is_subword {
+                    (
+                        same_line_prev_a
+                            && is_subword_token(a[i - 1])
+                            && are_contiguous_subwords(a[i - 1], a[i]),
+                        same_line_next_a
+                            && is_subword_token(a[i + 1])
+                            && are_contiguous_subwords(a[i], a[i + 1]),
+                        same_line_prev_b
+                            && is_subword_token(b[j - 1])
+                            && are_contiguous_subwords(b[j - 1], b[j]),
+                        same_line_next_b
+                            && is_subword_token(b[j + 1])
+                            && are_contiguous_subwords(b[j], b[j + 1]),
+                    )
+                } else {
+                    (false, false, false, false)
+                };
+
+                if is_subword && (la != lb || ra != rb) && (depth_a[i] != depth_b[j] || ca != cb) {
+                    continue;
                 }
-                let is_ws = token_is_ws(a[i]);
+
                 let depth_matched = depth_a[i] == depth_b[j];
                 let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };
-                let is_subword_pair = i + 1 < n
-                    && j + 1 < m
+                let is_subword_pair = same_line_next_a
+                    && same_line_next_b
                     && are_contiguous_subwords(a[i], a[i + 1])
                     && are_contiguous_subwords(b[j], b[j + 1]);
                 let subword_bonus = if is_subword_pair {
@@ -226,8 +347,11 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                 } else {
                     0
                 };
-                let same_container =
-                    depth_matched && (i + 1 == n || j + 1 == m || depth_a[i + 1] == depth_b[j + 1]);
+                let same_line_continuation =
+                    slots.is_none() || (same_line_next_a && same_line_next_b);
+                let same_container = depth_matched
+                    && same_line_continuation
+                    && (i + 1 == n || j + 1 == m || depth_a[i + 1] == depth_b[j + 1]);
                 let run_bonus = if is_ws || !same_container {
                     0
                 } else {
@@ -244,7 +368,14 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                     (next_y, 2, 1)
                 };
                 let base_r = if is_ws {
-                    token_ws_kind(a, prev_a, next_a, i).match_reward()
+                    if let Some(s) = slots {
+                        let gi = s.offset_a + i;
+                        let r_line = &s.line_ranges_a[s.line_a[gi]];
+                        token_ws_kind(&s.full_a[r_line.clone()], &[], None, gi - r_line.start)
+                            .match_reward()
+                    } else {
+                        token_ws_kind(a, prev_a, next_a, i).match_reward()
+                    }
                 } else {
                     token_match_reward(a[i])
                 };
@@ -254,19 +385,7 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                 } else {
                     -depth_diff * weights.depth_mismatch_penalty
                 };
-                let boundary_adj = if is_subword_token(a[i]) {
-                    let la = i > 0
-                        && is_subword_token(a[i - 1])
-                        && are_contiguous_subwords(a[i - 1], a[i]);
-                    let ra = i + 1 < n
-                        && is_subword_token(a[i + 1])
-                        && are_contiguous_subwords(a[i], a[i + 1]);
-                    let lb = j > 0
-                        && is_subword_token(b[j - 1])
-                        && are_contiguous_subwords(b[j - 1], b[j]);
-                    let rb = j + 1 < m
-                        && is_subword_token(b[j + 1])
-                        && are_contiguous_subwords(b[j], b[j + 1]);
+                let boundary_adj = if is_subword {
                     if la == lb && ra == rb {
                         weights.boundary_match_bonus
                     } else {
@@ -275,7 +394,7 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                 } else {
                     0
                 };
-                let r = (base_r + depth_adj + boundary_adj).max(0);
+                let r = (base_r + depth_adj + boundary_adj + same_slot_bonus).max(0);
                 m_matrix[idx(i, j)] = r.saturating_add(best_next);
                 tb_m[idx(i, j)] = to_m;
                 run_len[idx(i, j)] = if is_ws { 0 } else { rl };
