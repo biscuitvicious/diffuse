@@ -1,7 +1,7 @@
 # 2D Coordinate-Aware Multi-Line LCS and Post-Segmentation Projection
 
 - [x] **Phase 1: 2D Token Stream and Slot-Aware Gotoh LCS**
-- [ ] **Phase 2: Unified `n × m` Post-Segmentation Slot Projector**
+- [x] **Phase 2: Unified `n × m` Post-Segmentation Slot Projector**
 - [ ] **Phase 3: Hybrid Integration with Non-Monotone Residual Relocation**
 - [ ] **Phase 4: Legacy `join("\n")` Retirement and Golden Corpus Calibration**
 
