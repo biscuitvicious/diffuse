@@ -551,10 +551,10 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::dark(), true);
     let plain = strip_ansi(&rendered);
 
-    // File header must separate filename from badges. The peer collapse
-    // pairs each 1:1 replacement into a single Mod row, so the badge counts
-    // two modifications rather than two deletions plus two additions.
-    assert!(plain.contains("a.txt ~2"));
+    // File header must separate filename from badges. Neither replacement is
+    // a modification: `old1` and `new1` share only the digit `1`, which is not
+    // a salient match, so both hunks keep their deletion and addition.
+    assert!(plain.contains("a.txt −2 +2"));
 
     // Each hunk has a hunk divider
     assert!(plain.contains("──── 1/2"));
@@ -635,7 +635,8 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
 
     // Verify background tints are active on trailing spaces before reset
     let theme = DiffuseTheme::dark();
-    let mod_bg = theme.row_style(crate::core::parse::RowKind::Mod).tint_bg();
+    let del_bg = theme.row_style(crate::core::parse::RowKind::Del).tint_bg();
+    let add_bg = theme.row_style(crate::core::parse::RowKind::Add).tint_bg();
     let header_bg = theme.palette[crate::theme::Cursor::Rest]
         .file_header
         .bg
@@ -646,15 +647,17 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
     // The banner runs out its ruler to the terminal width.
     assert!(lines[0].ends_with("═\x1b[0m"));
 
-    // Line 3: Modification row — the peer collapse pairs the 1:1 -old1/+new1
-    // replacement into a single Mod line with struck/filled runs.
-    assert!(lines[3].contains(&mod_bg));
-    assert!(lines[3].ends_with(&format!("{mod_bg}  \x1b[0m")) || lines[3].ends_with("  \x1b[0m"));
-    let mod_plain = strip_ansi(lines[3]);
-    assert!(mod_plain.contains("old") && mod_plain.contains("new1"));
+    // Lines 3 and 4: the replacement stays a deletion and an addition sharing
+    // one line number, because `old1` and `new1` have no salient match.
+    assert!(lines[3].contains(&del_bg));
+    assert!(lines[3].ends_with(&format!("{del_bg}  \x1b[0m")) || lines[3].ends_with("  \x1b[0m"));
+    assert!(strip_ansi(lines[3]).contains("old1"));
 
-    // Line 4: Context row (ctx2)
-    assert!(strip_ansi(lines[4]).contains("ctx2"));
+    assert!(lines[4].contains(&add_bg));
+    assert!(strip_ansi(lines[4]).contains("new1"));
+
+    // Line 5: Context row (ctx2)
+    assert!(strip_ansi(lines[5]).contains("ctx2"));
 
     // Direct check on write_file_header_bar_with_width
     let mut header_buf = String::new();

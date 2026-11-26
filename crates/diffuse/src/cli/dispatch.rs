@@ -293,9 +293,7 @@ fn dispatch_path_diff(
         .with_visual_context(args.context)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(args.token_product_cap)
-        .with_cluster_product_cap(args.cluster_budget)
-        .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
-        .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
+        .with_cluster_product_cap(args.cluster_budget);
 
     let consumer = stream_parsed_files(
         res.files,
@@ -384,9 +382,7 @@ fn dispatch_diff_stream(
         .with_visual_context(args.context)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(args.token_product_cap)
-        .with_cluster_product_cap(args.cluster_budget)
-        .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
-        .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
+        .with_cluster_product_cap(args.cluster_budget);
 
     let (consumer, parse_outcome) = if let Some(path) = diff_opt {
         let file = fs::File::open(path)?;
@@ -507,9 +503,7 @@ fn dispatch_git_review(
         .with_visual_context(args.context)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(args.token_product_cap)
-        .with_cluster_product_cap(args.cluster_budget)
-        .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
-        .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
+        .with_cluster_product_cap(args.cluster_budget);
 
     let staged = args.staged;
 

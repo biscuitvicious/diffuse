@@ -313,6 +313,20 @@ impl LangProfile {
             .any(|prefix| prefix.trim() == word)
     }
 
+    /// Whether `word` can open a statement or declaration clause in this
+    /// language (declaration keyword, control-flow keyword, import head, or
+    /// modifier prefix from `decl_prefixes`).
+    #[inline]
+    pub fn is_statement_head(&self, word: &str) -> bool {
+        self.is_declaration_keyword(word)
+            || self.is_control_flow(word)
+            || self.is_import(word)
+            || self
+                .decl_prefixes
+                .iter()
+                .any(|pf| pf.split_whitespace().next() == Some(word))
+    }
+
     /// Whether `t` is a recognized multi-character operator in this language.
     #[inline]
     pub fn is_operator_anchor(&self, t: &str) -> bool {

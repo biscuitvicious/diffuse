@@ -1,22 +1,27 @@
 //! Unified M-to-N peer reflow pipeline.
 //!
-//! Symmetric macro cluster factorization cuts and micro slot-alignment DP.
+//! Single-path cluster alignment (`lattice`), formation segmentation
+//! (`reflow`), closed-economy window typing (`slot`), and normalization.
 
 use diffuse_syntax::profile::LangProfile;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    cluster::factor::factor_cluster_with_content,
+    cluster::dp::cluster_budget,
     collapse::{
+        formation::Formation,
         invariants::{
             check_context_old_line_monotonicity, check_del_add_topological_order,
             check_no_orphaned_continuation_dels,
         },
+        lattice::{PathStep, solve_cluster_path},
         normalize::{pass_normalize_identical_mods, recalibrate_peer_groups},
-        slot::{PeerGroupRows, align_and_type_peer_group_with_content},
+        reflow::{Segment, segment_path},
+        slot::{PeerGroupRows, compute_slot_spans, has_salient_moved_link, type_window},
     },
-    merge::RunKind,
-    parse::{AddLine, DelLine, GroupId, Hunk, PeerGroup, Row},
+    lcs::word_spans_and_runs_with_profile,
+    merge::{RunKind, is_wholesale_replacement},
+    parse::{AddLine, DelLine, GroupId, Hunk, PeerGroup, Row, Spans},
     shift::pass_shift_hunk,
 };
 
@@ -90,11 +95,6 @@ pub fn assert_peer_group_invariants(rows: &[Row]) {
         );
     }
 }
-
-/// Number of factored groups above which per-group alignment runs on the
-/// rayon thread pool. Alignment is pure over its inputs and group ids are
-/// assigned positionally, so parallel execution stays order-preserving.
-const PAR_GROUP_THRESHOLD: usize = 16;
 
 /// Fail-safe: every slot's runs must project back to the verbatim slot
 /// texts. Compound slots can mux words across lines (reordered garbage);
@@ -290,140 +290,86 @@ pub fn peer_reflow_pipeline(
                     for r in old_rows {
                         out.push(r);
                     }
-                } else if old_rows.len() * new_rows.len() > crate::cluster::dp::cluster_budget() {
+                } else if old_rows.len() * new_rows.len() > cluster_budget() {
                     out.extend(old_rows);
                     out.extend(new_rows);
                 } else {
                     let mut cluster_out = Vec::new();
-                    let factored = factor_cluster_with_content(
-                        &old_rows,
-                        &new_rows,
+                    let path =
+                        solve_cluster_path(&old_rows, &new_rows, old_content, new_content, profile);
+                    let segments = segment_path(&path, &old_rows, &new_rows, profile);
+                    let ctx = WindowTypingCtx {
                         old_content,
                         new_content,
                         profile,
-                    );
-                    let process_group =
-                        |idx: usize, mut peer_group: crate::cluster::factor::FactoredGroup| {
-                            peer_group.id = GroupId(group_id_counter.saturating_add(idx as u32));
-                            let mut group_rows = align_and_type_peer_group_with_content(
-                                &peer_group,
-                                &old_rows,
-                                &new_rows,
-                                old_content,
-                                new_content,
-                                profile,
-                            );
-                            group_rows.repair_unmatched_moves();
-                            group_rows.assert_token_conservation();
-                            (peer_group, group_rows)
-                        };
-                    use rayon::prelude::*;
-                    let group_results: Vec<_> = if factored.len() > PAR_GROUP_THRESHOLD {
-                        factored
-                            .into_par_iter()
-                            .enumerate()
-                            .map(|(idx, pg)| process_group(idx, pg))
-                            .collect()
-                    } else {
-                        factored
-                            .into_iter()
-                            .enumerate()
-                            .map(|(idx, pg)| process_group(idx, pg))
-                            .collect()
                     };
-                    group_id_counter += group_results.len() as u32;
 
-                    for (peer_group, group_rows) in group_results {
-                        let n = peer_group.old_range.len();
-                        let m = peer_group.new_range.len();
-                        let has_mod = group_rows
-                            .slots
-                            .iter()
-                            .any(|s| s.old_line.is_some() && s.new_line.is_some());
-                        let is_all_1to1_mods = group_rows.slots.len() == n
-                            && group_rows.slots.len() == m
-                            && group_rows
-                                .slots
-                                .iter()
-                                .all(|s| s.old_line.is_some() && s.new_line.is_some())
-                            && group_rows.slots.iter().all(|s| {
-                                s.runs.iter().all(|(k, _)| {
-                                    *k != RunKind::MovedSrc && *k != RunKind::MovedTgt
-                                })
-                            });
-                        if !slots_project_to_text(&group_rows) {
-                            cluster_out
-                                .extend(old_rows[peer_group.old_range.clone()].iter().cloned());
-                            cluster_out
-                                .extend(new_rows[peer_group.new_range.clone()].iter().cloned());
-                            continue;
-                        }
-
-                        let has_salient_link =
-                            crate::collapse::slot::has_salient_moved_link(&group_rows, profile);
-                        let has_strong_link = has_mod || has_salient_link;
-                        for slot in group_rows.slots {
-                            let old_text = slot.old_text.clone().unwrap_or_default();
-                            let new_text = slot.new_text.clone().unwrap_or_default();
-                            let group_meta = peer_group_meta(
-                                n,
-                                m,
-                                has_strong_link,
-                                is_all_1to1_mods,
-                                slot.group,
-                            );
-
-                            match (slot.old_line, slot.new_line) {
-                                (Some(u), Some(v)) => {
-                                    cluster_out.push(Row::Mod {
-                                        old_line: DelLine::new(u, old_text),
-                                        new_line: AddLine::new(v, new_text),
-                                        spans: slot.spans,
-                                        cached_runs: slot.runs,
-                                        group: group_meta,
-                                    });
-                                }
-                                (None, Some(v)) => {
-                                    let new_text = slot.new_text.unwrap_or_default();
-                                    if slot.is_moved_tgt {
-                                        cluster_out.push(Row::MovTgt {
-                                            line: AddLine::new(v, new_text),
-                                            spans: slot.spans,
-                                            cached_runs: slot.runs,
-                                            group: group_meta,
-                                        });
-                                    } else if n == 0 || group_meta.is_none() {
-                                        cluster_out.push(Row::add(AddLine::new(v, new_text)));
-                                    } else {
-                                        cluster_out.push(Row::Add {
-                                            line: AddLine::new(v, new_text),
-                                            spans: slot.spans,
-                                            cached_runs: slot.runs,
-                                            group: group_meta,
-                                        });
+                    // Each segment is emitted or typed on its own, with the
+                    // correspondences the path already chose. Plain single rows
+                    // bypass window typing completely; multi-row windows go
+                    // through `type_window`.
+                    let mut cursor = 0usize;
+                    let (mut oi, mut ni) = (0usize, 0usize);
+                    for segment in segments {
+                        match segment {
+                            Segment::Del { old } => {
+                                debug_assert_eq!(path.steps[cursor], PathStep::DropOld);
+                                debug_assert_eq!(oi, old);
+                                cursor += 1;
+                                oi += 1;
+                                cluster_out.push(old_rows[old].clone());
+                            }
+                            Segment::Add { new } => {
+                                debug_assert_eq!(path.steps[cursor], PathStep::DropNew);
+                                debug_assert_eq!(ni, new);
+                                cursor += 1;
+                                ni += 1;
+                                cluster_out.push(new_rows[new].clone());
+                            }
+                            Segment::Pair { old, new } => {
+                                debug_assert_eq!(path.steps[cursor], PathStep::Diag);
+                                debug_assert_eq!(oi, old);
+                                debug_assert_eq!(ni, new);
+                                cursor += 1;
+                                oi += 1;
+                                ni += 1;
+                                emit_plain_pair(
+                                    &old_rows[old],
+                                    &new_rows[new],
+                                    profile,
+                                    &mut cluster_out,
+                                );
+                            }
+                            Segment::Window { old, new } => {
+                                debug_assert_eq!(oi, old.start);
+                                debug_assert_eq!(ni, new.start);
+                                let mut pairs = Vec::new();
+                                while oi < old.end || ni < new.end {
+                                    match path.steps[cursor] {
+                                        PathStep::Diag => {
+                                            pairs.push((oi - old.start, ni - new.start));
+                                            oi += 1;
+                                            ni += 1;
+                                        }
+                                        PathStep::DropOld => oi += 1,
+                                        PathStep::DropNew => ni += 1,
                                     }
+                                    cursor += 1;
                                 }
-                                (Some(u), None) => {
-                                    let old_text = slot.old_text.unwrap_or_default();
-                                    if slot.is_moved_src {
-                                        cluster_out.push(Row::MovSrc {
-                                            line: DelLine::new(u, old_text),
-                                            spans: slot.spans,
-                                            cached_runs: slot.runs,
-                                            group: group_meta,
-                                        });
-                                    } else if m == 0 || group_meta.is_none() {
-                                        cluster_out.push(Row::del(DelLine::new(u, old_text)));
-                                    } else {
-                                        cluster_out.push(Row::Del {
-                                            line: DelLine::new(u, old_text),
-                                            spans: slot.spans,
-                                            cached_runs: slot.runs,
-                                            group: group_meta,
-                                        });
-                                    }
-                                }
-                                (None, None) => {}
+                                let formation = Formation {
+                                    id: GroupId(group_id_counter),
+                                    old_range: old,
+                                    new_range: new,
+                                };
+                                group_id_counter += 1;
+                                emit_window_segment(
+                                    &formation,
+                                    &old_rows,
+                                    &new_rows,
+                                    &pairs,
+                                    &ctx,
+                                    &mut cluster_out,
+                                );
                             }
                         }
                     }
@@ -482,13 +428,154 @@ pub fn peer_reflow_pipeline(
 
     crate::invariant!(
         res.iter()
-            .all(|r| !matches!(r, Row::Mod { .. }) || !crate::merge::is_wholesale_replacement(r)),
-        "Collapsed rows must never contain wholesale replacement Mod rows"
+            .all(|r| !matches!(r, Row::Mod { .. }) || !is_wholesale_replacement(r)),
+        "Collapsed rows must never contain wholesale replacement Mod rows: {:?}",
+        res.iter()
+            .find(|r| matches!(r, Row::Mod { .. }) && is_wholesale_replacement(r))
     );
 
     assert_peer_group_invariants(&res);
 
     res
+}
+
+struct WindowTypingCtx<'a> {
+    old_content: Option<&'a [&'a str]>,
+    new_content: Option<&'a [&'a str]>,
+    profile: Option<&'a LangProfile>,
+}
+
+fn emit_plain_pair(u: &Row, v: &Row, profile: Option<&LangProfile>, cluster_out: &mut Vec<Row>) {
+    let (Some(u_num), Some(v_num)) = (u.old_line(), v.new_line()) else {
+        cluster_out.push(u.clone());
+        cluster_out.push(v.clone());
+        return;
+    };
+    if u.text() == v.text() {
+        cluster_out.push(Row::Mod {
+            old_line: DelLine::new(u_num, u.text()),
+            new_line: AddLine::new(v_num, v.text()),
+            spans: Spans::default(),
+            cached_runs: vec![(RunKind::Ctx, u.text().to_string())],
+            group: None,
+        });
+        return;
+    }
+    let (_, runs) = word_spans_and_runs_with_profile(u.text(), v.text(), profile);
+    let spans = compute_slot_spans(&runs);
+    cluster_out.push(Row::Mod {
+        old_line: DelLine::new(u_num, u.text()),
+        new_line: AddLine::new(v_num, v.text()),
+        spans,
+        cached_runs: runs,
+        group: None,
+    });
+}
+
+fn emit_window_segment(
+    formation: &Formation,
+    old_rows: &[Row],
+    new_rows: &[Row],
+    pairs: &[(usize, usize)],
+    ctx: &WindowTypingCtx<'_>,
+    cluster_out: &mut Vec<Row>,
+) {
+    let old_slice = &old_rows[formation.old_range.clone()];
+    let new_slice = &new_rows[formation.new_range.clone()];
+    let mut group_rows = type_window(
+        formation.id,
+        old_slice,
+        new_slice,
+        pairs,
+        ctx.old_content,
+        ctx.new_content,
+        ctx.profile,
+    );
+    group_rows.repair_unmatched_moves();
+    group_rows.assert_token_conservation();
+
+    if !slots_project_to_text(&group_rows) {
+        cluster_out.extend(old_slice.iter().cloned());
+        cluster_out.extend(new_slice.iter().cloned());
+        return;
+    }
+
+    let n = formation.old_count();
+    let m = formation.new_count();
+    let has_mod = group_rows
+        .slots
+        .iter()
+        .any(|s| s.old_line.is_some() && s.new_line.is_some());
+    let is_all_1to1_mods = group_rows.slots.len() == n
+        && group_rows.slots.len() == m
+        && group_rows
+            .slots
+            .iter()
+            .all(|s| s.old_line.is_some() && s.new_line.is_some())
+        && group_rows.slots.iter().all(|s| {
+            s.runs
+                .iter()
+                .all(|(k, _)| *k != RunKind::MovedSrc && *k != RunKind::MovedTgt)
+        });
+    let has_strong_link = has_mod || has_salient_moved_link(&group_rows, ctx.profile);
+
+    for slot in group_rows.slots {
+        let group_meta = peer_group_meta(n, m, has_strong_link, is_all_1to1_mods, slot.group);
+        match (slot.old_line, slot.new_line) {
+            (Some(u), Some(v)) => {
+                let old_text = slot.old_text.unwrap_or_default();
+                let new_text = slot.new_text.unwrap_or_default();
+                cluster_out.push(Row::Mod {
+                    old_line: DelLine::new(u, old_text),
+                    new_line: AddLine::new(v, new_text),
+                    spans: slot.spans,
+                    cached_runs: slot.runs,
+                    group: group_meta,
+                });
+            }
+            (None, Some(v)) => {
+                let new_text = slot.new_text.unwrap_or_default();
+                if slot.is_moved_tgt {
+                    cluster_out.push(Row::MovTgt {
+                        line: AddLine::new(v, new_text),
+                        spans: slot.spans,
+                        cached_runs: slot.runs,
+                        group: group_meta,
+                    });
+                } else if n == 0 || group_meta.is_none() {
+                    cluster_out.push(Row::add(AddLine::new(v, new_text)));
+                } else {
+                    cluster_out.push(Row::Add {
+                        line: AddLine::new(v, new_text),
+                        spans: slot.spans,
+                        cached_runs: slot.runs,
+                        group: group_meta,
+                    });
+                }
+            }
+            (Some(u), None) => {
+                let old_text = slot.old_text.unwrap_or_default();
+                if slot.is_moved_src {
+                    cluster_out.push(Row::MovSrc {
+                        line: DelLine::new(u, old_text),
+                        spans: slot.spans,
+                        cached_runs: slot.runs,
+                        group: group_meta,
+                    });
+                } else if m == 0 || group_meta.is_none() {
+                    cluster_out.push(Row::del(DelLine::new(u, old_text)));
+                } else {
+                    cluster_out.push(Row::Del {
+                        line: DelLine::new(u, old_text),
+                        spans: slot.spans,
+                        cached_runs: slot.runs,
+                        group: group_meta,
+                    });
+                }
+            }
+            (None, None) => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -616,15 +703,15 @@ mod tests {
             ..Default::default()
         };
         let res = peer_reflow_pipeline(&hunk, None, None, None);
-        assert_eq!(res.len(), 35);
+        assert_eq!(res.len(), 34);
         assert!(matches!(res[0], Row::Ctx { .. }));
-        for r in &res[1..34] {
+        for r in &res[1..33] {
             assert!(matches!(
                 r,
                 Row::Del { .. } | Row::Mod { .. } | Row::Add { .. }
             ));
         }
-        assert!(matches!(res[34], Row::Ctx { .. }));
+        assert!(matches!(res[33], Row::Ctx { .. }));
     }
 
     #[test]
@@ -715,7 +802,6 @@ mod tests {
         assert_eq!(peer[3].kind(), RowKind::Add); // None -> 290
         assert_eq!(peer[4].kind(), RowKind::Ctx);
 
-        // Check peer group metadata
         assert!(matches!(
             peer[1].group(),
             Some(PeerGroup {
@@ -743,7 +829,6 @@ mod tests {
                 ..
             })
         ));
-
         assert_peer_group_invariants(&peer);
     }
 
@@ -765,10 +850,33 @@ mod tests {
         };
 
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
+        // The old line pairs with the continuation `finalize();`; the head
+        // `init();` is a grouped addition of the same 1-to-2 formation.
         assert_eq!(peer.len(), 4);
         assert_eq!(peer[0].kind(), RowKind::Ctx);
-        assert_eq!(peer[1].kind(), RowKind::Mod);
-        assert_eq!(peer[2].kind(), RowKind::Add);
+        assert_eq!(peer[1].kind(), RowKind::Add);
+        assert_eq!(peer[1].new_line(), Some(21));
+        assert!(matches!(
+            peer[1].group(),
+            Some(PeerGroup {
+                n: 1,
+                m: 2,
+                slot: 0,
+                ..
+            })
+        ));
+        assert_eq!(peer[2].kind(), RowKind::Mod);
+        assert_eq!(peer[2].old_line(), Some(21));
+        assert_eq!(peer[2].new_line(), Some(22));
+        assert!(matches!(
+            peer[2].group(),
+            Some(PeerGroup {
+                n: 1,
+                m: 2,
+                slot: 1,
+                ..
+            })
+        ));
         assert_eq!(peer[3].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
     }
@@ -791,26 +899,39 @@ mod tests {
         };
 
         let peer = peer_reflow_pipeline(&hunk, None, None, None);
-        // A 2-to-1 merge has no 1-to-1 Mod seed, so the peer group
-        // dissolves: both deletions and the combined addition render
-        // ungrouped rather than forcing a partial Mod pairing.
-        assert_eq!(peer.len(), 5);
+        // The path pairs the head deletion with the merged line and keeps the
+        // continuation as a grouped deletion: a 2-to-1 collapse formation.
+        assert_eq!(peer.len(), 4);
         assert_eq!(peer[0].kind(), RowKind::Ctx);
-        assert_eq!(peer[1].kind(), RowKind::Del);
+        assert_eq!(peer[1].kind(), RowKind::Mod);
+        assert_eq!(peer[1].old_line(), Some(31));
+        assert_eq!(peer[1].new_line(), Some(31));
+        assert!(matches!(
+            peer[1].group(),
+            Some(PeerGroup {
+                n: 2,
+                m: 1,
+                slot: 0,
+                ..
+            })
+        ));
         assert_eq!(peer[2].kind(), RowKind::Del);
-        assert_eq!(peer[3].kind(), RowKind::Add);
-        assert_eq!(peer[4].kind(), RowKind::Ctx);
+        assert_eq!(peer[2].old_line(), Some(32));
+        assert!(matches!(
+            peer[2].group(),
+            Some(PeerGroup {
+                n: 2,
+                m: 1,
+                slot: 1,
+                ..
+            })
+        ));
+        assert_eq!(peer[3].kind(), RowKind::Ctx);
         assert_peer_group_invariants(&peer);
     }
 
     #[test]
     fn test_peer_pipeline_no_mod_salient_link_admitted() {
-        use crate::{
-            cluster::factor::FactoredGroup,
-            collapse::slot::{align_and_type_peer_group, has_salient_moved_link},
-            parse::{AddLine, DelLine, GroupId},
-        };
-
         let dels = vec![
             Row::del(DelLine::new(11, "aaa row bbb")),
             Row::del(DelLine::new(12, "ccc row ddd")),
@@ -819,12 +940,7 @@ mod tests {
             Row::add(AddLine::new(11, "eee row fff")),
             Row::add(AddLine::new(12, "ggg row hhh")),
         ];
-        let group = FactoredGroup {
-            id: GroupId(1),
-            old_range: 0..2,
-            new_range: 0..2,
-        };
-        let mut aligned = align_and_type_peer_group(&group, &dels, &adds, None);
+        let mut aligned = type_window(GroupId(1), &dels, &adds, &[], None, None, None);
         aligned.repair_unmatched_moves();
         aligned.assert_token_conservation();
         // No pair was admissible, so every slot stays single-sided …

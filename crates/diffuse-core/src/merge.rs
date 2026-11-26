@@ -96,6 +96,13 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
     let Some(del_text) = r.old_text() else {
         return false;
     };
+    let cached = r.cached_runs();
+    if !cached.is_empty() {
+        let has_non_ws_ctx = cached
+            .iter()
+            .any(|(kind, text)| *kind == RunKind::Ctx && !text.trim().is_empty());
+        return !has_non_ws_ctx && (!del_text.trim().is_empty() || !r.text().trim().is_empty());
+    }
     let computed_spans;
     let spans = match r.spans() {
         Some(s)

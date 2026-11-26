@@ -157,8 +157,6 @@ pub fn process_single_diff_file(
 
     crate::lcs::set_token_product_cap(opts.token_product_cap);
     crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
-    crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
-    crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
     let t_start = Instant::now();
     if new_content.is_none() && old_content.is_none() {
         f.no_content = true;

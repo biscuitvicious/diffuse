@@ -39,7 +39,6 @@ fn test_prelude_reexports() {
     assert!(!raw.is_empty());
 
     const { assert!(DEFAULT_CLUSTER_BUDGET > 0) };
-    const { assert!(DEFAULT_CLUSTER_BANDWIDTH_MIN > 0) };
 
     let stripped = strip_ansi("\x1b[31mhello\x1b[0m");
     assert_eq!(stripped, "hello");

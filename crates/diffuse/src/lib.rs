@@ -53,10 +53,10 @@ pub use diffuse_core::logging::init_tracing_subscriber as init_logging;
 // Top-level direct re-exports for high-frequency engine primitives
 pub use diffuse_algo::{DiffEngine, LcsEngine, MyersOnD, PrefixMatcher};
 pub use diffuse_core::{
-    DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
-    DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
-    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
-    PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
+    DEFAULT_CLUSTER_BUDGET, DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES,
+    DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB,
+    PipelineInput, PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt,
+    RevisionRange,
     notes::{add_note, default_notes_path, load_notes, save_notes},
     parse::{Hunk, HunkCountMismatch, Row, RowKind},
     pipeline::{run_pipeline, run_pipeline_full},
@@ -80,10 +80,10 @@ pub use diffuse_tui::{run_interactive_tui, run_tui};
 pub mod prelude {
     pub use diffuse_algo::{DiffEngine, LcsEngine, MyersOnD, PrefixMatcher};
     pub use diffuse_core::{
-        DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
-        DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
-        DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
-        PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
+        DEFAULT_CLUSTER_BUDGET, DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES,
+        DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus,
+        NotesDB, PipelineInput, PipelineOptions, Repo, ReviewNote, ReviewTarget,
+        ReviewTargetNotesExt, RevisionRange,
         merge::RunKind,
         notes::{add_note, default_notes_path, load_notes, save_notes},
         parse::{Hunk, HunkCountMismatch, Row, RowKind},

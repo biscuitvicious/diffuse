@@ -50,7 +50,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
 - **Why It Is Used**:
   Dynamic programming alignment over large hunks ($M, N \approx 7,000$ lines) requires evaluating cells near an optimal path. A full dense matrix requires $M \times N \approx 50,000,000$ cells, incurring tens of megabytes of memory allocations and catastrophic CPU L3 cache thrashing. General-purpose sparse matrices (Compressed Sparse Row / CSR or Dictionary of Keys / DOK) incur expensive $O(N)$ row shifts on sequential writes or pointer indirection. The Skyline (envelope profile) scheme stores only the active column interval $[j_{\min}(i) \dots j_{\max}(i)]$ for each row $i$ packed contiguously in a single flat contiguous `Vec<T>`.
 - **For What It Is Used**:
-  Serves as the grid container for `solve_cluster_with_arena` in `diffuse-core::cluster::dp`, supporting fast cell writes and backward traceback while consuming only the cell volume bounded by the adaptive corridor.
+  Generic banded-corridor grid container in `diffuse-algo`, supporting fast cell writes and backward traceback while consuming only the cell volume bounded by an adaptive corridor.
 - **Complexity**:
   - Memory: $O(\sum_i (j_{\max}(i) - j_{\min}(i) + 1)) = O(K \cdot M)$ cells, where $K \ll N$.
   - Random Access (`get`, `get_mut`): $O(1)$ time via base row offset calculation: `offset + (j - start_j)`.
@@ -104,11 +104,11 @@ This document provides a comprehensive, rigorous reference of the foundational a
 ### 2.1 DP Scratch Arena (`DpScratchArena`)
 
 - **Location**:
-  [`crates/diffuse-core/src/cluster/dp.rs`](../crates/diffuse-core/src/cluster/dp.rs) (`DpScratchArena`, `solve_cluster_with_arena`)
+  [`crates/diffuse-core/src/cluster/dp/arena.rs`](../crates/diffuse-core/src/cluster/dp/arena.rs) (`DpScratchArena`, `with_tls_arena`); consumed by [`crates/diffuse-core/src/collapse/lattice.rs`](../crates/diffuse-core/src/collapse/lattice.rs) (`solve_cluster_path`)
 - **Why It Is Used**:
-  Diff processing executes across thousands of hunk clusters per second across worker threads. Repeatedly allocating and deallocating dynamic programming vectors, token match maps, and line metadata causes severe memory fragmentation and lock contention in the heap allocator (`glibc malloc` / `jemalloc`).
+  Diff processing executes across thousands of hunk clusters per second across worker threads. Repeatedly allocating and deallocating dynamic programming score stripes causes memory fragmentation and allocator contention.
 - **For What It Is Used**:
-  Maintains thread-local, recycled buffers (`SkylineMatrix<Cell>`, `Vec<usize>`, `Vec<RowMetaData>`) across successive cluster solves. Reuses allocated capacity via `clear()` without reallocating underlying heap buffers.
+  Maintains thread-local, recycled DP stripe vectors (`prev: Vec<i64>`, `cur: Vec<i64>`) across successive cluster path solves. Reuses allocated capacity via `prepare_stripes()` and `clear()` without reallocating underlying heap buffers.
 - **Complexity**:
   - Amortized Allocation Cost: $O(1)$ per cluster after initial high-water mark sizing.
   - Memory: Bounded by the single largest cluster encountered by each thread.

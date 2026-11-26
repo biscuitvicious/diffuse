@@ -570,17 +570,6 @@ fn test_harvest_and_stream_scale_10000_files() {
         diffuse::core::pipeline::T_RENDER_ROWS.load(std::sync::atomic::Ordering::Relaxed) as f64
             / 1000.0,
     );
-    eprintln!(
-        "=== T_DP (ms): guarded_dels={:?}, num_maps={:?}, segments={:?}, solve={:?} ===",
-        diffuse::core::cluster::pairing::T_DP[0].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::cluster::pairing::T_DP[1].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::cluster::pairing::T_DP[2].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-        diffuse::core::cluster::pairing::T_DP[3].load(std::sync::atomic::Ordering::Relaxed) as f64
-            / 1000.0,
-    );
 
     assert_eq!(count, 10000);
 }

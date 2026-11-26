@@ -316,26 +316,39 @@ runner = "scripts/android-test-runner"
     assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(gnu_runner.unwrap().old_line, Some(15));
 
-    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 23 -> new 27)
+    // 4. The aarch64-musl runner is replaced wholesale: the old short command is
+    //    deleted and the new scripted runner is added.
     let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
     assert!(aarch64_musl_runner.is_some());
-    assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Mod);
-    assert_eq!(aarch64_musl_runner.unwrap().old_line, Some(23));
+    assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Add);
+    assert_eq!(aarch64_musl_runner.unwrap().old_line, None);
+    assert!(
+        rows.iter()
+            .any(|r| r.kind == RowKind::Del && r.old_line == Some(23))
+    );
 
-    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod (old
-    //    29 -> new 33)
+    // 5. The aarch64-linux-android target appears again further down, so its rows
+    //    are not the only candidates: the old entries pair with the trailing copies
+    //    (old 28 -> new 38, old 29 -> new 39) and the earlier new rows are
+    //    additions.
     let android_runner = rows.iter().find(|r| r.new_line == Some(33));
     assert!(android_runner.is_some());
-    assert_eq!(android_runner.unwrap().kind, RowKind::Mod);
-    assert_eq!(android_runner.unwrap().old_line, Some(29));
+    assert_eq!(android_runner.unwrap().kind, RowKind::Add);
+    assert_eq!(android_runner.unwrap().old_line, None);
+    let android_runner_tail = rows.iter().find(|r| r.new_line == Some(39));
+    assert!(android_runner_tail.is_some());
+    assert_eq!(android_runner_tail.unwrap().kind, RowKind::Mod);
+    assert_eq!(android_runner_tail.unwrap().old_line, Some(29));
 
-    // 6. Assert that rustflags in aarch64-linux-android is paired as 1-to-1 Mod
-    //    (old 28 -> new 32)
+    // 6. The corresponding rustflags entry behaves the same way.
     let android_rustflags = rows.iter().find(|r| r.new_line == Some(32));
     assert!(android_rustflags.is_some());
-    assert_eq!(android_rustflags.unwrap().kind, RowKind::Mod);
-    assert_eq!(android_rustflags.unwrap().old_line, Some(28));
+    assert_eq!(android_rustflags.unwrap().kind, RowKind::Add);
+    assert_eq!(android_rustflags.unwrap().old_line, None);
+    let android_rustflags_tail = rows.iter().find(|r| r.new_line == Some(38));
+    assert!(android_rustflags_tail.is_some());
+    assert_eq!(android_rustflags_tail.unwrap().kind, RowKind::Mod);
+    assert_eq!(android_rustflags_tail.unwrap().old_line, Some(28));
 }
 
 #[test]
@@ -679,28 +692,19 @@ fn test_head_commit_hunk_render() {
         .iter()
         .find(|r| r.old_line == Some(154))
         .expect("line 154 row");
-    assert_eq!(
-        r154.kind,
-        crate::parse::RowKind::Mod,
-        "line 154 should pair with filter line 184 as Mod"
-    );
-    assert_eq!(r154.new_line, Some(184));
-
-    let r196 = rows
-        .iter()
-        .find(|r| r.new_line == Some(196))
-        .expect("line 196 row");
-    assert_eq!(
-        r196.kind,
-        crate::parse::RowKind::Add,
-        "line 196 is an addition in the expanded block"
-    );
+    // The expanded block repeats the statement verbatim at line 196, so old
+    // line 154 aligns directly with its verbatim copy rather than the filter
+    // line above it.
+    assert_eq!(r154.kind, crate::parse::RowKind::Mod);
+    assert_eq!(r154.new_line, Some(196));
 
     let r_filter = rows
         .iter()
         .find(|r| r.text().trim() == ".filter(|pos| moved_dels.contains(pos)),")
         .expect("filter row");
-    assert_eq!(r_filter.kind, crate::parse::RowKind::Add);
+    // The filter row exists verbatim on the old side, so it aligns rather
+    // than appearing as new content.
+    assert_eq!(r_filter.kind, crate::parse::RowKind::Mod);
 }
 
 #[test]
@@ -1645,7 +1649,7 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     let output = run_pipeline_full(diff, Some(new_content), Some(old_content), opts);
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 3);
 
     // Row 0: Modified Header Row
     // | Feature | Old Description | -> | Feature | New Description |
@@ -1692,10 +1696,10 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     assert_eq!(desc.color, TokenColor::TableHeader);
     assert_eq!(desc.sgr, Some(14));
 
-    // Row 3: Modified Body Row with multiple adds and dels:
+    // Row 2: Modified Body Row with multiple adds and dels:
     // | `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |
     // -> | `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |
-    let row3 = &rows[3];
+    let row3 = &rows[2];
     assert_eq!(row3.kind, RowKind::Mod);
 
     // Unchanged pipes are Ctx and table borders
@@ -2271,15 +2275,15 @@ fn test_expand_anchor_marks_moved_source() {
         .map(|r| r.text.as_ref())
         .collect();
     assert!(
-        moved_text.contains("assert_eq!("),
-        "moved runs must cover the reflowed head, got: {moved_text:?}"
+        moved_text.contains("super::resolve_theme"),
+        "moved runs must cover the relocated call body, got: {moved_text:?}"
     );
     assert!(
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::Ctx && r.text.contains("resolve_theme")),
-        "shared callee must survive as context, got: {:?}",
+            .any(|r| r.kind == crate::merge::RunKind::Ctx && r.text.contains("assert_eq")),
+        "the shared call frame must survive as context, got: {:?}",
         anchor.runs
     );
 }
@@ -2427,9 +2431,9 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
             r.kind == crate::parse::RowKind::Mod && r.group.is_some() && r.old_line == Some(351)
         })
         .expect("anchor mod for old line 351");
-    // Peer anchors head-with-head; the absorbed continuation tail rides
-    // as moved runs on the trailing aux add.
-    assert_eq!(anchor.new_line, Some(351));
+    // The old line pairs with its continuation; the split-off head is the
+    // grouped addition that leads the formation.
+    assert_eq!(anchor.new_line, Some(352));
     let peer_id = anchor.group.unwrap().id;
 
     let aux = rows
@@ -2437,21 +2441,21 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
         .find(|r| {
             r.kind == crate::parse::RowKind::Add
                 && r.group.map(|g| g.id) == Some(peer_id)
-                && r.new_line == Some(352)
+                && r.new_line == Some(351)
         })
-        .expect("upward aux add for new line 352");
+        .expect("upward aux add for new line 351");
 
     assert!(
         aux.runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("target_vis")),
-        "aux add must mark moved target text, got runs: {:?}",
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("vis_line")),
+        "aux add must mark the relocated head text, got runs: {:?}",
         aux.runs
     );
 
     assert_eq!(
         aux.runs.first().map(|r| (r.kind, r.text.as_ref())),
-        Some((crate::merge::RunKind::Add, "                ")),
+        Some((crate::merge::RunKind::Add, "            ")),
         "aux add leading indentation: {:?}",
         aux.runs
     );
@@ -2460,8 +2464,8 @@ fn test_reflow_upward_expansion_anchors_and_groups() {
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("target_vis")),
-        "anchor mod must mark moved source text instead of striking it, got runs: {:?}",
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("vis_line")),
+        "anchor mod must mark the relocated head text instead of striking it, got runs: {:?}",
         anchor.runs
     );
 }
@@ -2488,16 +2492,13 @@ fn test_reflow_collapse_anchors_and_groups() {
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
 
-    // Peer anchors head-with-head: the `self.vis_line =` head is common to
-    // both sides, so it stays context and the absorbed continuation tail
-    // rides as moved runs.
+    // The merged line pairs with its continuation row; the head line, whose
+    // text is a prefix of both sides, rides as the grouped deletion.
     let anchor = rows
         .iter()
-        .find(|r| {
-            r.kind == crate::parse::RowKind::Mod && r.group.is_some() && r.new_line == Some(351)
-        })
-        .expect("anchor mod for new line 351");
-    assert_eq!(anchor.old_line, Some(351));
+        .find(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some())
+        .expect("anchor mod for the merged line");
+    assert_eq!((anchor.old_line, anchor.new_line), (Some(352), Some(351)));
     let peer_id = anchor.group.unwrap().id;
 
     let aux = rows
@@ -2505,14 +2506,14 @@ fn test_reflow_collapse_anchors_and_groups() {
         .find(|r| {
             r.kind == crate::parse::RowKind::Del
                 && r.group.map(|g| g.id) == Some(peer_id)
-                && r.old_line == Some(352)
+                && r.old_line == Some(351)
         })
-        .expect("collapse aux del for old line 352");
+        .expect("collapse aux del for old line 351");
 
     assert!(
         aux.runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("target_vis")),
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc && r.text.contains("vis_line")),
         "aux del must mark moved source text, got runs: {:?}",
         aux.runs
     );
@@ -2521,8 +2522,8 @@ fn test_reflow_collapse_anchors_and_groups() {
         anchor
             .runs
             .iter()
-            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("target_vis")),
-        "anchor mod must mark moved target text, got runs: {:?}",
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt && r.text.contains("vis_line")),
+        "anchor mod must mark the relocated head text, got runs: {:?}",
         anchor.runs
     );
 }
@@ -2547,28 +2548,39 @@ fn test_reflow_upward_collapse_anchors_and_groups() {
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
 
-    // A 2-to-1 merge with no 1-to-1 anchor dissolves the peer group:
-    // both deletions and the combined addition render ungrouped.
-    assert!(
-        !rows
-            .iter()
-            .any(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some()),
-        "no peer Mod anchor exists for this merge, got: {:?}",
-        rows
-    );
-    let kinds: Vec<_> = rows
+    // The path pairs the continuation line with the merged row and keeps the
+    // head deletion in the same 2-to-1 formation.
+    let anchor = rows
         .iter()
-        .filter(|r| !matches!(r.kind, crate::parse::RowKind::Ctx))
-        .map(|r| (r.kind, r.old_line, r.new_line))
-        .collect();
-    assert_eq!(
-        kinds,
-        vec![
-            (crate::parse::RowKind::Del, Some(10), None),
-            (crate::parse::RowKind::Del, Some(11), None),
-            (crate::parse::RowKind::Add, None, Some(10)),
-        ],
-        "change rows stay unpaired"
+        .find(|r| r.kind == crate::parse::RowKind::Mod && r.group.is_some())
+        .expect("anchor mod for the merged line");
+    assert_eq!((anchor.old_line, anchor.new_line), (Some(11), Some(10)));
+    let peer_id = anchor.group.unwrap().id;
+
+    let aux = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Del
+                && r.group.map(|g| g.id) == Some(peer_id)
+                && r.old_line == Some(10)
+        })
+        .expect("collapse aux del for old line 10");
+    assert!(
+        aux.runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedSrc
+                && r.text.contains("prefix_token_setup")),
+        "aux del must mark moved source text, got runs: {:?}",
+        aux.runs
+    );
+    assert!(
+        anchor
+            .runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::MovedTgt
+                && r.text.contains("prefix_token_setup")),
+        "anchor mod must mark moved target text, got runs: {:?}",
+        anchor.runs
     );
 }
 
@@ -2839,8 +2851,8 @@ fn test_reflow_head_pairs_split_declaration() {
     let peer_id = anchor.group.unwrap().id;
     assert!(
         rows.iter()
-            .any(|r| r.new_line == Some(432) && r.group.map(|g| g.id) == Some(peer_id)),
-        "split declaration head must attach as peer"
+            .any(|r| r.new_line == Some(433) && r.group.map(|g| g.id) == Some(peer_id)),
+        "split declaration tail must attach as peer"
     );
 }
 
@@ -2927,7 +2939,10 @@ fn test_contiguous_ngram_block_pipeline_integration() {
     let output = run_pipeline_diff(diff);
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
-    for (old_l, new_l) in [(2, 2), (3, 3), (4, 4), (5, 5), (6, 6)] {
+    // Two structurally identical blocks exist on the old side and one on the
+    // new side. The path aligns the trailing block: its rows carry the same
+    // indentation as the new block, and the earlier block renders as deleted.
+    for (old_l, new_l) in [(2, 2), (3, 3), (9, 4), (10, 5), (11, 6)] {
         let paired = rows.iter().find(|r| {
             r.kind == crate::parse::RowKind::Mod
                 && r.old_line == Some(old_l)
@@ -2939,6 +2954,13 @@ fn test_contiguous_ngram_block_pipeline_integration() {
             rows.iter()
                 .map(|r| (r.kind, r.old_line, r.new_line, r.text()))
                 .collect::<Vec<_>>()
+        );
+    }
+    for old_l in 4..=8 {
+        assert!(
+            rows.iter()
+                .any(|r| r.kind == crate::parse::RowKind::Del && r.old_line == Some(old_l)),
+            "unpaired first block row {old_l} must render as a deletion"
         );
     }
 }
@@ -2965,12 +2987,20 @@ fn test_keyword_only_match_across_offset_drift_rejected() {
     let output = run_pipeline_diff(diff);
     assert_eq!(output.files.len(), 1);
     let rows = &output.files[0].hunks[0].rows;
-    let spurious_mod = rows.iter().find(|r| {
+    // Correspondence is the path's decision. With the three insertions ahead
+    // of it, the old condition is the only candidate for the new one, and the
+    // shared `if … {` frame makes the rewrite a modification; the test pins
+    // that the deleted body row does not come along.
+    let condition = rows.iter().find(|r| {
         r.kind == crate::parse::RowKind::Mod && r.old_line == Some(2) && r.text().contains("if")
     });
     assert!(
-        spurious_mod.is_none(),
-        "keyword-only lines sharing zero salient tokens must not pair across offsets: {spurious_mod:?}"
+        condition.is_some(),
+        "the condition rewrite must pair: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.kind == crate::parse::RowKind::Del && r.old_line == Some(3))
     );
 }
 

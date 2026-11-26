@@ -2399,6 +2399,244 @@ fn test_scrollbar_grab_drag_dispatch_hunk_1_has_no_groups() {
 }
 
 #[test]
+fn test_theme_scrollbar_palette_agents_md_tight_formation_no_hull() {
+    if !is_golden_initialized() {
+        return;
+    }
+    let fixture = load_fixture("theme-scrollbar-palette");
+    let output = diffuse::core::pipeline::run_pipeline_arc(
+        Arc::clone(&fixture.diff),
+        Some(fixture.new_content.clone()),
+        Some(fixture.old_content.clone()),
+        diffuse::core::pipeline::PipelineOptions::default(),
+    );
+    let file = output
+        .files
+        .iter()
+        .find(|f| f.path == "AGENTS.md")
+        .expect("AGENTS.md in theme-scrollbar-palette");
+    let hunk0 = &file.hunks[0];
+
+    // Tight 2x1 formation for the relocated continuation (`old 18..=19` -> `new
+    // 21`), replacing the retired factorizer's 4x4 hull.
+    let mod18 = hunk0
+        .rows
+        .iter()
+        .find(|r| r.old_line == Some(18) && r.new_line == Some(21))
+        .expect("old 18 <-> new 21 Mod");
+    assert_eq!(mod18.kind, RowKind::Mod);
+    let g0 = mod18.group.expect("old 18 <-> new 21 in 2x1 formation");
+    assert_eq!((g0.slot, g0.n, g0.m), (0, 2, 1));
+
+    let del19 = hunk0
+        .rows
+        .iter()
+        .find(|r| r.old_line == Some(19))
+        .expect("old 19 Del");
+    assert_eq!(del19.kind, RowKind::Del);
+    let g1 = del19.group.expect("old 19 in 2x1 formation");
+    assert_eq!((g1.id, g1.slot, g1.n, g1.m), (g0.id, 1, 2, 1));
+
+    // All surrounding rewritten rows stay plain ungrouped adds/dels (no hull).
+    for nl in [18u32, 19, 20, 22, 23, 24, 25] {
+        let r = hunk0
+            .rows
+            .iter()
+            .find(|r| r.new_line == Some(nl))
+            .unwrap_or_else(|| panic!("new line {nl} present"));
+        assert_eq!(r.kind, RowKind::Add, "new line {nl} must be plain Add");
+        assert_eq!(
+            r.group, None,
+            "new line {nl} must not be absorbed into a hull"
+        );
+    }
+    for ol in [20u32, 21, 22, 23] {
+        let r = hunk0
+            .rows
+            .iter()
+            .find(|r| r.old_line == Some(ol))
+            .unwrap_or_else(|| panic!("old line {ol} present"));
+        assert_eq!(r.kind, RowKind::Del, "old line {ol} must be plain Del");
+        assert_eq!(
+            r.group, None,
+            "old line {ol} must not be absorbed into a hull"
+        );
+    }
+}
+
+#[test]
+fn test_scrollbar_grab_drag_reference_formations_and_pairings() {
+    if !is_golden_initialized() {
+        return;
+    }
+    let fixture = load_fixture("scrollbar-grab-drag");
+    let output = diffuse::core::pipeline::run_pipeline_arc(
+        Arc::clone(&fixture.diff),
+        Some(fixture.new_content.clone()),
+        Some(fixture.old_content.clone()),
+        diffuse::core::pipeline::PipelineOptions::default(),
+    );
+
+    let file = |path: &str| {
+        output
+            .files
+            .iter()
+            .find(|f| f.path == path)
+            .unwrap_or_else(|| panic!("{path} missing from scrollbar-grab-drag"))
+    };
+
+    // 1. app.rs: two hunks, each a lone ungrouped field insertion.
+    let app = file("crates/diffuse-tui/src/app.rs");
+    assert_eq!(app.hunks.len(), 2);
+    for (hi, h) in app.hunks.iter().enumerate() {
+        let changed: Vec<_> = h.rows.iter().filter(|r| r.kind != RowKind::Ctx).collect();
+        assert_eq!(
+            changed.len(),
+            1,
+            "app.rs hunk {hi} must have one changed row"
+        );
+        assert_eq!(changed[0].kind, RowKind::Add);
+        assert_eq!(changed[0].group, None);
+    }
+
+    // 2. command.rs: two 1x5 tuple-to-struct expansions with trailing comma
+    //    relocated.
+    let command = file("crates/diffuse-tui/src/command.rs");
+    assert_eq!(command.hunks.len(), 1);
+    for (gid, head_ol, head_nl) in [(1u32, 74u32, 74u32), (2u32, 75u32, 79u32)] {
+        let members: Vec<_> = command.hunks[0]
+            .rows
+            .iter()
+            .filter(|r| r.group.is_some_and(|g| g.id.0 == gid))
+            .collect();
+        assert_eq!(members.len(), 5, "command.rs group {gid} must be 1x5");
+        assert_eq!(members[0].kind, RowKind::Mod);
+        assert_eq!(
+            (members[0].old_line, members[0].new_line),
+            (Some(head_ol), Some(head_nl))
+        );
+        assert!(members[1..].iter().all(|r| r.kind == RowKind::Add));
+        assert!(
+            members[0]
+                .runs
+                .iter()
+                .any(|run| run.kind == diffuse::core::merge::RunKind::MovedSrc && run.text == ","),
+            "command.rs group {gid} slot 0 must relocate comma"
+        );
+        assert!(
+            members[4]
+                .runs
+                .iter()
+                .any(|run| run.kind == diffuse::core::merge::RunKind::MovedTgt && run.text == ","),
+            "command.rs group {gid} slot 4 must receive comma"
+        );
+    }
+
+    // 3. event.rs: both MouseScroll* calls stay single ungrouped Mod rows.
+    let event = file("crates/diffuse-tui/src/event.rs");
+    assert!(
+        event.hunks[0].rows.iter().all(|r| r.group.is_none()),
+        "event.rs must contain no groups"
+    );
+    for (ol, nl) in [(330u32, 332u32), (333u32, 335u32)] {
+        let r = event.hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.old_line == Some(ol) && r.new_line == Some(nl))
+            .unwrap_or_else(|| panic!("event.rs Mod {ol}->{nl} missing"));
+        assert_eq!(r.kind, RowKind::Mod);
+        assert_eq!(r.group, None);
+    }
+
+    // 4. dispatch.rs: Hunk 2 preserves 2x3 `let hit =` and 1x2 `self.vis_line
+    //    =` formations plus plain Mods for `if is_on_scrollbar {` and `} else
+    //    {`.
+    let dispatch = file("crates/diffuse-tui/src/app/dispatch.rs");
+    let dh2 = &dispatch.hunks[1];
+    assert!(dh2.rows.iter().any(|r| {
+        r.kind == RowKind::Mod
+            && r.old_line == Some(228)
+            && r.new_line == Some(237)
+            && r.group.is_none()
+    }));
+    assert!(dh2.rows.iter().any(|r| {
+        r.kind == RowKind::Mod
+            && r.old_line == Some(246)
+            && r.new_line == Some(239)
+            && r.group.is_none()
+    }));
+    let hit_group: Vec<_> = dh2
+        .rows
+        .iter()
+        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (2, 3)))
+        .collect();
+    assert_eq!(hit_group.len(), 3, "dispatch.rs 2x3 let hit formation");
+    let vis_group: Vec<_> = dh2
+        .rows
+        .iter()
+        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (1, 2)))
+        .collect();
+    assert_eq!(
+        vis_group.len(),
+        2,
+        "dispatch.rs 1x2 self.vis_line formation"
+    );
+
+    // 5. geometry.rs: 2x1 `.round()` collapse in Hunk 1, plus 2x1 doc comment
+    //    and 1x7 `scrollbar_scroll_for_row` signature expansion in Hunk 3.
+    let geometry = file("crates/diffuse-tui/src/app/geometry.rs");
+    let gh1_group: Vec<_> = geometry.hunks[0]
+        .rows
+        .iter()
+        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (2, 1)))
+        .collect();
+    assert_eq!(
+        gh1_group.len(),
+        2,
+        "geometry.rs Hunk 1 2x1 .round() collapse"
+    );
+    let gh3_sig: Vec<_> = geometry.hunks[2]
+        .rows
+        .iter()
+        .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (1, 7)))
+        .collect();
+    assert_eq!(
+        gh3_sig.len(),
+        7,
+        "geometry.rs Hunk 3 1x7 signature expansion"
+    );
+
+    // 6. geometry/tests.rs: former 5x8 hull splits cleanly into 2x4 + 3x4, and
+    //    the trailing `assert_eq!` expansion stays a 1x4 formation.
+    let gtests = file("crates/diffuse-tui/src/app/geometry/tests.rs");
+    let gt1 = &gtests.hunks[0];
+    assert_eq!(
+        gt1.rows
+            .iter()
+            .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (2, 4)))
+            .count(),
+        4,
+        "geometry/tests.rs first split 2x4 formation"
+    );
+    assert_eq!(
+        gt1.rows
+            .iter()
+            .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (3, 4)))
+            .count(),
+        5,
+        "geometry/tests.rs second split 3x4 formation"
+    );
+    assert_eq!(
+        gt1.rows
+            .iter()
+            .filter(|r| r.group.is_some_and(|g| (g.n, g.m) == (1, 4)))
+            .count(),
+        4,
+        "geometry/tests.rs trailing 1x4 assert_eq! formation"
+    );
+}
+
+#[test]
 fn fixture_dirs_match_loaded_content() {
     // The bin legs pass fixture/old and fixture/new straight to
     // --old-dir/--new-dir: the on-disk trees must match what load_fixture

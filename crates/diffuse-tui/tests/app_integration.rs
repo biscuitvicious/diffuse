@@ -816,9 +816,10 @@ fn test_perf_big_hunk_scrolled_frames() {
     }
 }
 
-fn load_scrollbar_grab_drag() -> Option<PipelineOutput> {
-    let base =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/scrollbar-grab-drag");
+fn load_golden_corpus(corpus: &str) -> Option<PipelineOutput> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/golden")
+        .join(corpus);
     let patch_path = base.join("fixture").join("diff.patch");
     if !patch_path.is_file() {
         return None;
@@ -846,6 +847,10 @@ fn load_scrollbar_grab_drag() -> Option<PipelineOutput> {
         Some(old_content),
         PipelineOptions::default(),
     ))
+}
+
+fn load_scrollbar_grab_drag() -> Option<PipelineOutput> {
+    load_golden_corpus("scrollbar-grab-drag")
 }
 
 #[test]
@@ -1540,24 +1545,27 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
         diffuse_render::DiffuseTheme::dark(),
     );
 
-    // Find row 227 in flat rows (file 3 app/dispatch.rs)
+    // Find old line 2229 in flat rows (app/tests.rs). The line
+    // `let row_relative = r.saturating_sub(header_offset);` is deleted and its
+    // `offset` token travels into the following `scrollbar_scroll_for_row`
+    // call, so the deletion row carries a moved-out run.
     let mut target_idx = None;
     for (idx, item) in state.flat.iter().enumerate() {
         if let Some(r) = state.row_of(item)
-            && r.old_line == Some(227)
+            && r.old_line == Some(2229)
         {
             target_idx = Some(idx);
             break;
         }
     }
-    let target_idx = target_idx.expect("must find old line 227 in flat list");
+    let target_idx = target_idx.expect("must find old line 2229 in flat list");
     state.row_idx = target_idx;
     state.vis_line = 0;
 
     let (w, h) = (200, 40);
     let buf = state.render_to_buffer(w, h);
 
-    // Locate the line containing let scrollbar_seek = is_on_scrollbar;
+    // Locate the deleted line containing the moved-out `offset` token.
     let mut found_line = false;
     let mut found_struck = false;
     let mut found_non_struck_head = false;
@@ -1566,13 +1574,14 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
         for x in 0..w {
             line_str.push_str(buf[(x, y)].symbol());
         }
-        if line_str.contains("let scrollbar_seek = is_on_scrollbar;") {
+        if line_str.contains("let row_relative = r.saturating_sub(header_offset);") {
             found_line = true;
-            let seek_pos = line_str.find("let scrollbar_seek").unwrap();
-            let is_on_pos = line_str.find("is_on_scrollbar").unwrap();
+            let head_pos = line_str.find("let row_relative").unwrap();
+            // The moved span is `offset`, not the `header_` prefix it follows.
+            let offset_pos = line_str.find("header_offset").unwrap() + "header_".len();
 
-            // Head (let scrollbar_seek) must not have CROSSED_OUT
-            let head_cell = &buf[(seek_pos as u16, y)];
+            // Head (let row_relative) must not have CROSSED_OUT
+            let head_cell = &buf[(head_pos as u16, y)];
             if !head_cell
                 .modifier
                 .contains(ratatui::style::Modifier::CROSSED_OUT)
@@ -1580,8 +1589,8 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
                 found_non_struck_head = true;
             }
 
-            // Moved-out token (is_on_scrollbar) must have CROSSED_OUT
-            let moved_cell = &buf[(is_on_pos as u16, y)];
+            // Moved-out token (offset) must have CROSSED_OUT
+            let moved_cell = &buf[(offset_pos as u16, y)];
             if moved_cell
                 .modifier
                 .contains(ratatui::style::Modifier::CROSSED_OUT)
@@ -1591,14 +1600,14 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
             break;
         }
     }
-    assert!(found_line, "must find line 227 rendered in buffer");
+    assert!(found_line, "must find old line 2229 rendered in buffer");
     assert!(
         found_non_struck_head,
-        "deletion head let scrollbar_seek must not be struck out on peer del row"
+        "deletion head let row_relative must not be struck out on the del row"
     );
     assert!(
         found_struck,
-        "moved-out source token is_on_scrollbar must be struck out (CROSSED_OUT) on peer del row"
+        "moved-out source token offset must be struck out (CROSSED_OUT) on the del row"
     );
 }
 
@@ -2333,4 +2342,95 @@ fn test_tui_expanded_mod_row_continuation_box_glyphs() {
         mod_lines[5].contains("└"),
         "final add segment must terminate box with └"
     );
+}
+
+#[test]
+fn test_theme_scrollbar_palette_agents_md_moved_tgt_renders_as_context() {
+    let Some(out) = load_golden_corpus("theme-scrollbar-palette") else {
+        return;
+    };
+    let theme = diffuse_render::DiffuseTheme::dark();
+    let mut state = AppState::new(out, "test".into(), temp_notes_path(), theme);
+
+    let (fi, file) = state
+        .output
+        .files
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.path == "AGENTS.md")
+        .expect("AGENTS.md must be present");
+
+    let row_21 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.new_line == Some(21))
+        .expect("must find new line 21 in AGENTS.md");
+    let moved_tgt_text: String = row_21
+        .runs
+        .iter()
+        .filter(|r| r.kind == diffuse_core::merge::RunKind::MovedTgt)
+        .map(|r| r.text.as_ref())
+        .collect();
+    assert!(
+        moved_tgt_text.contains("the pi review extension"),
+        "row 21 must mark relocated 'the pi review extension' as MovedTgt, got runs: {:?}",
+        row_21.runs
+    );
+
+    let row_19 = file
+        .hunks
+        .iter()
+        .flat_map(|h| &h.rows)
+        .find(|r| r.old_line == Some(19))
+        .expect("must find old line 19 in AGENTS.md");
+    let moved_src_text: String = row_19
+        .runs
+        .iter()
+        .filter(|r| r.kind == diffuse_core::merge::RunKind::MovedSrc)
+        .map(|r| r.text.as_ref())
+        .collect();
+    assert!(
+        moved_src_text.contains("the pi review extension"),
+        "old line 19 must mark relocated 'the pi review extension' as MovedSrc, got runs: {:?}",
+        row_19.runs
+    );
+
+    // Render row 21 in the TUI buffer and verify "the pi review extension"
+    // carries the same neutral/context background as "The workspace also holds",
+    // not the add-fill highlight background.
+    let target_idx = state
+        .flat
+        .iter()
+        .position(|it| {
+            it.file_idx == fi && state.row_of(it).is_some_and(|r| r.new_line == Some(21))
+        })
+        .expect("must find line 21 in flat list");
+    state.row_idx = target_idx.saturating_sub(2);
+    state.vis_line = 0;
+
+    let (w, h) = (160, 40);
+    let buf = state.render_to_buffer(w, h);
+    let mut checked = false;
+    for y in 0..h {
+        let mut line_str = String::new();
+        for x in 0..w {
+            line_str.push_str(buf[(x, y)].symbol());
+        }
+        if let Some(ctx_pos) = line_str.find("The workspace also holds")
+            && let Some(mov_pos) = line_str.find("the pi review extension")
+        {
+            checked = true;
+            let ctx_bg = buf[(ctx_pos as u16, y)].bg;
+            for x in mov_pos..mov_pos + "the pi review extension".len() {
+                assert_eq!(
+                    buf[(x as u16, y)].bg,
+                    ctx_bg,
+                    "MovedTgt cell at col {x} must render with context bg {ctx_bg:?}, not add-fill bg {:?}: {line_str}",
+                    buf[(x as u16, y)].bg
+                );
+            }
+        }
+    }
+    assert!(checked, "must find rendered line 21 in TUI buffer");
 }

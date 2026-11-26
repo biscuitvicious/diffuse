@@ -616,6 +616,48 @@ fn test_is_wholesale_replacement_branches() {
         },
     );
     assert!(is_wholesale_replacement(&r_wholesale));
+
+    // Cached runs are authoritative when present (profiled runs with non-ws Ctx
+    // are not wholesale; cached runs with only whitespace Ctx are wholesale).
+    let r_cached_ctx = Row::Mod {
+        old_line: DelLine::new(1, "  and expectations)."),
+        new_line: AddLine::new(
+            1,
+            "  same inputs and expectations; the renderer-side blocks stay in TS and",
+        ),
+        spans: Spans {
+            del: vec![(18, 20)],
+            add: vec![(2, 14), (30, 71)],
+        },
+        cached_runs: vec![
+            (RunKind::Ctx, "  ".to_string()),
+            (RunKind::Add, "same inputs ".to_string()),
+            (RunKind::Ctx, "and expectations".to_string()),
+            (RunKind::Del, ").".to_string()),
+            (
+                RunKind::Add,
+                "; the renderer-side blocks stay in TS and".to_string(),
+            ),
+        ],
+        group: None,
+    };
+    assert!(!is_wholesale_replacement(&r_cached_ctx));
+
+    let r_cached_wholesale = Row::Mod {
+        old_line: DelLine::new(1, "  alpha"),
+        new_line: AddLine::new(1, "  beta"),
+        spans: Spans {
+            del: vec![(2, 7)],
+            add: vec![(2, 6)],
+        },
+        cached_runs: vec![
+            (RunKind::Ctx, "  ".to_string()),
+            (RunKind::Del, "alpha".to_string()),
+            (RunKind::Add, "beta".to_string()),
+        ],
+        group: None,
+    };
+    assert!(is_wholesale_replacement(&r_cached_wholesale));
 }
 
 // The render path historically rebuilt its own unprofiled tape while

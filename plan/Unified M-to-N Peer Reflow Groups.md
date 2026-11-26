@@ -102,6 +102,9 @@ Extend the public wire format to serialize peer group participation without brea
 
 ## 2. Phase 2 — Macro Cluster Factorization & Closed-Boundary Cuts
 
+> [!NOTE]
+> **Retired**: Macro cluster factorization and closed-boundary cuts (`crates/diffuse-core/src/cluster/factor.rs`) were retired in favor of single-path cluster alignment and derived formations in [`plan/done/Unified Reflow Lattice.md`](done/Unified%20Reflow%20Lattice.md).
+
 ### 2.1 Bipartite Graph Construction (`crates/diffuse-core/src/cluster/factor.rs`)
 
 Given a raw cluster $(U \to V)$ of $N_{\text{total}}$ pre-image rows and $M_{\text{total}}$ post-image rows between stable context lines:

@@ -1,10 +1,15 @@
-//! Micro slot-alignment DP and closed-economy token typing for peer reflow
-//! groups.
+//! Closed-economy token typing and window slot layout for peer reflow
+//! formations.
 
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
-    cluster::factor::{FactoredGroup, is_salient_word_match},
+    collapse::{
+        evidence::{is_admissible_mod_pair, is_statement_head_keyword},
+        formation::Formation,
+        frame::{is_open_continuation_line, robust_delim_delta},
+        tokens::is_salient_word_match,
+    },
     lcs::{spans::word_spans_and_runs_with_profile, tokenize_line},
     merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
@@ -120,21 +125,78 @@ impl PeerGroupRows {
     }
 }
 
-/// Aligns rows in a factored group into monotonic visual slots and performs
-/// closed-economy token classification.
-pub fn align_and_type_peer_group(
-    group: &FactoredGroup,
+/// Types one segmented window, whose membership is already decided.
+///
+/// `pairs` lists the window's correspondences as `(old, new)` offsets into
+/// `old_rows` and `new_rows`, in path order. Rows the path left unpaired become
+/// deletions and additions of the window, so every row of both slices is
+/// accounted for exactly once.
+pub fn type_window(
+    group_id: GroupId,
     old_rows: &[Row],
     new_rows: &[Row],
+    pairs: &[(usize, usize)],
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
-    align_and_type_peer_group_with_content(group, old_rows, new_rows, None, None, profile)
+    let formation = Formation {
+        id: group_id,
+        old_range: 0..old_rows.len(),
+        new_range: 0..new_rows.len(),
+    };
+    let mut aligned_pairs: Vec<SlotPair<'_>> = Vec::with_capacity(old_rows.len() + new_rows.len());
+    let (mut o, mut n) = (0usize, 0usize);
+    let mut pi = 0usize;
+    while o < old_rows.len() || n < new_rows.len() {
+        if let Some(&(po, pn)) = pairs.get(pi) {
+            if (o, n) == (po, pn) {
+                aligned_pairs.push((Some(&old_rows[o]), Some(&new_rows[n]), None));
+                o += 1;
+                n += 1;
+                pi += 1;
+                continue;
+            }
+            if o < po {
+                aligned_pairs.push((Some(&old_rows[o]), None, None));
+                o += 1;
+                continue;
+            }
+            if n < pn {
+                aligned_pairs.push((None, Some(&new_rows[n]), None));
+                n += 1;
+                continue;
+            }
+        }
+        if o < old_rows.len() {
+            aligned_pairs.push((Some(&old_rows[o]), None, None));
+            o += 1;
+        } else {
+            aligned_pairs.push((None, Some(&new_rows[n]), None));
+            n += 1;
+        }
+    }
+    type_slot_pairs(
+        aligned_pairs,
+        &formation,
+        old_rows,
+        new_rows,
+        old_content,
+        new_content,
+        profile,
+    )
 }
 
-/// Aligns rows in a factored group into monotonic visual slots and performs
-/// closed-economy token classification, aware of surrounding snapshot content.
-pub fn align_and_type_peer_group_with_content(
-    group: &FactoredGroup,
+/// Types an ordered slot list into classified rows and, when required, the
+/// formation that holds those rows.
+///
+/// Slot alignment, not membership, is this function's subject: the caller has
+/// already decided which rows belong together, which is what lets a segmented
+/// window be typed without a second alignment pass over the cluster.
+#[allow(clippy::too_many_arguments)]
+fn type_slot_pairs(
+    mut aligned_pairs: Vec<SlotPair<'_>>,
+    group: &Formation,
     old_rows: &[Row],
     new_rows: &[Row],
     old_content: Option<&[&str]>,
@@ -146,102 +208,17 @@ pub fn align_and_type_peer_group_with_content(
     let n = group_old.len();
     let m = group_new.len();
 
-    // 1. Monotonic micro-DP slot alignment
-    let mut aligned_pairs: Vec<SlotPair<'_>> = if n == 0 {
-        group_new.iter().map(|r| (None, Some(r), None)).collect()
-    } else if m == 0 {
-        group_old.iter().map(|r| (Some(r), None, None)).collect()
-    } else if n == 1 && m == 1 {
-        if group_old[0].is_moved() || group_new[0].is_moved() {
-            vec![
-                (Some(&group_old[0]), None, None),
-                (None, Some(&group_new[0]), None),
-            ]
-        } else if group_old[0].text() == group_new[0].text() {
-            let u = &group_old[0];
-            let v = &group_new[0];
-            let slot = AlignedSlotRow {
-                slot_index: 0,
-                old_line: u.old_line(),
-                new_line: v.new_line(),
-                old_text: Some(u.text().to_string()),
-                new_text: Some(v.text().to_string()),
-                kind: RowKind::Mod,
-                is_moved_src: false,
-                is_moved_tgt: false,
-                runs: vec![(RunKind::Ctx, u.text().to_string())],
-                spans: Spans::default(),
-                group: PeerGroup {
-                    id: group.id,
-                    slot: 0,
-                    n: 1,
-                    m: 1,
-                },
-            };
-            return PeerGroupRows {
-                group_id: group.id,
-                slots: vec![slot],
-            };
-        } else {
-            let u_text = group_old[0].text();
-            let v_text = group_new[0].text();
-            let (spans, runs) = word_spans_and_runs_with_profile(u_text, v_text, profile);
-
-            if !is_admissible_slot_pair(
-                u_text,
-                v_text,
-                &spans,
-                old_content,
-                new_content,
-                profile,
-                true,
-            ) {
-                vec![
-                    (Some(&group_old[0]), None, None),
-                    (None, Some(&group_new[0]), None),
-                ]
-            } else {
-                let u = &group_old[0];
-                let v = &group_new[0];
-                let slot = AlignedSlotRow {
-                    slot_index: 0,
-                    old_line: u.old_line(),
-                    new_line: v.new_line(),
-                    old_text: Some(u_text.to_string()),
-                    new_text: Some(v_text.to_string()),
-                    kind: RowKind::Mod,
-                    is_moved_src: false,
-                    is_moved_tgt: false,
-                    runs,
-                    spans,
-                    group: PeerGroup {
-                        id: group.id,
-                        slot: 0,
-                        n: 1,
-                        m: 1,
-                    },
-                };
-                return PeerGroupRows {
-                    group_id: group.id,
-                    slots: vec![slot],
-                };
-            }
-        }
-    } else {
-        let raw_pairs =
-            align_slots_micro_dp(group_old, group_new, old_content, new_content, profile);
-        canonicalize_slot_order(raw_pairs)
-    };
-
     if n == 1
         && m > 1
         && aligned_pairs.len() == m
         && aligned_pairs[0].0.is_some()
         && aligned_pairs[0].1.is_some()
+        && group_old[0].text().trim() != group_new[0].text().trim()
         && !group_old.iter().any(Row::is_moved)
         && !group_new.iter().any(Row::is_moved)
+        && let Some(rows) = align_expansion_1_to_m(group, &group_old[0], group_new, profile)
     {
-        return align_expansion_1_to_m(group, &group_old[0], group_new, profile);
+        return rows;
     }
 
     if n > 1
@@ -249,10 +226,12 @@ pub fn align_and_type_peer_group_with_content(
         && aligned_pairs.len() == n
         && aligned_pairs[0].0.is_some()
         && aligned_pairs[0].1.is_some()
+        && group_old[0].text().trim() != group_new[0].text().trim()
         && !group_old.iter().any(Row::is_moved)
         && !group_new.iter().any(Row::is_moved)
+        && let Some(rows) = align_collapse_n_to_1(group, group_old, &group_new[0], profile)
     {
-        return align_collapse_n_to_1(group, group_old, &group_new[0], profile);
+        return rows;
     }
 
     // Phase-4 post-DP absorption: fold stranded continuation orphans into
@@ -500,12 +479,22 @@ fn distribute_expansion_runs(full_runs: &[(RunKind, String)], m: usize) -> (Runs
     (u_runs, v_runs)
 }
 
+/// Returns `true` when `runs` would turn a `Mod` slot into a wholesale
+/// replacement (zero non-whitespace `Ctx` runs despite non-empty text).
+#[inline]
+fn slot_runs_are_wholesale(runs: &[(RunKind, String)], old_text: &str, new_text: &str) -> bool {
+    let has_non_ws_ctx = runs
+        .iter()
+        .any(|(kind, text)| *kind == RunKind::Ctx && !text.trim().is_empty());
+    !has_non_ws_ctx && (!old_text.trim().is_empty() || !new_text.trim().is_empty())
+}
+
 fn align_expansion_1_to_m(
-    group: &FactoredGroup,
+    group: &Formation,
     old_row: &Row,
     new_rows: &[Row],
     profile: Option<&LangProfile>,
-) -> PeerGroupRows {
+) -> Option<PeerGroupRows> {
     let m = new_rows.len();
     let u = old_row.text();
     let v_texts: Vec<&str> = new_rows.iter().map(Row::text).collect();
@@ -515,6 +504,9 @@ fn align_expansion_1_to_m(
     let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, m);
 
     let slot_0_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
+    if slot_runs_are_wholesale(&slot_0_runs, old_row.text(), new_rows[0].text()) {
+        return None;
+    }
     let mut slots = Vec::with_capacity(m);
 
     slots.push(AlignedSlotRow {
@@ -559,10 +551,10 @@ fn align_expansion_1_to_m(
         });
     }
 
-    PeerGroupRows {
+    Some(PeerGroupRows {
         group_id: group.id,
         slots,
-    }
+    })
 }
 
 fn combine_mod_runs_collapse(
@@ -685,11 +677,11 @@ fn distribute_collapse_runs(full_runs: &[(RunKind, String)], n: usize) -> (LineR
 }
 
 fn align_collapse_n_to_1(
-    group: &FactoredGroup,
+    group: &Formation,
     old_rows: &[Row],
     new_row: &Row,
     profile: Option<&LangProfile>,
-) -> PeerGroupRows {
+) -> Option<PeerGroupRows> {
     let n = old_rows.len();
     let v = new_row.text();
     let u_texts: Vec<&str> = old_rows.iter().map(Row::text).collect();
@@ -699,6 +691,9 @@ fn align_collapse_n_to_1(
     let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, n);
 
     let slot_0_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
+    if slot_runs_are_wholesale(&slot_0_runs, old_rows[0].text(), new_row.text()) {
+        return None;
+    }
     let mut slots = Vec::with_capacity(n);
 
     slots.push(AlignedSlotRow {
@@ -743,10 +738,10 @@ fn align_collapse_n_to_1(
         });
     }
 
-    PeerGroupRows {
+    Some(PeerGroupRows {
         group_id: group.id,
         slots,
-    }
+    })
 }
 
 fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
@@ -768,42 +763,13 @@ pub(crate) fn has_salient_moved_link(
     })
 }
 
-fn canonicalize_slot_order<'a>(pairs: Vec<SlotPair<'a>>) -> Vec<SlotPair<'a>> {
-    let mut out = Vec::with_capacity(pairs.len());
-    let mut pending_dels = Vec::new();
-    let mut pending_adds = Vec::new();
-
-    for pair in pairs {
-        if pair.0.is_some() && pair.1.is_some() {
-            out.append(&mut pending_dels);
-            out.append(&mut pending_adds);
-            out.push(pair);
-        } else if pair.0.is_some() {
-            pending_dels.push(pair);
-        } else if pair.1.is_some() {
-            pending_adds.push(pair);
-        }
-    }
-
-    out.append(&mut pending_dels);
-    out.append(&mut pending_adds);
-    out
-}
-
 /// Determines if a pair of deletion and addition lines is admissible for
 /// slot-level Mod pairing, checking wholesale bounds, declaration
 /// compatibility, and verbatim rivals.
-/// Statement heads weak enough to need a shared salient token when they
-/// are the only link between two lines (mirrors the micro-DP gate).
-const STATEMENT_HEADS: &[&str] = &[
-    "if", "fn", "let", "match", "for", "while", "return", "pub", "struct", "enum", "type", "use",
-    "impl",
-];
-
 /// Whether two trimmed lines share a statement head (`fn`/`let`/`pub`…)
 /// or an assignment key (`key = …`). Such a head alone must not anchor a
 /// pairing.
-fn shares_statement_head(u_trim: &str, v_trim: &str) -> bool {
+fn shares_statement_head(u_trim: &str, v_trim: &str, profile: Option<&LangProfile>) -> bool {
     if let (Some(u_eq), Some(v_eq)) = (u_trim.find('='), v_trim.find('=')) {
         let u_key = u_trim[..u_eq].trim();
         let v_key = v_trim[..v_eq].trim();
@@ -815,7 +781,7 @@ fn shares_statement_head(u_trim: &str, v_trim: &str) -> bool {
         diffuse_syntax::prelude::first_word(u_trim),
         diffuse_syntax::prelude::first_word(v_trim),
     ) {
-        (Some(u_h), Some(v_h)) => u_h == v_h && STATEMENT_HEADS.contains(&u_h),
+        (Some(u_h), Some(v_h)) => u_h == v_h && is_statement_head_keyword(u_h, profile),
         _ => false,
     }
 }
@@ -863,9 +829,7 @@ fn is_admissible_slot_pair(
     if decl_has_rival || crate::merge::is_wholesale_replacement_spans(u_text, v_text, spans) {
         return false;
     }
-    if !(crate::cluster::dp::solver::is_admissible_mod_pair(u_text, v_text, profile)
-        || is_decl_compat)
-    {
+    if !(is_admissible_mod_pair(u_text, v_text, profile) || is_decl_compat) {
         return false;
     }
     // A shared statement head alone must not anchor a singleton pairing:
@@ -879,7 +843,7 @@ fn is_admissible_slot_pair(
     if !enforce_head_gate
         || is_cross_type_decl
         || u_trim == v_trim
-        || !shares_statement_head(u_trim, v_trim)
+        || !shares_statement_head(u_trim, v_trim, profile)
     {
         return true;
     }
@@ -906,7 +870,7 @@ fn is_admissible_slot_pair(
 /// coverage gate — not this pre-filter — rejects merged independents.
 fn is_expression_head_open(trim: &str, delim: i32) -> bool {
     delim > 0
-        || crate::cluster::factor::is_open_continuation_line(trim)
+        || is_open_continuation_line(trim)
         || trim.ends_with(',')
         || trim.ends_with("&&")
         || trim.ends_with("||")
@@ -928,7 +892,7 @@ fn is_expression_tail(trim: &str) -> bool {
 /// bilateral crutch: the other side must be substantially explained too,
 /// otherwise a sibling line (next struct field, next arg) gets absorbed.
 fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
-    (delim > 0 && !trim.ends_with('{')) || crate::cluster::factor::is_open_continuation_line(trim)
+    (delim > 0 && !trim.ends_with('{')) || is_open_continuation_line(trim)
 }
 
 /// Gates a `\n`-joined multi-line side against a single-line side for
@@ -1132,7 +1096,7 @@ fn fold_collapse_window(
     if up_trim.chars().count() < 3 || !up_trim.chars().any(|c| c.is_ascii_alphabetic()) {
         return false;
     }
-    let u_delim = crate::cluster::factor::robust_delim_delta(u_trim);
+    let u_delim = robust_delim_delta(u_trim);
     if !(is_expression_head_open(u_trim, u_delim) || is_expression_tail(up_trim)) {
         return false;
     }
@@ -1154,7 +1118,8 @@ fn fold_collapse_window(
     let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, 2);
     strip_join_newlines(&mut u_runs);
     let mod_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
-    if !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
+    if slot_runs_are_wholesale(&mod_runs, u_text, v_text)
+        || !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
         || !folded_runs_project(&u_runs[1], Some(up_text), None)
     {
         return false;
@@ -1200,7 +1165,7 @@ fn fold_expansion_window(
     if vp_trim.chars().count() < 3 || !vp_trim.chars().any(|c| c.is_ascii_alphabetic()) {
         return false;
     }
-    let v_delim = crate::cluster::factor::robust_delim_delta(v_trim);
+    let v_delim = robust_delim_delta(v_trim);
     if !(is_expression_head_open(v_trim, v_delim) || is_expression_tail(vp_trim)) {
         return false;
     }
@@ -1222,7 +1187,8 @@ fn fold_expansion_window(
     let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, 2);
     strip_join_newlines(&mut v_runs);
     let mod_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
-    if !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
+    if slot_runs_are_wholesale(&mod_runs, u_text, v_text)
+        || !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
         || !folded_runs_project(&v_runs[1], None, Some(vp_text))
     {
         return false;
@@ -1231,336 +1197,6 @@ fn fold_expansion_window(
     window[0].2 = Some(mod_runs);
     window[1].2 = Some(cont_runs);
     true
-}
-
-/// Row distance beyond which a pair must explain its deleted line in full
-/// before it may be tied: distance on its own never vetoes a correspondence.
-const LONG_DIAGONAL: i32 = 8;
-
-/// Fraction of a deleted line's characters a partner must account for before
-/// the pair may bridge a [`LONG_DIAGONAL`] gap. Mirrors the strict coverage bar
-/// of [`joined_alignment`]: an incompletely explained pair that bridges a long
-/// gap hides a relocation by absorbing it into a modification.
-const BRIDGED_EXPLANATION: f64 = 0.85;
-
-/// Whether `new_text` accounts for (nearly) all of `old_text`.
-///
-/// Long insertions push a genuine correspondence far down the diagonal. Such a
-/// pair is still a modification when nothing of the deleted line is left over;
-/// when text is left over, that remainder has to travel and belongs to a
-/// formation instead.
-fn explained_deletion(old_text: &str, new_text: &str) -> bool {
-    let old_chars = old_text.trim().chars().count();
-    if old_chars == 0 {
-        return false;
-    }
-    let spans = crate::lcs::word_spans(old_text, new_text);
-    let explained: usize = crate::merge::merged_runs_from_texts(old_text, new_text, &spans)
-        .iter()
-        .filter(|r| r.kind == RunKind::Ctx)
-        .map(|r| r.text.chars().count())
-        .sum();
-    explained as f64 >= BRIDGED_EXPLANATION * old_chars as f64
-}
-
-fn align_slots_micro_dp<'a>(
-    old_rows: &'a [Row],
-    new_rows: &'a [Row],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> Vec<SlotPair<'a>> {
-    let n = old_rows.len();
-    let m = new_rows.len();
-
-    let mut dp = vec![vec![(0i32, 0u8); m + 1]; n + 1];
-    const GAP_PENALTY: i32 = 2;
-
-    for (i, row) in dp.iter_mut().enumerate().take(n + 1).skip(1) {
-        row[0] = (-(i as i32) * GAP_PENALTY, 2);
-    }
-    for (j, cell) in dp[0].iter_mut().enumerate().take(m + 1).skip(1) {
-        *cell = (-(j as i32) * GAP_PENALTY, 3);
-    }
-
-    struct PrecomputedRow<'a> {
-        text: &'a str,
-        trim: &'a str,
-        indent: usize,
-        delim: i32,
-        tokens: Vec<&'a str>,
-        has_salient: bool,
-        salient_chars: usize,
-    }
-
-    let precompute = |r: &'a Row| {
-        let text = r.text();
-        let trim = text.trim();
-        let indent = text.len() - text.trim_start().len();
-        let delim = crate::cluster::factor::robust_delim_delta(trim);
-        let tokens: Vec<&'a str> = tokenize_line(text).collect();
-        let mut has_salient = false;
-        let mut salient_chars = 0;
-        for i in 0..tokens.len() {
-            if crate::lcs::is_token_salient_in_context(&tokens, i, profile) {
-                has_salient = true;
-                salient_chars += tokens[i].chars().count();
-            }
-        }
-        PrecomputedRow {
-            text,
-            trim,
-            indent,
-            delim,
-            tokens,
-            has_salient,
-            salient_chars,
-        }
-    };
-
-    let old_info: Vec<PrecomputedRow> = old_rows.iter().map(&precompute).collect();
-    let new_info: Vec<PrecomputedRow> = new_rows.iter().map(&precompute).collect();
-
-    for i in 1..=n {
-        let u = &old_info[i - 1];
-        let u_text = u.text;
-        let u_trim = u.trim;
-        let u_indent = u.indent;
-
-        for j in 1..=m {
-            let v = &new_info[j - 1];
-            let v_text = v.text;
-            let v_trim = v.trim;
-            let v_indent = v.indent;
-
-            let indent_diff = (u_indent as i32 - v_indent as i32).abs();
-            let diag_dist = ((i as i32) - (j as i32)).abs();
-            let mut cached_runs: Option<Vec<crate::merge::Run<'a>>> = None;
-            let mut match_score = if old_rows[i - 1].is_moved() || new_rows[j - 1].is_moved() {
-                -1000
-            } else if u_trim == v_trim {
-                (u_trim.chars().count() as i32 * 10) + 1000 - (indent_diff * 2) - diag_dist
-            } else if crate::lcs::is_affix_pair(u_trim, v_trim) {
-                let common = u_trim.len().min(v_trim.len());
-                (common as i32 * 10) + 900 - (indent_diff * 2) - diag_dist
-            } else {
-                let shared_bound: usize = u
-                    .tokens
-                    .iter()
-                    .filter(|ut| !ut.trim().is_empty() && v.tokens.contains(ut))
-                    .map(|ut| ut.chars().count())
-                    .sum();
-                if shared_bound < 3 {
-                    -1000
-                } else {
-                    let spans = crate::lcs::word_spans(u_text, v_text);
-
-                    if !is_admissible_slot_pair(
-                        u_text,
-                        v_text,
-                        &spans,
-                        old_content,
-                        new_content,
-                        profile,
-                        false,
-                    ) {
-                        -1000
-                    } else {
-                        let runs = crate::merge::merged_runs_from_texts(u_text, v_text, &spans);
-                        let matched_chars: usize = runs
-                            .iter()
-                            .filter(|r| {
-                                r.kind == crate::merge::RunKind::Ctx && !r.text.trim().is_empty()
-                            })
-                            .map(|r| r.text.chars().count())
-                            .sum();
-                        let u_chars = u_trim.chars().count();
-                        let v_chars = v_trim.chars().count();
-                        let unmatched = if n == 1 && m > 1 {
-                            v_chars.saturating_sub(matched_chars)
-                        } else if n > 1 && m == 1 {
-                            u_chars.saturating_sub(matched_chars)
-                        } else {
-                            u_chars.max(v_chars).saturating_sub(matched_chars)
-                        };
-
-                        let min_tokens = if n == 1 && m == 1 { 0 } else { 3 };
-                        if matched_chars < min_tokens {
-                            -1000
-                        } else {
-                            let mut score = (matched_chars as i32 * 10)
-                                - (unmatched as i32 * 3)
-                                - (indent_diff * 2)
-                                - diag_dist;
-                            let u_head = diffuse_syntax::prelude::first_word(u_trim);
-                            let v_head = diffuse_syntax::prelude::first_word(v_trim);
-                            if let (Some(u_h), Some(v_h)) = (u_head, v_head)
-                                && u_h == v_h
-                                && STATEMENT_HEADS.contains(&u_h)
-                            {
-                                score += 80;
-                                if (u_trim.ends_with('{') && v_trim.ends_with('{'))
-                                    || (u_trim.ends_with(';') && v_trim.ends_with(';'))
-                                {
-                                    score += 40;
-                                }
-                            }
-                            let shares_key = if let (Some(u_eq), Some(v_eq)) =
-                                (u_trim.find('='), v_trim.find('='))
-                            {
-                                let u_key = u_trim[..u_eq].trim();
-                                let v_key = v_trim[..v_eq].trim();
-                                !u_key.is_empty() && u_key == v_key
-                            } else {
-                                false
-                            };
-                            if shares_key {
-                                score += 200;
-                            }
-                            if indent_diff == 0
-                                && (u_trim.starts_with(v_trim) || v_trim.starts_with(u_trim))
-                            {
-                                let opens_container = v.delim > 0 || u.delim > 0;
-                                if opens_container {
-                                    score += 200;
-                                } else {
-                                    score += 40;
-                                }
-                            }
-                            cached_runs = Some(runs);
-                            if n == 1 && m == 1 {
-                                score.max(10)
-                            } else if score <= 0 {
-                                -1000
-                            } else {
-                                score
-                            }
-                        }
-                    }
-                }
-            };
-
-            if match_score > 0
-                && u_trim != v_trim
-                && (n > 1 || m > 1)
-                && u.has_salient
-                && v.has_salient
-            {
-                let has_salient_ctx = cached_runs.as_ref().is_some_and(|runs| {
-                    runs.iter().any(|run| {
-                        run.kind == crate::merge::RunKind::Ctx
-                            && text_has_salient_token(run.text, profile)
-                    })
-                });
-                let shares_key =
-                    if let (Some(u_eq), Some(v_eq)) = (u_trim.find('='), v_trim.find('=')) {
-                        let u_key = u_trim[..u_eq].trim();
-                        let v_key = v_trim[..v_eq].trim();
-                        !u_key.is_empty() && u_key == v_key
-                    } else {
-                        false
-                    };
-                let shares_statement_head = match (
-                    diffuse_syntax::prelude::first_word(u_trim),
-                    diffuse_syntax::prelude::first_word(v_trim),
-                ) {
-                    (Some(u_h), Some(v_h)) => u_h == v_h && STATEMENT_HEADS.contains(&u_h),
-                    _ => false,
-                } || shares_key;
-                // A shared keyword head (e.g. `if`, `let`) is too weak
-                // to justify pairing across a diagonal offset; require at
-                // least one shared salient identifier context token.
-                if !has_salient_ctx && (!shares_statement_head || diag_dist > 1) {
-                    match_score = -1000;
-                } else if !shares_statement_head {
-                    let del_salient_chars = u.salient_chars;
-                    let add_salient_chars = v.salient_chars;
-                    if del_salient_chars > 0 && add_salient_chars > 0 {
-                        let matched_salient_chars: usize = u
-                            .tokens
-                            .iter()
-                            .enumerate()
-                            .filter(|&(idx, _)| {
-                                crate::lcs::is_token_salient_in_context(&u.tokens, idx, profile)
-                            })
-                            .filter(|&(_, t)| v.tokens.contains(t))
-                            .map(|(_, t)| t.chars().count())
-                            .sum();
-                        let min_salient = del_salient_chars.min(add_salient_chars);
-                        // HEAD parity: at least 4 matched salient chars — a
-                        // lone 3-char identifier (e.g. `row`) must not anchor
-                        // a compound Mod pairing on its own.
-                        if matched_salient_chars < 4
-                            || (matched_salient_chars as f64 / min_salient as f64) < 0.30
-                        {
-                            match_score = -1000;
-                        }
-                    }
-                }
-            }
-
-            if match_score > 0 && diag_dist > LONG_DIAGONAL && !explained_deletion(u_text, v_text) {
-                match_score = -1000;
-            }
-
-            let from_diag = dp[i - 1][j - 1].0 + match_score;
-            let from_up = dp[i - 1][j].0 - GAP_PENALTY;
-            let from_left = dp[i][j - 1].0 - GAP_PENALTY;
-
-            let mut best_score = from_diag;
-            let mut best_dir = 1;
-
-            if from_up > best_score {
-                best_score = from_up;
-                best_dir = 2;
-            }
-            if from_left > best_score {
-                best_score = from_left;
-                best_dir = 3;
-            }
-
-            dp[i][j] = (best_score, best_dir);
-        }
-    }
-
-    let mut i = n;
-    let mut j = m;
-    let mut path = Vec::new();
-
-    while i > 0 || j > 0 {
-        let dir = dp[i][j].1;
-        match dir {
-            1 => {
-                path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1]), None));
-                i -= 1;
-                j -= 1;
-            }
-            2 => {
-                path.push((Some(&old_rows[i - 1]), None, None));
-                i -= 1;
-            }
-            3 => {
-                path.push((None, Some(&new_rows[j - 1]), None));
-                j -= 1;
-            }
-            _ => {
-                if i > 0 && j > 0 {
-                    path.push((Some(&old_rows[i - 1]), Some(&new_rows[j - 1]), None));
-                    i -= 1;
-                    j -= 1;
-                } else if i > 0 {
-                    path.push((Some(&old_rows[i - 1]), None, None));
-                    i -= 1;
-                } else {
-                    path.push((None, Some(&new_rows[j - 1]), None));
-                    j -= 1;
-                }
-            }
-        }
-    }
-
-    path.reverse();
-    path
 }
 
 /// Maximum slot distance a relocated token may travel. The candidate
@@ -2624,7 +2260,7 @@ fn replace_span_in_run(
     runs.splice(run_idx..=run_idx, new_pieces);
 }
 
-fn compute_slot_spans(runs: &[(RunKind, String)]) -> Spans {
+pub(crate) fn compute_slot_spans(runs: &[(RunKind, String)]) -> Spans {
     let mut del_spans = Vec::new();
     let mut add_spans = Vec::new();
     let mut old_off = 0usize;
@@ -2696,39 +2332,11 @@ mod tests {
     }
 
     #[test]
-    fn explained_deletion_accepts_a_fully_accounted_line() {
-        assert!(explained_deletion(
-            "  cargo install --locked --path crates/diffuse --force \"$@\"",
-            "  \"${CARGO[@]}\" install --locked --path crates/diffuse \"${BINS[@]}\" --force \"$@\""
-        ));
-    }
-
-    #[test]
-    fn explained_deletion_rejects_leftover_and_empty_deletions() {
-        assert!(
-            !explained_deletion("", "anything"),
-            "an empty deletion explains nothing"
-        );
-        assert!(
-            !explained_deletion(
-                "  cargo \"+$TOOLCHAIN\" install --locked --path crates/diffuse --force \"$@\"",
-                "  \"${CARGO[@]}\" install --locked --path crates/diffuse \"${BINS[@]}\" --force \"$@\""
-            ),
-            "the toolchain argument is left over, so the pair cannot bridge a long diagonal"
-        );
-    }
-
-    #[test]
     fn test_align_single_mod() {
-        let group = FactoredGroup {
-            id: GroupId(1),
-            old_range: 0..1,
-            new_range: 0..1,
-        };
         let dels = vec![make_del(10, "let alpha = 100;")];
         let adds = vec![make_add(10, "let alpha = 101;")];
 
-        let result = align_and_type_peer_group(&group, &dels, &adds, None);
+        let result = type_window(GroupId(1), &dels, &adds, &[(0, 0)], None, None, None);
         assert_eq!(result.slots.len(), 1);
         let s0 = &result.slots[0];
         assert_eq!(s0.kind, RowKind::Mod);
@@ -2739,11 +2347,6 @@ mod tests {
 
     #[test]
     fn test_align_expansion_block() {
-        let group = FactoredGroup {
-            id: GroupId(2),
-            old_range: 0..1,
-            new_range: 0..3,
-        };
         let dels = vec![make_del(20, "fn run() { active(); }")];
         let adds = vec![
             make_add(20, "fn run() {"),
@@ -2751,7 +2354,7 @@ mod tests {
             make_add(22, "}"),
         ];
 
-        let result = align_and_type_peer_group(&group, &dels, &adds, None);
+        let result = type_window(GroupId(2), &dels, &adds, &[(0, 0)], None, None, None);
         assert_eq!(result.slots.len(), 3);
         assert_eq!(result.slots[0].kind, RowKind::Mod);
         assert_eq!(result.slots[1].kind, RowKind::Add);
@@ -2761,11 +2364,6 @@ mod tests {
 
     #[test]
     fn test_align_compound_scrollbar_reflow() {
-        let group = FactoredGroup {
-            id: GroupId(3),
-            old_range: 0..2,
-            new_range: 0..3,
-        };
         let dels = vec![
             make_del(293, "find_entry(pat: &str) -> Option<usize>"),
             make_del(
@@ -2782,7 +2380,15 @@ mod tests {
             make_add(290, "};"),
         ];
 
-        let result = align_and_type_peer_group(&group, &dels, &adds, None);
+        let result = type_window(
+            GroupId(3),
+            &dels,
+            &adds,
+            &[(0, 0), (1, 1)],
+            None,
+            None,
+            None,
+        );
         assert_eq!(result.slots.len(), 3);
         assert_eq!(result.slots[0].kind, RowKind::Mod);
         assert_eq!(result.slots[1].kind, RowKind::Mod);
@@ -2792,62 +2398,19 @@ mod tests {
 
     #[test]
     fn test_align_pure_add_and_del_groups() {
-        let add_group = FactoredGroup {
-            id: GroupId(4),
-            old_range: 0..0,
-            new_range: 0..2,
-        };
         let adds = vec![make_add(10, "line 1"), make_add(11, "line 2")];
-        let add_res = align_and_type_peer_group(&add_group, &[], &adds, None);
+        let add_res = type_window(GroupId(4), &[], &adds, &[], None, None, None);
         assert_eq!(add_res.slots.len(), 2);
         assert_eq!(add_res.slots[0].kind, RowKind::Add);
         assert_eq!(add_res.slots[1].kind, RowKind::Add);
         add_res.assert_token_conservation();
 
-        let del_group = FactoredGroup {
-            id: GroupId(5),
-            old_range: 0..2,
-            new_range: 0..0,
-        };
         let dels = vec![make_del(10, "del 1"), make_del(11, "del 2")];
-        let del_res = align_and_type_peer_group(&del_group, &dels, &[], None);
+        let del_res = type_window(GroupId(5), &dels, &[], &[], None, None, None);
         assert_eq!(del_res.slots.len(), 2);
         assert_eq!(del_res.slots[0].kind, RowKind::Del);
         assert_eq!(del_res.slots[1].kind, RowKind::Del);
         del_res.assert_token_conservation();
-    }
-
-    #[test]
-    fn test_align_token_relocation() {
-        let group = FactoredGroup {
-            id: GroupId(6),
-            old_range: 0..2,
-            new_range: 0..2,
-        };
-        let dels = vec![
-            make_del(10, "let target_identifier = compute();"),
-            make_del(11, "finalize();"),
-        ];
-        let adds = vec![
-            make_add(10, "prepare();"),
-            make_add(11, "finalize(target_identifier);"),
-        ];
-
-        let result = align_and_type_peer_group(&group, &dels, &adds, None);
-        assert_eq!(result.slots.len(), 3);
-        result.assert_token_conservation();
-
-        // Check that "finalize" was relocated from slot 2 (Del) to slot 1 (Mod Add)
-        let has_moved_src = result.slots[2]
-            .runs
-            .iter()
-            .any(|(k, s)| *k == RunKind::MovedSrc && s.contains("finalize"));
-        let has_moved_tgt = result.slots[1]
-            .runs
-            .iter()
-            .any(|(k, s)| *k == RunKind::MovedTgt && s.contains("finalize"));
-        assert!(has_moved_src, "Expected MovedSrc in slot 2");
-        assert!(has_moved_tgt, "Expected MovedTgt in slot 1");
     }
 
     #[test]
@@ -2981,26 +2544,6 @@ mod tests {
             "bare recipient line must receive bracket, got: {:?}",
             slot_runs[1]
         );
-    }
-
-    #[test]
-    fn test_align_single_head_only_pair_dissolves() {
-        // The 1×1 fast path must apply the same head gate as the micro-DP:
-        // `fn row() {` shares only the `fn` head with `fn total() {` and no
-        // salient token, so it must dissolve to Del + Add, not pair as Mod.
-        let group = FactoredGroup {
-            id: GroupId(7),
-            old_range: 0..1,
-            new_range: 0..1,
-        };
-        let dels = vec![make_del(10, "fn row() {")];
-        let adds = vec![make_add(10, "fn total() {")];
-
-        let result = align_and_type_peer_group(&group, &dels, &adds, None);
-        assert_eq!(result.slots.len(), 2);
-        assert_eq!(result.slots[0].kind, RowKind::Del);
-        assert_eq!(result.slots[1].kind, RowKind::Add);
-        result.assert_token_conservation();
     }
 
     fn link_slot(runs: Vec<(RunKind, String)>) -> AlignedSlotRow {
@@ -3430,6 +2973,50 @@ mod tests {
             slot_runs[1].iter().all(|(k, _)| *k != RunKind::MovedTgt),
             "within-window `.clone()` recipient must abstain, got: {:?}",
             slot_runs[1]
+        );
+    }
+
+    #[test]
+    fn test_type_window_emits_del_before_add_for_unpaired_skips() {
+        let dels = vec![
+            make_del(10, "let shared = alpha();"),
+            make_del(11, "let removed_tail = beta();"),
+        ];
+        let adds = vec![
+            make_add(10, "let shared = alpha_v2();"),
+            make_add(11, "let added_tail = gamma();"),
+        ];
+        let res = type_window(GroupId(9), &dels, &adds, &[(0, 0)], None, None, None);
+        assert_eq!(res.slots.len(), 3);
+        assert_eq!(res.slots[0].kind, RowKind::Mod);
+        assert_eq!(
+            res.slots[1].kind,
+            RowKind::Del,
+            "unpaired Del must precede unpaired Add, got: {:?}",
+            res.slots
+        );
+        assert_eq!(res.slots[2].kind, RowKind::Add);
+    }
+
+    #[test]
+    fn test_expansion_1_to_m_falls_back_when_slot_zero_would_be_wholesale() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let dels = vec![make_del(
+            380,
+            "        frame.contains(\"\\x1b[38;5;203m-\\x1b[39m\\x1b[23m\\x1b[38;5;203m\"),",
+        )];
+        let adds = vec![
+            make_add(
+                382,
+                "    for (marker, color) in [(\"-\", \"\\x1b[38;5;203m\"), (\"+\", \"\\x1b[38;5;120m\")] {",
+            ),
+            make_add(383, "        frame.contains(color),"),
+        ];
+        let res = type_window(GroupId(1), &dels, &adds, &[(0, 0)], None, None, rs);
+        assert!(
+            !slot_runs_are_wholesale(&res.slots[0].runs, dels[0].text(), adds[0].text()),
+            "slot 0 must never degrade into a wholesale Mod row: {:?}",
+            res.slots[0].runs
         );
     }
 }

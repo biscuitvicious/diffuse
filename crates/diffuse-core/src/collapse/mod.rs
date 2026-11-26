@@ -1,16 +1,20 @@
-//! Diff row collapse pipeline via irreducible peer-group reflow.
-
-use rustc_hash::FxHashMap;
+//! Diff row collapse pipeline via unified reflow lattice.
 
 use diffuse_syntax::profile::LangProfile;
 
 use crate::parse::{Hunk, Row};
 
+pub mod evidence;
+pub mod formation;
+pub mod frame;
 pub mod invariants;
+pub mod lattice;
 pub mod normalize;
 pub mod peer;
+pub mod reflow;
 pub mod residual;
 pub mod slot;
+pub mod tokens;
 
 #[cfg(test)]
 mod tests;
@@ -23,27 +27,7 @@ pub use invariants::{
 };
 pub use normalize::pass_normalize_identical_mods;
 pub use peer::{assert_peer_group_invariants, peer_reflow_pipeline};
-pub use residual::pass_residual_pairing;
-pub use slot::{AlignedSlotRow, PeerGroupRows, align_and_type_peer_group};
-
-pub(crate) fn line_delim_delta(text: &str) -> i32 {
-    let mut delta = 0i32;
-    for &b in text.as_bytes() {
-        match b {
-            b'{' | b'(' | b'[' => delta += 1,
-            b'}' | b')' | b']' => delta -= 1,
-            _ => {}
-        }
-    }
-    delta
-}
-
-/// Results of the initial pairing pass.
-pub struct PairingResults {
-    pub pair_of: FxHashMap<usize, usize>, // add row id -> del row id
-    pub collapse_blocks: FxHashMap<usize, Vec<usize>>,
-    pub expand_blocks: FxHashMap<usize, Vec<usize>>,
-}
+pub use slot::{AlignedSlotRow, PeerGroupRows};
 
 #[tracing::instrument(
     level = "debug",

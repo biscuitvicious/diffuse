@@ -823,13 +823,13 @@ fn test_hunk_expand_icon_for_segment_branches() {
     use crate::types::HunkExpandIcon;
 
     // 1. Single-line hunk with context above and below (lines 10..10 in 20-line
-    //    file)
-    let diff_mid =
-        "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -10,1 +10,1 @@\n-old 10\n+new 10\n";
+    //    file). The replacement must pair into one Mod row, so the lines share a
+    //    salient token; a pair sharing only the digit would stay two rows.
+    let diff_mid = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -10,1 +10,1 @@\n-old value ten\n+new value ten\n";
     let mut old_lines = (1..=20).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
-    old_lines[9] = "old 10\n".into();
+    old_lines[9] = "old value ten\n".into();
     let mut new_lines = (1..=20).map(|i| format!("line {i}\n")).collect::<Vec<_>>();
-    new_lines[9] = "new 10\n".into();
+    new_lines[9] = "new value ten\n".into();
     let new_mid: std::collections::HashMap<_, _> =
         [("f.rs".into(), new_lines.concat())].into_iter().collect();
     let old_mid: std::collections::HashMap<_, _> =

@@ -65,8 +65,6 @@ pub struct PipelineOptions {
     pub expand_lines: usize,
     pub token_product_cap: usize,
     pub cluster_product_cap: usize,
-    pub cluster_bandwidth_min: usize,
-    pub cluster_bandwidth_slack: usize,
     pub lazy_collapsed: bool,
     pub show_resolved: bool,
 }
@@ -81,8 +79,6 @@ impl Default for PipelineOptions {
             expand_lines: crate::git::DEFAULT_EXPAND_LINES,
             token_product_cap: crate::lcs::DEFAULT_TOKEN_PRODUCT_CAP,
             cluster_product_cap: crate::cluster::dp::DEFAULT_CLUSTER_PRODUCT_CAP,
-            cluster_bandwidth_min: crate::cluster::dp::DEFAULT_CLUSTER_BANDWIDTH_MIN,
-            cluster_bandwidth_slack: crate::cluster::dp::DEFAULT_CLUSTER_BANDWIDTH_SLACK,
             lazy_collapsed: false,
             show_resolved: false,
         }
@@ -133,16 +129,6 @@ impl PipelineOptions {
 
     pub fn with_cluster_product_cap(mut self, cluster_product_cap: usize) -> Self {
         self.cluster_product_cap = cluster_product_cap;
-        self
-    }
-
-    pub fn with_cluster_bandwidth_min(mut self, min: usize) -> Self {
-        self.cluster_bandwidth_min = min;
-        self
-    }
-
-    pub fn with_cluster_bandwidth_slack(mut self, slack: usize) -> Self {
-        self.cluster_bandwidth_slack = slack;
         self
     }
 
@@ -282,8 +268,6 @@ pub fn run_pipeline_full(
 ) -> PipelineOutput {
     crate::lcs::set_token_product_cap(opts.token_product_cap);
     crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
-    crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
-    crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
     let out_files: Vec<OutputFile> =
         crate::streaming::stream_diff_pipeline(diff, new_content, old_content, opts, None)
             .collect();

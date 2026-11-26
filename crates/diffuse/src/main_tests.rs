@@ -576,8 +576,6 @@ fn test_clap_root_help_sections_and_options() {
     // Verify tuning options are hidden from help output
     assert!(!help.contains("--token-product-cap"));
     assert!(!help.contains("--cluster-budget"));
-    assert!(!help.contains("--cluster-bandwidth-min"));
-    assert!(!help.contains("--cluster-bandwidth-slack"));
 
     // Verify hidden options still parse correctly from CLI
     let parsed = Args::try_parse_from([
@@ -586,16 +584,10 @@ fn test_clap_root_help_sections_and_options() {
         "99999",
         "--cluster-budget",
         "12345",
-        "--cluster-bandwidth-min",
-        "42",
-        "--cluster-bandwidth-slack",
-        "16",
     ])
     .unwrap();
     assert_eq!(parsed.token_product_cap, 99999);
     assert_eq!(parsed.cluster_budget, 12345);
-    assert_eq!(parsed.cluster_bandwidth_min, 42);
-    assert_eq!(parsed.cluster_bandwidth_slack, 16);
 }
 
 #[test]

@@ -209,24 +209,6 @@ when activating a hidden gap separator in the TUI reviewer."
     #[arg(long, hide = true, default_value_t = DEFAULT_CLUSTER_BUDGET, global = true)]
     pub cluster_budget: usize,
 
-    /// Minimum corridor half-bandwidth for cluster DP alignment (default: 64).
-    #[arg(
-        long,
-        hide = true,
-        default_value_t = DEFAULT_CLUSTER_BANDWIDTH_MIN,
-        global = true
-    )]
-    pub cluster_bandwidth_min: usize,
-
-    /// Bandwidth slack added to cluster length difference (default: 32).
-    #[arg(
-        long,
-        hide = true,
-        default_value_t = DEFAULT_CLUSTER_BANDWIDTH_SLACK,
-        global = true
-    )]
-    pub cluster_bandwidth_slack: usize,
-
     /// Number of worker threads (default: max(1, #CPUs / 2)).
     #[arg(
         short = 'j',
