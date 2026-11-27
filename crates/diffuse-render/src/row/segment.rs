@@ -128,11 +128,7 @@ pub fn write_row_segment<W: Write>(
             && !runs
                 .iter()
                 .any(|t| t.kind == RunKind::Ctx || t.kind == RunKind::MovedSrc));
-    let body_empty = if kind != RowKind::Del && has_moved_src {
-        runs.iter().all(|tok| tok.kind == RunKind::MovedSrc)
-    } else {
-        runs.is_empty()
-    };
+    let body_empty = runs.is_empty();
     if is_plain_del || body_empty {
         if let Some(span) = body.first() {
             out.write_str(&bg_code(span.bg))?;
@@ -352,14 +348,6 @@ pub fn row_segment_spans(
             filtered_runs = runs
                 .iter()
                 .filter(|t| !t.kind.is_del_like())
-                .cloned()
-                .collect();
-            &filtered_runs
-        }
-        _ if kind != RowKind::Del && has_moved_src => {
-            filtered_runs = runs
-                .iter()
-                .filter(|t| t.kind != RunKind::MovedSrc)
                 .cloned()
                 .collect();
             &filtered_runs

@@ -1187,7 +1187,7 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
 }
 
 #[test]
-fn test_render_moved_src_run_skipped() {
+fn test_render_moved_src_run_struck_on_mod_row() {
     let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
@@ -1227,17 +1227,17 @@ fn test_render_moved_src_run_skipped() {
         &theme,
     );
     assert!(
-        !rendered.contains("super::resolve_theme"),
-        "moved-out source text must not render: {rendered:?}"
+        rendered.contains("super::resolve_theme"),
+        "moved-out cross-slot source text must render on Mod row: {rendered:?}"
     );
     assert!(
         rendered.contains("assert_eq!"),
         "common head must render: {rendered:?}"
     );
-    // Genuinely deleted text keeps its strike.
+    // Both moved-out and genuinely deleted text render struck through.
     assert!(
-        rendered.contains("\x1b[9m"),
-        "struck deletion must keep strike styling: {rendered:?}"
+        rendered.contains("\x1b[9m") && rendered.contains("super::resolve_theme\x1b[39m\x1b[29m"),
+        "moved-out source text must carry strike styling: {rendered:?}"
     );
 }
 
@@ -1399,10 +1399,9 @@ fn test_render_mov_tgt_with_add_row_bg() {
 }
 
 #[test]
-fn test_display_text_skips_moved_source_runs() {
-    // Geometry must measure what renders: moved-out source text is
-    // skipped by the renderer, so measuring it would wrap the row onto
-    // blank corpse lines.
+fn test_display_text_includes_moved_source_runs() {
+    // Geometry must measure what renders: moved-out cross-slot source text
+    // renders struck through on its source row, so display_text includes it.
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -1424,7 +1423,7 @@ fn test_display_text_skips_moved_source_runs() {
         },
     ];
     let disp = display_text("    assert_eq!(", false, RowKind::Mod, &runs, 0, true);
-    assert_eq!(disp, "    assert_eq!( ");
+    assert_eq!(disp, "    assert_eq!(super::resolve_theme ");
 }
 
 fn span_run(kind: RunKind, color: TokenColor, sgr: Option<u32>, text: &str) -> OutputRun {

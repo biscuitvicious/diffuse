@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    core::{merge::RunKind, parse::RowKind, wire::OutputRun},
+    core::{parse::RowKind, wire::OutputRun},
     width::{char_width, grapheme_width},
 };
 
@@ -22,14 +22,11 @@ pub fn display_text(
             && word_diff
             && !runs.is_empty();
 
-    // Measure what renders: moved-out source text is skipped by the
-    // renderer, so counting it here would wrap rows onto blank corpse
-    // lines (geometry) and mis-slice scrolled views.
+    // Measure what renders: every `MovedSrc` run relocated to a different slot
+    // and renders struck through on its source row (same-slot text is `Ctx`),
+    // so all merged runs contribute to visual width and wrapping geometry.
     let full_text = if use_merged {
-        runs.iter()
-            .filter(|r| r.kind != RunKind::MovedSrc)
-            .map(|r| r.text.as_ref())
-            .collect::<String>()
+        runs.iter().map(|r| r.text.as_ref()).collect::<String>()
     } else {
         text.to_string()
     };

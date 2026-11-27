@@ -1618,6 +1618,67 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
 }
 
 #[test]
+fn test_scrollbar_grab_drag_unified_mod_row_renders_moved_src_struck() {
+    let Some(out) = load_scrollbar_grab_drag() else {
+        return;
+    };
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        diffuse_render::DiffuseTheme::dark(),
+    );
+
+    // Row 292/360 in `app/geometry.rs` is a paired `Mod` row inside the 3×2
+    // doc-comment wrap group whose `. The thumb` relocated to row 290/359 (a
+    // different slot). In unified mode, moved-out text must render struck
+    // through on the source `Mod` row rather than vanishing.
+    let target_idx = state
+        .flat
+        .iter()
+        .position(|item| {
+            state
+                .row_of(item)
+                .is_some_and(|r| r.old_line == Some(292) && r.new_line == Some(360))
+        })
+        .expect("must find 292/360 in flat list");
+    state.row_idx = target_idx;
+    state.vis_line = 0;
+
+    let (w, h) = (200, 40);
+    let buf = state.render_to_buffer(w, h);
+
+    let mut found_line = false;
+    let mut found_moved_src = false;
+    let mut moved_src_struck = false;
+    for y in 0..h {
+        let line_str: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+        if line_str.contains("follows smoothly through [`Self::scrollbar_thumb_for`]") {
+            found_line = true;
+            if let Some(pos) = line_str.find(". The thumb") {
+                found_moved_src = true;
+                // Check the `t` of `thumb` inside `. The thumb`.
+                let thumb_x = (pos + ". The ".len()) as u16;
+                moved_src_struck = buf[(thumb_x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::CROSSED_OUT);
+            }
+            break;
+        }
+    }
+
+    assert!(found_line, "must find 292/360 rendered in unified buffer");
+    assert!(
+        found_moved_src,
+        "unified Mod row 292/360 must render moved-out `. The thumb` instead of eliding it"
+    );
+    assert!(
+        moved_src_struck,
+        "moved-out `. The thumb` on unified Mod row 292/360 must carry CROSSED_OUT"
+    );
+}
+
+#[test]
 fn test_scrollbar_grab_drag_blank_line_is_ctx() {
     let Some(out) = load_scrollbar_grab_drag() else {
         return;
@@ -1778,16 +1839,28 @@ fn test_scrollbar_grab_drag_closure_param_moved_with_trailing_space() {
         }
         if line_str.contains("wrapped_glyph_hit") {
             found_289 = true;
-            // The cells before wrapped_glyph_hit on this visual line must not
-            // have CROSSED_OUT modifier
-            let wgh_pos = line_str.find("wrapped_glyph_hit").unwrap();
-            for x in 0..wgh_pos {
+            // The moved-out `|pat: &str| ` span (including its trailing space)
+            // renders struck through immediately before `wrapped_glyph_hit`,
+            // while leading indentation before it stays unstruck.
+            let moved_pos = line_str
+                .find("|pat: &str| wrapped_glyph_hit")
+                .expect("row 289 must render moved-out `|pat: &str| ` before wrapped_glyph_hit");
+            let wgh_pos = moved_pos + "|pat: &str| ".len();
+            for x in 0..moved_pos {
                 let cell = &buf[(x as u16, y)];
                 assert!(
                     !cell
                         .modifier
                         .contains(ratatui::style::Modifier::CROSSED_OUT),
-                    "No cell before wrapped_glyph_hit on row 289 should be struck out (CROSSED_OUT), found at col {x}: {cell:?}"
+                    "Indentation before moved-out `|pat: &str| ` on row 289 must not be struck out, found at col {x}: {cell:?}"
+                );
+            }
+            for x in moved_pos..wgh_pos {
+                let cell = &buf[(x as u16, y)];
+                assert!(
+                    cell.modifier
+                        .contains(ratatui::style::Modifier::CROSSED_OUT),
+                    "Moved-out `|pat: &str| ` on row 289 must be struck out at col {x}: {cell:?}"
                 );
             }
         }
