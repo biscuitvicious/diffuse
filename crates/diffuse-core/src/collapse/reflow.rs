@@ -194,10 +194,25 @@ struct PathSegmenter<'a> {
     gaps: Vec<Gap>,
     old_rows: &'a [Row],
     new_rows: &'a [Row],
+    profile: Option<&'a LangProfile>,
     old_tokens: Vec<FxHashMap<&'a str, usize>>,
     new_tokens: Vec<FxHashMap<&'a str, usize>>,
     old_delims: Vec<LineDelims>,
     new_delims: Vec<LineDelims>,
+}
+
+/// Result of attempting to extend one side forward via operator valence and
+/// deeper-indented continuations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValenceOutcome {
+    /// No operator-valence or leading-continuation chain started at this head.
+    None,
+    /// Committed balanced extension ending exclusively at `end`.
+    Extended(usize),
+    /// A continuation opened a delimiter that never closed inside the gap;
+    /// rolled back so downstream single-skip heuristics do not claim a
+    /// half-open construct.
+    Unbalanced,
 }
 
 impl<'a> PathSegmenter<'a> {
@@ -205,7 +220,7 @@ impl<'a> PathSegmenter<'a> {
         path: &ClusterPath,
         old_rows: &'a [Row],
         new_rows: &'a [Row],
-        profile: Option<&LangProfile>,
+        profile: Option<&'a LangProfile>,
     ) -> Self {
         let (diags, gaps) = decompose_path(path, old_rows.len(), new_rows.len());
         Self {
@@ -213,6 +228,7 @@ impl<'a> PathSegmenter<'a> {
             gaps,
             old_rows,
             new_rows,
+            profile,
             old_tokens: salient_tokens(old_rows, profile),
             new_tokens: salient_tokens(new_rows, profile),
             old_delims: old_rows.iter().map(LineDelims::of).collect(),
@@ -378,12 +394,36 @@ impl<'a> PathSegmenter<'a> {
             return frame;
         }
 
+        // 3.5. Per-language operator valence & deeper-indented continuation:
+        //      when bracket stacks agree on both sides of a non-verbatim code
+        //      correspondence, follow unsatisfied trailing operators (from the
+        //      active language profile) and leading continuation operators
+        //      across deeper-indented lines inside `gaps[p + 1]`, committing
+        //      only when any nested delimiters close cleanly.
+        let is_symmetric_opener = !fwd_old.is_empty() && fwd_old == fwd_new;
+        let is_symmetric_closer = !bwd_old.is_empty() && bwd_old == bwd_new;
+        let mut val_old = ValenceOutcome::None;
+        let mut val_new = ValenceOutcome::None;
+        if !delim_extended
+            && !is_symmetric_opener
+            && self.old_rows[ao].text().trim() != self.new_rows[an].text().trim()
+            && let Some(prof) = self.profile
+            && !prof.is_comment_line(self.old_rows[ao].text())
+            && !prof.is_comment_line(self.new_rows[an].text())
+        {
+            val_old = self.scan_valence_forward(Side::Old, p, ao, ao, an, prof);
+            val_new = self.scan_valence_forward(Side::New, p, an, ao, an, prof);
+            if let ValenceOutcome::Extended(oe) = val_old {
+                old_end = oe;
+            }
+            if let ValenceOutcome::Extended(ne) = val_new {
+                new_end = ne;
+            }
+        }
+
         // 4. Unmatched salient evidence: when delimiter balance did not extend
         //    the correspondence, check the immediately adjacent skip on each
         //    side independently (invariant to 1D `DropOld`/`DropNew` order).
-        let is_symmetric_opener = !fwd_old.is_empty() && fwd_old == fwd_new;
-        let is_symmetric_closer = !bwd_old.is_empty() && bwd_old == bwd_new;
-
         if !delim_extended && !is_symmetric_closer {
             if let Some(so) = self.salient_preceding_skip(Side::Old, p, floor_old, ao, an) {
                 old_start = so;
@@ -393,10 +433,14 @@ impl<'a> PathSegmenter<'a> {
             }
         }
         if !delim_extended && !is_symmetric_opener {
-            if let Some(so) = self.salient_following_skip(Side::Old, p, ao, an) {
+            if val_old == ValenceOutcome::None
+                && let Some(so) = self.salient_following_skip(Side::Old, p, ao, an)
+            {
                 old_end = so + 1;
             }
-            if let Some(sn) = self.salient_following_skip(Side::New, p, ao, an) {
+            if val_new == ValenceOutcome::None
+                && let Some(sn) = self.salient_following_skip(Side::New, p, ao, an)
+            {
                 new_end = sn + 1;
             }
         }
@@ -407,6 +451,136 @@ impl<'a> PathSegmenter<'a> {
             old: old_start..old_end,
             new: new_start..new_end,
         }
+    }
+
+    /// Scans forward within `gaps[p + 1]` on `side` for deeper-indented
+    /// continuations authorized by the active language profile's trailing or
+    /// leading continuation operators. Speculatively absorbs nested bracketed
+    /// constructs on the RHS and commits only at balanced delimiter points that
+    /// carry unmatched content evidence against the opposite head row.
+    fn scan_valence_forward(
+        &self,
+        side: Side,
+        p: usize,
+        head_idx: usize,
+        ao: usize,
+        an: usize,
+        profile: &LangProfile,
+    ) -> ValenceOutcome {
+        let gap = self.gap_side(p + 1, side);
+        if gap.is_empty() {
+            return ValenceOutcome::None;
+        }
+        let rows = self.side_rows(side);
+        let delims = self.side_delims(side);
+        let head_indent = indent_columns(rows[head_idx].text());
+        let mut prev_idx = head_idx;
+        let mut delim_stack: Vec<u8> = Vec::new();
+        let mut committed_end = gap.start;
+        let mut saw_unbalanced = false;
+        let mut idx = gap.start;
+
+        while idx < gap.end {
+            let row = &rows[idx];
+            let text = row.text();
+            if is_blank(row) || profile.is_comment_line(text) {
+                break;
+            }
+            if delim_stack.is_empty() {
+                let indent = indent_columns(text);
+                if indent <= head_indent {
+                    // A same-indent block opener (e.g. an Allman `{` following
+                    // a multi-line `if ... && ...` condition header) means the
+                    // scanned continuation lines are an unclosed block header
+                    // rather than a standalone expression; roll back cleanly.
+                    if committed_end > gap.start
+                        && indent == head_indent
+                        && delims[idx].closes.is_empty()
+                        && !delims[idx].opens.is_empty()
+                        && text.trim_start().chars().next().is_some_and(|ch| {
+                            matches!(
+                                UniversalDelimiterClassifier.classify_char(ch),
+                                Some(DelimiterCategory::Open(_))
+                            )
+                        })
+                    {
+                        return ValenceOutcome::Unbalanced;
+                    }
+                    break;
+                }
+                let prev_open = profile.has_open_trailing_operator(rows[prev_idx].text());
+                let cur_cont = profile.has_leading_continuation_operator(text);
+                if !(prev_open || cur_cont) {
+                    break;
+                }
+            }
+            if !apply_delims_forward(&mut delim_stack, &delims[idx]) {
+                break;
+            }
+            prev_idx = idx;
+            idx += 1;
+            if delim_stack.is_empty() {
+                committed_end = idx;
+            } else {
+                saw_unbalanced = true;
+            }
+        }
+
+        if committed_end > gap.start {
+            if self.valence_span_has_evidence(side, gap.start..committed_end, ao, an, profile) {
+                ValenceOutcome::Extended(committed_end)
+            } else {
+                ValenceOutcome::None
+            }
+        } else if saw_unbalanced {
+            ValenceOutcome::Unbalanced
+        } else {
+            ValenceOutcome::None
+        }
+    }
+
+    /// Information-conservation gate for operator-valence continuations: an
+    /// indented continuation span represents a reflow (rather than a brand-new
+    /// replacement expression) only when it shares unmatched content with the
+    /// opposite head row — either a salient word match or an exact unmatched
+    /// alphanumeric token (identifiers, literals, numbers; excluding bare
+    /// punctuation and control-flow/declaration keywords).
+    fn valence_span_has_evidence(
+        &self,
+        side: Side,
+        span: Range<usize>,
+        ao: usize,
+        an: usize,
+        profile: &LangProfile,
+    ) -> bool {
+        for skip in span.clone() {
+            if self.shares_unmatched_salient(side, skip, ao, an) {
+                return true;
+            }
+        }
+        let (same_head, opp_head) = match side {
+            Side::Old => (self.old_rows[ao].text(), self.new_rows[an].text()),
+            Side::New => (self.new_rows[an].text(), self.old_rows[ao].text()),
+        };
+        let same_alnum = alnum_token_counts(same_head);
+        let opp_alnum = alnum_token_counts(opp_head);
+        let rows = self.side_rows(side);
+        for skip in span {
+            for tok in tokenize_line(rows[skip].text()) {
+                if !tok.chars().any(char::is_alphanumeric)
+                    || profile.is_control_flow(tok)
+                    || profile.is_declaration_keyword(tok)
+                {
+                    continue;
+                }
+                let opp_count = opp_alnum.get(tok).copied().unwrap_or(0);
+                let same_count = same_alnum.get(tok).copied().unwrap_or(0);
+                if opp_count > same_count {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Scans backward within `gaps[gap_idx]` (bounded by
@@ -847,6 +1021,29 @@ fn is_blank(row: &Row) -> bool {
     row.text().trim().is_empty()
 }
 
+/// Visual leading-indentation width in columns (tab = 4 columns, space = 1).
+fn indent_columns(line: &str) -> usize {
+    let mut cols = 0usize;
+    for b in line.bytes() {
+        match b {
+            b' ' => cols += 1,
+            b'\t' => cols += 4,
+            _ => break,
+        }
+    }
+    cols
+}
+
+fn alnum_token_counts(text: &str) -> FxHashMap<&str, usize> {
+    let mut counts = FxHashMap::default();
+    for tok in tokenize_line(text) {
+        if tok.chars().any(char::is_alphanumeric) {
+            *counts.entry(tok).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
 /// Identifier-grade tokens of each row with multiplicities, for terminal
 /// participation tests.
 ///
@@ -888,6 +1085,15 @@ mod tests {
     }
 
     fn segment(old: &[&str], new: &[&str], steps: &[PathStep]) -> Vec<Segment> {
+        segment_with_profile(old, new, steps, None)
+    }
+
+    fn segment_with_profile(
+        old: &[&str],
+        new: &[&str],
+        steps: &[PathStep],
+        profile: Option<&LangProfile>,
+    ) -> Vec<Segment> {
         let old_rows: Vec<Row> = old
             .iter()
             .enumerate()
@@ -902,7 +1108,7 @@ mod tests {
             steps: steps.to_vec(),
             score: 0,
         };
-        segment_path(&path, &old_rows, &new_rows, None)
+        segment_path(&path, &old_rows, &new_rows, profile)
     }
 
     #[test]
@@ -1493,6 +1699,197 @@ mod tests {
                     old: 1..3,
                     new: 0..4,
                 },
+            ]
+        );
+    }
+
+    /// Multi-line leading-operator continuation chains (`&&`, `||`, `.method`)
+    /// extend across all indented continuation lines on both expansion (`1×3`)
+    /// and collapse (`3×1`), stopping at same-indent sibling statements.
+    #[test]
+    fn operator_valence_claims_multiline_leading_continuation_chain() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = ["    let ok = foo && bar && baz;"];
+        let new = [
+            "    let ok = foo",
+            "        && bar",
+            "        && baz;",
+            "    let sibling = 1;",
+        ];
+        let steps = [
+            PathStep::Diag,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+        ];
+        assert_eq!(
+            segment_with_profile(&old, &new, &steps, rs),
+            vec![
+                Segment::Window {
+                    old: 0..1,
+                    new: 0..3,
+                },
+                Segment::Add { new: 3 },
+            ]
+        );
+
+        // Symmetric 3×1 collapse on the old side.
+        let collapse_steps = [
+            PathStep::Diag,
+            PathStep::DropOld,
+            PathStep::DropOld,
+            PathStep::DropOld,
+        ];
+        assert_eq!(
+            segment_with_profile(&new, &old, &collapse_steps, rs),
+            vec![
+                Segment::Window {
+                    old: 0..3,
+                    new: 0..1,
+                },
+                Segment::Del { old: 3 },
+            ]
+        );
+    }
+
+    /// An open assignment head (`let res =`) whose indented RHS opens and
+    /// closes a multi-line bracketed call (`compute(\n a,\n b,\n );`) absorbs
+    /// the entire balanced RHS rather than cutting mid-call; if the RHS bracket
+    /// never closes inside the gap, the speculative extension rolls back.
+    #[test]
+    fn operator_valence_closes_nested_bracketed_rhs_and_rolls_back_if_unbalanced() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = ["    let res = compute(alpha, beta);"];
+        let new = [
+            "    let res =",
+            "        compute(",
+            "            alpha,",
+            "            beta,",
+            "        );",
+            "    let after = 1;",
+        ];
+        let steps = [
+            PathStep::Diag,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+            PathStep::DropNew,
+        ];
+        assert_eq!(
+            segment_with_profile(&old, &new, &steps, rs),
+            vec![
+                Segment::Window {
+                    old: 0..1,
+                    new: 0..5,
+                },
+                Segment::Add { new: 5 },
+            ]
+        );
+
+        // Unclosed bracket on the indented RHS rolls back instead of leaving an
+        // unbalanced window.
+        let unbalanced_new = ["    let res =", "        compute(", "            alpha,"];
+        let unbal_steps = [PathStep::Diag, PathStep::DropNew, PathStep::DropNew];
+        assert_eq!(
+            segment_with_profile(&old, &unbalanced_new, &unbal_steps, rs),
+            vec![
+                Segment::Pair { old: 0, new: 0 },
+                Segment::Add { new: 1 },
+                Segment::Add { new: 2 },
+            ]
+        );
+    }
+
+    /// Per-language atomicity: Rust's `:` acts as a field continuation
+    /// (`field:\n    value,`), whereas Python's `:` is a block header
+    /// (`if cond:\n    body()`) and must not swallow the block body.
+    #[test]
+    fn operator_valence_is_atomic_per_language_for_colon() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let py = diffuse_syntax::registry::lang_profile("py");
+
+        let rs_old = ["    count: true,"];
+        let rs_new = ["    count:", "        true,"];
+        let steps = [PathStep::Diag, PathStep::DropNew];
+        assert_eq!(
+            segment_with_profile(&rs_old, &rs_new, &steps, rs),
+            vec![Segment::Window {
+                old: 0..1,
+                new: 0..2,
+            }]
+        );
+
+        let py_old = ["if old_cond:"];
+        let py_new = ["if new_cond:", "    unrelated_body()"];
+        assert_eq!(
+            segment_with_profile(&py_old, &py_new, &steps, py),
+            vec![Segment::Pair { old: 0, new: 0 }, Segment::Add { new: 1 },]
+        );
+    }
+
+    /// Non-salient RHS after an open arrow (`Pattern =>\n    true,`) still
+    /// joins via operator valence, while comment lines and same-indent siblings
+    /// stop the scan.
+    #[test]
+    fn operator_valence_handles_non_salient_rhs_and_respects_comment_barrier() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = ["    Kind::Alpha => true,"];
+        let new = ["    Kind::Alpha =>", "        true,", "        // note"];
+        let steps = [PathStep::Diag, PathStep::DropNew, PathStep::DropNew];
+        assert_eq!(
+            segment_with_profile(&old, &new, &steps, rs),
+            vec![
+                Segment::Window {
+                    old: 0..1,
+                    new: 0..2,
+                },
+                Segment::Add { new: 2 },
+            ]
+        );
+
+        // Replacement literal with zero shared tokens stays plain.
+        let replaced = ["    Kind::Alpha =>", "        false,"];
+        let rep_steps = [PathStep::Diag, PathStep::DropNew];
+        assert_eq!(
+            segment_with_profile(&old, &replaced, &rep_steps, rs),
+            vec![Segment::Pair { old: 0, new: 0 }, Segment::Add { new: 1 },]
+        );
+    }
+
+    /// A multi-line condition header whose opening `{` sits at `head_indent`
+    /// (`if cond\n    && ...\n{`) is an unclosed block construct when the
+    /// opposite side is a single expression; operator valence must roll back
+    /// rather than slicing the condition header off its block body.
+    #[test]
+    fn operator_valence_rolls_back_multiline_header_before_block_opener() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = [
+            "    let target = if item.is_valid()",
+            "        && note_matches(item)",
+            "        && let Some(inline_idx) = slot",
+            "    {",
+            "        inline_idx",
+            "    };",
+        ];
+        let new = ["    let target = self.note_target(file_idx, item);"];
+        let steps = [
+            PathStep::Diag,
+            PathStep::DropOld,
+            PathStep::DropOld,
+            PathStep::DropOld,
+            PathStep::DropOld,
+            PathStep::DropOld,
+        ];
+        assert_eq!(
+            segment_with_profile(&old, &new, &steps, rs),
+            vec![
+                Segment::Pair { old: 0, new: 0 },
+                Segment::Del { old: 1 },
+                Segment::Del { old: 2 },
+                Segment::Del { old: 3 },
+                Segment::Del { old: 4 },
+                Segment::Del { old: 5 },
             ]
         );
     }

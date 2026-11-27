@@ -107,6 +107,13 @@ pub struct LangProfile {
     /// Prefixes that introduce multi-line continuation expressions (e.g. `&&`,
     /// `||`, `.`).
     pub continuation_prefixes: &'static [&'static str],
+    /// Operators and connectives that, when appearing as the final code token
+    /// on a line (after stripping trailing comments), leave expression valence
+    /// unsatisfied and signal continuation onto an indented following line.
+    /// Defined atomically per language so syntax such as `:` can act as a
+    /// field/property continuation in Rust or JSON without affecting block
+    /// headers in Python or YAML.
+    pub trailing_continuation_ops: &'static [&'static str],
     /// Prefixes that introduce import or use statements (e.g. `use ` for Rust,
     /// `import ` for Python/Go).
     pub import_prefixes: &'static [&'static str],
@@ -484,6 +491,105 @@ impl LangProfile {
             || t == "}"
     }
 
+    /// Whether a line begins with one of this language's leading continuation
+    /// operators (such as `&&`, `||`, `.`, `and `, `|`), excluding standalone
+    /// braces, comments, and range prefixes (`..`).
+    pub fn has_leading_continuation_operator(&self, line: &str) -> bool {
+        if self.continuation_prefixes.is_empty() || self.is_comment_line(line) {
+            return false;
+        }
+        let t = line.trim();
+        if t.is_empty() {
+            return false;
+        }
+        self.continuation_prefixes.iter().any(|&pf| {
+            if pf == "." {
+                t.starts_with('.') && !t.starts_with("..")
+            } else {
+                t.starts_with(pf)
+            }
+        })
+    }
+
+    /// Whether the final code token on `line` (ignoring trailing comments and
+    /// string literals) is one of this language's `trailing_continuation_ops`.
+    pub fn has_open_trailing_operator(&self, line: &str) -> bool {
+        if self.trailing_continuation_ops.is_empty() || self.is_comment_line(line) {
+            return false;
+        }
+        let code = self.strip_trailing_line_comment(line).trim_end();
+        let Some(tail_tok) = trailing_operator_or_word(code) else {
+            return false;
+        };
+        self.trailing_continuation_ops.contains(&tail_tok)
+    }
+
+    /// Strips a trailing single-line comment (`//` or `#`, per this language's
+    /// comment flags) while ignoring comment markers inside string or char
+    /// literals.
+    fn strip_trailing_line_comment<'a>(&self, line: &'a str) -> &'a str {
+        if !self.line_comment && !self.hash_comment {
+            return line;
+        }
+        let bytes = line.as_bytes();
+        let len = bytes.len();
+        let mut in_str = false;
+        let mut str_char = b'"';
+        let mut escaped = false;
+        let mut i = 0;
+
+        while i < len {
+            let b = bytes[i];
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if in_str {
+                if b == b'\\' {
+                    escaped = true;
+                } else if b == str_char {
+                    in_str = false;
+                }
+                i += 1;
+                continue;
+            }
+            if b == b'"' || b == b'`' {
+                in_str = true;
+                str_char = b;
+                i += 1;
+                continue;
+            }
+            if b == b'\'' {
+                match self.single_quote {
+                    SingleQuoteKind::String => {
+                        in_str = true;
+                        str_char = b'\'';
+                    }
+                    SingleQuoteKind::Char(_) => {
+                        let is_char_lit = (i + 2 < len && bytes[i + 2] == b'\'')
+                            || (i + 3 < len && bytes[i + 1] == b'\\' && bytes[i + 3] == b'\'');
+                        if is_char_lit {
+                            in_str = true;
+                            str_char = b'\'';
+                        }
+                    }
+                    SingleQuoteKind::None => {}
+                }
+                i += 1;
+                continue;
+            }
+            if self.line_comment && b == b'/' && i + 1 < len && bytes[i + 1] == b'/' {
+                return &line[..i];
+            }
+            if self.hash_comment && b == b'#' {
+                return &line[..i];
+            }
+            i += 1;
+        }
+        line
+    }
+
     /// Whether a line is an import/use statement that can reflow multi-line
     /// braces or parens.
     pub fn is_import_statement(&self, line: &str) -> bool {
@@ -593,4 +699,40 @@ impl LangProfile {
             || is_closing_delimiter_char(c)
             || self.is_trailing_delimiter(c)
     }
+}
+
+/// Extracts the maximal trailing identifier word or non-bracket operator run
+/// from a right-trimmed line of code. Returns `None` when the line is empty or
+/// ends in a bracket or quote delimiter.
+fn trailing_operator_or_word(code: &str) -> Option<&str> {
+    let last = code.chars().next_back()?;
+    if last.is_alphanumeric() || last == '_' {
+        let start = code
+            .char_indices()
+            .rev()
+            .take_while(|&(_, c)| c.is_alphanumeric() || c == '_')
+            .last()
+            .map(|(idx, _)| idx)?;
+        return Some(&code[start..]);
+    }
+    if is_opening_delimiter_char(last)
+        || is_closing_delimiter_char(last)
+        || matches!(last, '"' | '\'' | '`')
+    {
+        return None;
+    }
+    let start = code
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| {
+            !c.is_whitespace()
+                && !c.is_alphanumeric()
+                && c != '_'
+                && !is_opening_delimiter_char(c)
+                && !is_closing_delimiter_char(c)
+                && !matches!(c, '"' | '\'' | '`')
+        })
+        .last()
+        .map(|(idx, _)| idx)?;
+    Some(&code[start..])
 }

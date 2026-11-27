@@ -38,6 +38,7 @@ pub fn profile() -> LangProfile {
         property_syntax: crate::profile::PropertySyntax::None,
         attribute_prefixes: &[],
         continuation_prefixes: &[],
+        trailing_continuation_ops: &[],
         import_prefixes: &[],
         section_headers: false,
         single_quote: crate::profile::SingleQuoteKind::String,

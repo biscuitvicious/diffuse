@@ -4,8 +4,8 @@
 - [x] **Phase 2: Macro Cluster Factorization & Closed-Boundary Cuts**
 - [x] **Phase 3: Micro Slot-Alignment DP & Closed-Economy Token Typing**
 - [x] **Phase 4: Pipeline Integration & Shadow Engine Verification**
-- [ ] **Phase 5: Golden Acceptance, Fallout Triaging, Dual-Leg Verification & Visual Sign-off**
-- [ ] **Phase 6: Legacy Assembly Retirement & Structural Simplification**
+- [x] **Phase 5: Golden Acceptance, Fallout Triaging, Dual-Leg Verification & Visual Sign-off**
+- [x] **Phase 6: Legacy Assembly Retirement & Structural Simplification**
 
 ---
 

@@ -654,7 +654,7 @@ corpus review is recorded in §7.2.
   `collapse/evidence.rs`; it is the predicate behind the surviving pair gate, not a
   transition, and deleting `solver.rs` first breaks `slot.rs`.
 - Remove `crates/diffuse-core/src/lib.rs` re-exports of deleted solver types.
-- Update [`plan/Unified M-to-N Peer Reflow Groups.md`](../Unified%20M-to-N%20Peer%20Reflow%20Groups.md)
+- Update [`plan/done/Unified M-to-N Peer Reflow Groups.md`](Unified%20M-to-N%20Peer%20Reflow%20Groups.md)
   Phase 2 to record that closed-boundary cuts are retired in favor of this plan.
 - Gate: `grep` finds no reference to the deleted symbols; `cargo build --workspace` clean.
 

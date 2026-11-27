@@ -116,6 +116,10 @@ pub fn profile() -> LangProfile {
         property_syntax: crate::profile::PropertySyntax::Colon,
         attribute_prefixes: &["//go:"],
         continuation_prefixes: &["&&", "||", "."],
+        trailing_continuation_ops: &[
+            "=", ":=", "<-", "&&", "||", "+", "-", "*", "/", "%", "&", "|", "^", ".", "<<", ">>",
+            "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+        ],
         import_prefixes: &["import "],
         section_headers: false,
         single_quote: crate::profile::SingleQuoteKind::Char(crate::profile::CharLiteralProfile::GO),

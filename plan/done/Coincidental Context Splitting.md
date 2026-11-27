@@ -1,9 +1,9 @@
 # Coincidental Context Splitting — Engineering Plan
 
-- [·] Phase 1 — Failing-first tests (golden integration + unit edge cases)
-- [·] Phase 2 — Early trivial-Ctx split pass (`diffuse-core`)
-- [·] Phase 3 — Identical-pair normalization back to Ctx (`diffuse-core`)
-- [ ] Phase 4 — Golden corpus calibration, acceptance verification & sign-off
+- [x] Phase 1 — Failing-first tests (golden integration + unit edge cases)
+- [x] Phase 2 — Early trivial-Ctx split pass (`diffuse-core`)
+- [x] Phase 3 — Identical-pair normalization back to Ctx (`diffuse-core`)
+- [x] Phase 4 — Golden corpus calibration, acceptance verification & sign-off
 
 ---
 

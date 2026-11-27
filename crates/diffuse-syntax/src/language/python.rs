@@ -60,6 +60,10 @@ pub fn profile() -> LangProfile {
         property_syntax: crate::profile::PropertySyntax::Colon,
         attribute_prefixes: &["@"],
         continuation_prefixes: &["and ", "or ", ".", "\\"],
+        trailing_continuation_ops: &[
+            "=", ":=", "+", "-", "*", "/", "//", "%", "**", "&", "|", "^", "<<", ">>", "and", "or",
+            "\\", "+=", "-=", "*=", "/=", "//=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=",
+        ],
         import_prefixes: &["import ", "from "],
         section_headers: false,
         single_quote: crate::profile::SingleQuoteKind::String,

@@ -1683,3 +1683,88 @@ fn test_literal_token_classification_and_wire_code() {
         "TS 'null' must be classified as TokenColor::Literal"
     );
 }
+
+#[test]
+fn per_language_operator_valence_and_leading_continuation() {
+    let rs = lang_profile("rs").unwrap();
+    let py = lang_profile("py").unwrap();
+    let ts = lang_profile("ts").unwrap();
+    let go = lang_profile("go").unwrap();
+    let sh = lang_profile("sh").unwrap();
+    let json = lang_profile("json").unwrap();
+    let yaml = lang_profile("yaml").unwrap();
+    let md = lang_profile("md").unwrap();
+
+    // Rust: open assignment/arrows/operators AND struct-field `:` (no `case:`
+    // in Rust), but NOT postfix `?`, comparisons (`==`, `!=`, `<=`, `>=`),
+    // ranges (`..`), path sep (`::`), comments, strings, or commas/semicolons.
+    assert!(rs.has_open_trailing_operator("    let matched ="));
+    assert!(rs.has_open_trailing_operator("    let matched = // trailing comment"));
+    assert!(rs.has_open_trailing_operator("    Pattern =>"));
+    assert!(rs.has_open_trailing_operator("    fn f() ->"));
+    assert!(rs.has_open_trailing_operator("    fn f<'a>(x: &'a str) ->"));
+    assert!(rs.has_open_trailing_operator("    field_name:"));
+    assert!(rs.has_open_trailing_operator("    a &&"));
+    assert!(rs.has_open_trailing_operator("    a +"));
+    assert!(!rs.has_open_trailing_operator("    foo()?"));
+    assert!(!rs.has_open_trailing_operator("    a =="));
+    assert!(!rs.has_open_trailing_operator("    a !="));
+    assert!(!rs.has_open_trailing_operator("    a <="));
+    assert!(!rs.has_open_trailing_operator("    a >="));
+    assert!(!rs.has_open_trailing_operator("    a.."));
+    assert!(!rs.has_open_trailing_operator("    Foo::"));
+    assert!(!rs.has_open_trailing_operator("    let s = \"a = // not comment\";"));
+    assert!(!rs.has_open_trailing_operator("    let s = \"escaped \\\" =\""));
+    assert!(!rs.has_open_trailing_operator("    let c = '/';"));
+    assert!(!rs.has_open_trailing_operator("    let e = '\\'';"));
+    assert!(!rs.has_open_trailing_operator("    // comment ending with ="));
+    assert!(!rs.has_open_trailing_operator("    foo(a,"));
+    assert!(!rs.has_open_trailing_operator("    foo();"));
+    assert!(!rs.has_open_trailing_operator("    foo("));
+    assert!(!rs.has_open_trailing_operator("   "));
+
+    // Leading continuation operators in Rust: `.` matches method chains but NOT
+    // `..` ranges; standalone `{`/`}` and comments do not match.
+    assert!(rs.has_leading_continuation_operator("    .round()"));
+    assert!(rs.has_leading_continuation_operator("    && bar"));
+    assert!(rs.has_leading_continuation_operator("    || baz"));
+    assert!(!rs.has_leading_continuation_operator("    ..Default::default()"));
+    assert!(!rs.has_leading_continuation_operator("    {"));
+    assert!(!rs.has_leading_continuation_operator("    // .comment"));
+    assert!(!rs.has_leading_continuation_operator("   "));
+
+    // Python: `:` is a block header, NOT an expression continuation; keyword
+    // connectives `and` / `or` and `\` ARE trailing continuations
+    // (word-bounded).
+    assert!(!py.has_open_trailing_operator("if cond:"));
+    assert!(!py.has_open_trailing_operator("def f(x):"));
+    assert!(py.has_open_trailing_operator("x ="));
+    assert!(py.has_open_trailing_operator("x =  # hash comment"));
+    assert!(py.has_open_trailing_operator("if a and"));
+    assert!(py.has_open_trailing_operator("total = a + \\"));
+    assert!(!py.has_open_trailing_operator("expand"));
+    assert!(!py.has_open_trailing_operator("s = 'a # b'"));
+    assert!(py.has_leading_continuation_operator("    and b"));
+
+    // TS/JS: ternary `?` and `??`/`?.`/`=>` are open; `:` is not (switch case).
+    assert!(ts.has_open_trailing_operator("    const v = cond ?"));
+    assert!(ts.has_open_trailing_operator("    const v = a ??"));
+    assert!(!ts.has_open_trailing_operator("    case Foo:"));
+
+    // Go: `:=` and `<-` are open; `:` is not (switch case).
+    assert!(go.has_open_trailing_operator("    x :="));
+    assert!(go.has_open_trailing_operator("    ch <-"));
+    assert!(!go.has_open_trailing_operator("    case 1:"));
+
+    // Shell: pipelines & logical connectives.
+    assert!(sh.has_open_trailing_operator("    cmd |"));
+    assert!(sh.has_open_trailing_operator("    cmd &&"));
+    assert!(!sh.has_open_trailing_operator("    VAR=1"));
+
+    // JSON vs YAML vs Markdown: JSON allows `:`; YAML and Markdown opt out.
+    assert!(json.has_open_trailing_operator("    \"key\":"));
+    assert!(!json.has_open_trailing_operator("    \"key\": \"val\""));
+    assert!(!yaml.has_open_trailing_operator("key:"));
+    assert!(!md.has_open_trailing_operator("heading:"));
+    assert!(!md.has_leading_continuation_operator("    .item"));
+}
