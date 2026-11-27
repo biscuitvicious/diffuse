@@ -14,21 +14,114 @@ use super::{
     },
 };
 
-/// Per-token line, slot, and line-boundary metadata for 2D multi-line Gotoh
-/// sequence alignment.
+/// Precomputed per-side 2D token stream, line/slot coordinates, and Dyck
+/// container state for slot-aware Gotoh LCS.
+pub(crate) struct Side2D<'a> {
+    pub(crate) tokens: &'a [&'a str],
+    pub(crate) lines: &'a [usize],
+    pub(crate) line_ranges: &'a [Range<usize>],
+    pub(crate) slot_of_line: &'a [usize],
+    pub(crate) depths: &'a [u16],
+    pub(crate) containers: &'a [u8],
+}
+
+/// Slot-aware scoring context for one anchor-bounded interval
+/// `(offset_a.., offset_b..)` inside a 2D multi-line alignment.
 pub(crate) struct SlotAffinity<'a> {
-    pub(crate) full_a: &'a [&'a str],
-    pub(crate) full_b: &'a [&'a str],
+    pub(crate) old: &'a Side2D<'a>,
+    pub(crate) new: &'a Side2D<'a>,
     pub(crate) offset_a: usize,
     pub(crate) offset_b: usize,
-    pub(crate) line_a: &'a [usize],
-    pub(crate) line_b: &'a [usize],
-    pub(crate) line_ranges_a: &'a [Range<usize>],
-    pub(crate) line_ranges_b: &'a [Range<usize>],
-    pub(crate) slot_of_old: &'a [usize],
-    pub(crate) slot_of_new: &'a [usize],
     pub(crate) max_slot_distance: usize,
-    pub(crate) same_slot_bonus: i32,
+    pub(crate) same_slot_alnum_bonus: i32,
+    pub(crate) same_slot_punct_bonus: i32,
+}
+
+impl<'a> SlotAffinity<'a> {
+    #[inline]
+    fn slot_pair(&self, i: usize, j: usize) -> (usize, usize) {
+        let la = self.old.lines[self.offset_a + i];
+        let lb = self.new.lines[self.offset_b + j];
+        (self.old.slot_of_line[la], self.new.slot_of_line[lb])
+    }
+
+    #[inline]
+    fn pair_permitted(&self, i: usize, j: usize, is_ws: bool) -> bool {
+        let (sa, sb) = self.slot_pair(i, j);
+        sa.abs_diff(sb) <= self.max_slot_distance && (sa == sb || !is_ws)
+    }
+
+    #[inline]
+    fn tokens_can_match(&self, i: usize, j: usize) -> bool {
+        let gi = self.offset_a + i;
+        let gj = self.offset_b + j;
+        let ra = &self.old.line_ranges[self.old.lines[gi]];
+        let rb = &self.new.line_ranges[self.new.lines[gj]];
+        tokens_can_match(
+            &self.old.tokens[ra.clone()],
+            &self.new.tokens[rb.clone()],
+            &[],
+            &[],
+            None,
+            None,
+            gi - ra.start,
+            gj - rb.start,
+        )
+    }
+
+    #[inline]
+    fn same_slot_bonus(&self, i: usize, j: usize, is_ws: bool, token: &str) -> i32 {
+        let (sa, sb) = self.slot_pair(i, j);
+        if sa != sb || is_ws {
+            return 0;
+        }
+        if token_is_alnum(token) {
+            self.same_slot_alnum_bonus
+        } else {
+            self.same_slot_punct_bonus
+        }
+    }
+
+    #[inline]
+    fn same_line_neighbors(
+        &self,
+        i: usize,
+        j: usize,
+        n: usize,
+        m: usize,
+    ) -> (bool, bool, bool, bool) {
+        let gi = self.offset_a + i;
+        let gj = self.offset_b + j;
+        let la = self.old.lines[gi];
+        let lb = self.new.lines[gj];
+        (
+            i > 0 && self.old.lines[gi - 1] == la,
+            i + 1 < n && self.old.lines[gi + 1] == la,
+            j > 0 && self.new.lines[gj - 1] == lb,
+            j + 1 < m && self.new.lines[gj + 1] == lb,
+        )
+    }
+
+    #[inline]
+    fn ws_match_reward(&self, i: usize) -> i32 {
+        let gi = self.offset_a + i;
+        let range = &self.old.line_ranges[self.old.lines[gi]];
+        token_ws_kind(&self.old.tokens[range.clone()], &[], None, gi - range.start).match_reward()
+    }
+
+    #[inline]
+    fn depths_and_containers(
+        &self,
+        n: usize,
+        m: usize,
+    ) -> (&'a [u16], &'a [u16], &'a [u8], &'a [u8]) {
+        (
+            &self.old.depths[self.offset_a..self.offset_a + n],
+            &self.new.depths[self.offset_b..self.offset_b + m],
+            &self.old.containers[self.offset_a..self.offset_a + n],
+            &self.new.containers[self.offset_b..self.offset_b + m],
+        )
+    }
 }
 
 thread_local! {
@@ -122,14 +215,9 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
 /// 2D slot-aware Gotoh alignment over an interval `(a, b)` using thread-local
 /// scratch memory, enforcing cross-slot whitespace prohibition, slot distance
 /// bounds, line-bounded subword contiguity, and same-slot affinity.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn raw_lcs_pairs_with_slots_context(
+pub(crate) fn raw_lcs_pairs_with_slots(
     a: &[&str],
     b: &[&str],
-    prev_a: &[&str],
-    prev_b: &[&str],
-    next_a: Option<&str>,
-    next_b: Option<&str>,
     slots: &SlotAffinity<'_>,
 ) -> FxHashMap<usize, usize> {
     SCRATCH_ARENA.with_borrow_mut(|arena| {
@@ -137,10 +225,10 @@ pub(crate) fn raw_lcs_pairs_with_slots_context(
             arena,
             a,
             b,
-            prev_a,
-            prev_b,
-            next_a,
-            next_b,
+            &[],
+            &[],
+            None,
+            None,
             &Weights::DEFAULT,
             Some(slots),
         )
@@ -170,35 +258,40 @@ fn raw_lcs_dp(
     let total_cells = (n + 1) * (m + 1);
 
     arena.prepare(total_cells, n, m);
-    diffuse_algo::track_nesting_depths_into(
-        prev_a,
-        a,
-        &diffuse_algo::UniversalDelimiterClassifier,
-        &mut arena.depth_a[..n],
-    );
-    diffuse_algo::track_nesting_depths_into(
-        prev_b,
-        b,
-        &diffuse_algo::UniversalDelimiterClassifier,
-        &mut arena.depth_b[..m],
-    );
-    let depth_a = &arena.depth_a[..n];
-    let depth_b = &arena.depth_b[..m];
-
-    diffuse_algo::track_enclosing_containers_into(
-        prev_a,
-        a,
-        &diffuse_algo::UniversalDelimiterClassifier,
-        &mut arena.container_a[..n],
-    );
-    diffuse_algo::track_enclosing_containers_into(
-        prev_b,
-        b,
-        &diffuse_algo::UniversalDelimiterClassifier,
-        &mut arena.container_b[..m],
-    );
-    let container_a = &arena.container_a[..n];
-    let container_b = &arena.container_b[..m];
+    let (depth_a, depth_b, container_a, container_b) = if let Some(s) = slots {
+        s.depths_and_containers(n, m)
+    } else {
+        diffuse_algo::track_nesting_depths_into(
+            prev_a,
+            a,
+            &diffuse_algo::UniversalDelimiterClassifier,
+            &mut arena.depth_a[..n],
+        );
+        diffuse_algo::track_nesting_depths_into(
+            prev_b,
+            b,
+            &diffuse_algo::UniversalDelimiterClassifier,
+            &mut arena.depth_b[..m],
+        );
+        diffuse_algo::track_enclosing_containers_into(
+            prev_a,
+            a,
+            &diffuse_algo::UniversalDelimiterClassifier,
+            &mut arena.container_a[..n],
+        );
+        diffuse_algo::track_enclosing_containers_into(
+            prev_b,
+            b,
+            &diffuse_algo::UniversalDelimiterClassifier,
+            &mut arena.container_b[..m],
+        );
+        (
+            &arena.depth_a[..n],
+            &arena.depth_b[..m],
+            &arena.container_a[..n],
+            &arena.container_b[..m],
+        )
+    };
 
     let m_matrix = &mut arena.m_matrix[..total_cells];
     let x_matrix = &mut arena.x_matrix[..total_cells];
@@ -261,43 +354,18 @@ fn raw_lcs_dp(
                 same_line_prev_b,
                 same_line_next_b,
             ) = if let Some(s) = slots {
-                let gi = s.offset_a + i;
-                let gj = s.offset_b + j;
-                let la_line = s.line_a[gi];
-                let lb_line = s.line_b[gj];
-                let sa = s.slot_of_old[la_line];
-                let sb = s.slot_of_new[lb_line];
-                if sa.abs_diff(sb) > s.max_slot_distance || (sa != sb && is_ws) {
+                if !s.pair_permitted(i, j, is_ws) {
                     continue;
                 }
-                let ra = &s.line_ranges_a[la_line];
-                let rb = &s.line_ranges_b[lb_line];
-                let matched = tokens_can_match(
-                    &s.full_a[ra.clone()],
-                    &s.full_b[rb.clone()],
-                    &[],
-                    &[],
-                    None,
-                    None,
-                    gi - ra.start,
-                    gj - rb.start,
-                );
-                let affinity = if sa == sb && !is_ws {
-                    if token_is_alnum(a[i]) {
-                        s.same_slot_bonus
-                    } else {
-                        s.same_slot_bonus / 3
-                    }
-                } else {
-                    0
-                };
+                let (prev_a_ok, next_a_ok, prev_b_ok, next_b_ok) =
+                    s.same_line_neighbors(i, j, n, m);
                 (
-                    matched,
-                    affinity,
-                    i > 0 && s.line_a[gi - 1] == la_line,
-                    i + 1 < n && s.line_a[gi + 1] == la_line,
-                    j > 0 && s.line_b[gj - 1] == lb_line,
-                    j + 1 < m && s.line_b[gj + 1] == lb_line,
+                    s.tokens_can_match(i, j),
+                    s.same_slot_bonus(i, j, is_ws, a[i]),
+                    prev_a_ok,
+                    next_a_ok,
+                    prev_b_ok,
+                    next_b_ok,
                 )
             } else {
                 (
@@ -363,10 +431,7 @@ fn raw_lcs_dp(
                 };
                 let base_r = if is_ws {
                     if let Some(s) = slots {
-                        let gi = s.offset_a + i;
-                        let r_line = &s.line_ranges_a[s.line_a[gi]];
-                        token_ws_kind(&s.full_a[r_line.clone()], &[], None, gi - r_line.start)
-                            .match_reward()
+                        s.ws_match_reward(i)
                     } else {
                         token_ws_kind(a, prev_a, next_a, i).match_reward()
                     }

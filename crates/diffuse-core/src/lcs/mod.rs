@@ -15,8 +15,9 @@ pub use arena::{
     DEFAULT_TOKEN_PRODUCT_CAP, LcsScratchArena, Weights, set_token_product_cap, token_product_cap,
 };
 pub use multiline::{
-    DEFAULT_MAX_SLOT_DISTANCE, MultiLineAlignment, MultiLineTokens, SAME_SLOT_AFFINITY_BONUS,
-    Token2D, WindowSlotMap, align_lines_2d, align_lines_2d_with_cap, tokenize_lines_2d,
+    DEFAULT_MAX_SLOT_DISTANCE, MultiLineAlignment, MultiLineConfig, MultiLineTokens,
+    SAME_SLOT_ALNUM_BONUS, SAME_SLOT_PUNCT_BONUS, Token2D, WindowSlotMap, align_lines_2d,
+    tokenize_lines_2d,
 };
 pub(crate) use pairs::{TokenContainerContext, filter_container_and_subword_pairs};
 pub use pairs::{

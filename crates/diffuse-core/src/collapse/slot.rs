@@ -7,9 +7,9 @@ use rustc_hash::FxHashSet;
 use crate::{
     collapse::tokens::is_salient_word_match,
     lcs::{
-        DEFAULT_MAX_SLOT_DISTANCE, WindowSlotMap, align_lines_2d_with_cap,
+        DEFAULT_MAX_SLOT_DISTANCE, MultiLineConfig, WindowSlotMap, align_lines_2d,
         merged_runs_for_texts_with_profile, owned_runs_for_texts_with_profile, token_is_ws,
-        token_product_cap, tokenize_line,
+        tokenize_line,
     },
     merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
@@ -377,13 +377,13 @@ pub(crate) fn align_window_2d_tape(
     // height (`m` or `n`). Multi-row `n × m` windows keep
     // `DEFAULT_MAX_SLOT_DISTANCE`.
     let is_single_construct = old_lines.len() == 1 || new_lines.len() == 1;
-    let max_slot_distance = if is_single_construct {
-        usize::MAX
+    let config = if is_single_construct {
+        MultiLineConfig::single_construct()
     } else {
-        DEFAULT_MAX_SLOT_DISTANCE
+        MultiLineConfig::default()
     };
 
-    let aln = align_lines_2d_with_cap(
+    let aln = align_lines_2d(
         &old_lines,
         &new_lines,
         WindowSlotMap {
@@ -391,8 +391,7 @@ pub(crate) fn align_window_2d_tape(
             slot_of_new: &slot_of_new,
         },
         profile,
-        max_slot_distance,
-        token_product_cap(),
+        &config,
     )?;
 
     // Determine which cross-slot pairs carry salient content or touch a
@@ -904,12 +903,6 @@ pub(crate) fn has_salient_moved_link(
     })
 }
 
-/// Maximum slot distance a relocated token may travel. The candidate
-/// gather and the apply loop must honor the same window: otherwise a
-/// token gathered from a nearby pair (e.g. a lone `{`) is stamped as
-/// moved between arbitrarily distant slots.
-const CROSS_SLOT_WINDOW: i32 = 4;
-
 /// One leftover token with provenance into its run string.
 #[derive(Clone, Debug)]
 struct LeftoverTok {
@@ -998,7 +991,7 @@ fn leftover_pool(
 /// passes (Phase 6).
 ///
 /// `relocate_cross_slot_tokens` only proposes verbatim whole-run matches
-/// within [`CROSS_SLOT_WINDOW`], so two kinds of frame part survive it:
+/// within [`DEFAULT_MAX_SLOT_DISTANCE`], so two kinds of frame part survive it:
 /// openers or closers whose partner lives beyond the window (`Some(` at
 /// distance 5), and glue whose counterpart run ends in a different
 /// terminator (` as usize,` vs ` as usize;`). Both are recovered here by
@@ -1161,8 +1154,8 @@ fn relocate_leftover_frames(
             // Only what verbatim matching could not see is completed here:
             // glue whose counterpart ends in a different terminator
             // (` as usize,` vs ` as usize;`), or a frame beyond the window.
-            let dist = (src_slot as i32 - tgt_slot as i32).abs();
-            if dist <= CROSS_SLOT_WINDOW && joined.chars().any(is_bracket) {
+            let dist = src_slot.abs_diff(tgt_slot);
+            if dist <= DEFAULT_MAX_SLOT_DISTANCE && joined.chars().any(is_bracket) {
                 continue;
             }
             // Beyond the window, only a bracket-unbalanced block may travel:
@@ -1186,7 +1179,7 @@ fn relocate_leftover_frames(
                 }
                 depth != 0 || closed_early
             };
-            if dist > CROSS_SLOT_WINDOW && !(externals(block_src) || externals(block_tgt)) {
+            if dist > DEFAULT_MAX_SLOT_DISTANCE && !(externals(block_src) || externals(block_tgt)) {
                 continue;
             }
             // Structural frame gate: on each side the block holds a bracket
@@ -1370,7 +1363,7 @@ fn relocate_cross_slot_tokens(
     // 3. For each pair (src, tgt) with src != tgt, find common Ctx spans
     for (src, del_text) in &del_runs {
         for (tgt, add_text) in &add_runs {
-            if src == tgt || (*src as i32 - *tgt as i32).abs() > CROSS_SLOT_WINDOW {
+            if src == tgt || src.abs_diff(*tgt) > DEFAULT_MAX_SLOT_DISTANCE {
                 continue;
             }
             let d_trim = del_text.trim();
@@ -1700,8 +1693,8 @@ fn coalesce_runs(runs: &mut Vec<(RunKind, String)>) {
 }
 
 /// Relocates one candidate token from Del runs to Add runs across slot
-/// pairs within [`CROSS_SLOT_WINDOW`]. When `gate` is `Some`, only pairs
-/// in it may exchange the token — unless `allow_bare_lines` and one
+/// pairs within [`DEFAULT_MAX_SLOT_DISTANCE`]. When `gate` is `Some`, only
+/// pairs in it may exchange the token — unless `allow_bare_lines` and one
 /// side's whole line is bare punctuation (see above). Pairs that actually
 /// exchange the token are appended to `linked`.
 #[allow(clippy::too_many_arguments)]
@@ -1760,14 +1753,14 @@ fn apply_relocation_candidate(
                 let has_evidence = has_linked_anchor || is_paired_mod || has_mutual_salient_anchor;
 
                 let max_distance = if !is_weak || has_evidence {
-                    CROSS_SLOT_WINDOW
+                    DEFAULT_MAX_SLOT_DISTANCE
                 } else {
                     1
                 };
-                if (src as i32 - tgt as i32).abs() > max_distance {
+                if src.abs_diff(tgt) > max_distance {
                     continue;
                 }
-            } else if (src as i32 - tgt as i32).abs() > CROSS_SLOT_WINDOW {
+            } else if src.abs_diff(tgt) > DEFAULT_MAX_SLOT_DISTANCE {
                 continue;
             }
 

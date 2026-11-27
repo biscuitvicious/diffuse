@@ -274,8 +274,8 @@ pub fn lcs_matched_chars_ids(
 /// Level-B container invariance and subword cohesion filtering.
 pub(crate) struct TokenContainerContext<'a> {
     pub(crate) tokens: &'a [&'a str],
-    pub(crate) containers: &'a [Option<u8>],
-    pub(crate) depths: &'a [usize],
+    pub(crate) containers: &'a [u8],
+    pub(crate) depths: &'a [u16],
     pub(crate) lines: Option<&'a [usize]>,
 }
 
@@ -308,8 +308,8 @@ pub(crate) fn filter_container_and_subword_pairs(
     new: &TokenContainerContext<'_>,
 ) {
     pairs.retain(|&(oi, ni)| {
-        let ca = old.containers[oi].and_then(ContainerKind::from_id);
-        let cb = new.containers[ni].and_then(ContainerKind::from_id);
+        let ca = ContainerKind::from_id(old.containers[oi]);
+        let cb = ContainerKind::from_id(new.containers[ni]);
         if !ContainerKind::is_compatible_with(ca, cb) {
             return false;
         }

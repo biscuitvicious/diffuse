@@ -16,21 +16,57 @@ use crate::token::ContainerKind;
 use super::{
     arena::token_product_cap,
     pairs::{TokenContainerContext, expand_anchor_span, filter_container_and_subword_pairs},
-    raw::{SlotAffinity, raw_lcs_pairs_with_slots_context},
+    raw::{Side2D, SlotAffinity, raw_lcs_pairs_with_slots},
     tokenizer::{token_is_ws, tokenize_line, unique_token_anchors},
 };
 
 /// Bonus awarded to alphanumeric matches staying inside the same peer-group
-/// slot (non-alphanumeric operators/delimiters receive a third of this bonus).
-/// Sized above the maximum single-token match reward (`34` in `lcs::raw`) for
-/// identifiers so an adjacent `Del`/`Add` slot cannot steal a `Mod(i, j)`
-/// slot's shared identifiers, while keeping bare outer delimiters (`{`, `(`)
-/// from overpowering a real cross-slot identifier run like `io::{`.
-pub const SAME_SLOT_AFFINITY_BONUS: i32 = 36;
+/// slot. Sized above the maximum single-token match reward (`34` in
+/// `lcs::raw`) so an adjacent `Del`/`Add` slot cannot steal a `Mod(i, j)`
+/// slot's shared identifiers.
+pub const SAME_SLOT_ALNUM_BONUS: i32 = 36;
 
-/// Default maximum slot distance across which a 2D cross-slot match may reach
-/// (matches `CROSS_SLOT_WINDOW` in `collapse::slot`).
+/// Bonus awarded to non-alphanumeric (operator/delimiter) matches staying
+/// inside the same peer-group slot — enough to anchor repeated punctuation
+/// to its `Mod` partner without letting bare outer delimiters (`{`, `(`)
+/// overpower a cross-slot identifier chain like `io::{`.
+pub const SAME_SLOT_PUNCT_BONUS: i32 = 12;
+
+/// Default maximum slot distance across which a cross-slot match or residual
+/// relocation may travel within a multi-row `n × m` window.
 pub const DEFAULT_MAX_SLOT_DISTANCE: usize = 4;
+
+/// Scoring and search bounds for 2D coordinate-aware multi-line LCS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MultiLineConfig {
+    pub max_slot_distance: usize,
+    pub token_product_cap: usize,
+    pub same_slot_alnum_bonus: i32,
+    pub same_slot_punct_bonus: i32,
+}
+
+impl Default for MultiLineConfig {
+    fn default() -> Self {
+        Self {
+            max_slot_distance: DEFAULT_MAX_SLOT_DISTANCE,
+            token_product_cap: token_product_cap(),
+            same_slot_alnum_bonus: SAME_SLOT_ALNUM_BONUS,
+            same_slot_punct_bonus: SAME_SLOT_PUNCT_BONUS,
+        }
+    }
+}
+
+impl MultiLineConfig {
+    /// Unbounded cross-slot reach for Dyck-bounded single-construct (`1 × m`
+    /// and `n × 1`) windows whose closing delimiter may sit arbitrarily far
+    /// from the single opposite-side row.
+    pub fn single_construct() -> Self {
+        Self {
+            max_slot_distance: usize::MAX,
+            ..Self::default()
+        }
+    }
+}
 
 /// One token in a multi-line slice with exact 2D line and byte provenance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +76,14 @@ pub struct Token2D<'a> {
     pub byte_end: usize,
     pub text: &'a str,
     pub is_leading_ws: bool,
+}
+
+impl Token2D<'_> {
+    /// Exact byte range of this token within its source line.
+    #[inline]
+    pub fn byte_range(&self) -> Range<usize> {
+        self.byte_start..self.byte_end
+    }
 }
 
 /// Flattened 2D token stream for a slice of lines alongside each line's token
@@ -103,36 +147,17 @@ pub fn tokenize_lines_2d<'a>(lines: &[&'a str]) -> MultiLineTokens<'a> {
 }
 
 /// Runs 2D coordinate-aware, slot-aware Gotoh LCS over `old_lines` and
-/// `new_lines` using default slot-distance and token-product bounds.
+/// `new_lines` using `config`.
 ///
 /// Returns `None` if `old_tokens.len() * new_tokens.len()` exceeds
-/// [`token_product_cap`], signaling the caller to fall back to per-slot
+/// `config.token_product_cap`, signaling the caller to fall back to per-slot
 /// alignment.
 pub fn align_lines_2d<'a>(
     old_lines: &[&'a str],
     new_lines: &[&'a str],
     slots: WindowSlotMap<'_>,
     profile: Option<&LangProfile>,
-) -> Option<MultiLineAlignment<'a>> {
-    align_lines_2d_with_cap(
-        old_lines,
-        new_lines,
-        slots,
-        profile,
-        DEFAULT_MAX_SLOT_DISTANCE,
-        token_product_cap(),
-    )
-}
-
-/// Runs 2D coordinate-aware, slot-aware Gotoh LCS with explicit
-/// `max_slot_distance` and token-product `cap`.
-pub fn align_lines_2d_with_cap<'a>(
-    old_lines: &[&'a str],
-    new_lines: &[&'a str],
-    slots: WindowSlotMap<'_>,
-    profile: Option<&LangProfile>,
-    max_slot_distance: usize,
-    cap: usize,
+    config: &MultiLineConfig,
 ) -> Option<MultiLineAlignment<'a>> {
     crate::require!(
         slots.slot_of_old.len() == old_lines.len(),
@@ -156,7 +181,7 @@ pub fn align_lines_2d_with_cap<'a>(
             pairs: Vec::new(),
         });
     }
-    if old.tokens.len().saturating_mul(new.tokens.len()) > cap {
+    if old.tokens.len().saturating_mul(new.tokens.len()) > config.token_product_cap {
         return None;
     }
 
@@ -166,18 +191,22 @@ pub fn align_lines_2d_with_cap<'a>(
     let line_b: Vec<usize> = new.tokens.iter().map(|t| t.line).collect();
 
     let classifier = UniversalDelimiterClassifier;
-    let c_old = diffuse_algo::track_enclosing_containers(&ot, &classifier);
-    let c_new = diffuse_algo::track_enclosing_containers(&nt, &classifier);
-    let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);
-    let d_new = diffuse_algo::track_nesting_depths_with_prev(&[], &nt, &classifier);
+    let mut c_old = vec![0u8; ot.len()];
+    let mut c_new = vec![0u8; nt.len()];
+    let mut d_old = vec![0u16; ot.len()];
+    let mut d_new = vec![0u16; nt.len()];
+    diffuse_algo::track_enclosing_containers_into(&[], &ot, &classifier, &mut c_old);
+    diffuse_algo::track_enclosing_containers_into(&[], &nt, &classifier, &mut c_new);
+    diffuse_algo::track_nesting_depths_into(&[], &ot, &classifier, &mut d_old);
+    diffuse_algo::track_nesting_depths_into(&[], &nt, &classifier, &mut d_new);
 
     // When the window contains at least one paired `Mod` slot (`slot_of_old`
     // and `slot_of_new` share a slot index), only hard-pin same-slot unique
     // anchors (`sa == sb`). Hard-pinning cross-slot anchors beforehand can trap
     // a `Mod` slot's shared prefix (`//`, `///`, `assert_eq!(`) on the wrong
     // side of a cross-slot word; letting Gotoh DP solve cross-slot intervals
-    // with `SAME_SLOT_AFFINITY_BONUS` preserves every `Mod` slot's `Ctx` while
-    // still aligning all monotone cross-slot moves.
+    // with same-slot affinity preserves every `Mod` slot's `Ctx` while still
+    // aligning all monotone cross-slot moves.
     let has_mod_slot = slots
         .slot_of_old
         .iter()
@@ -188,25 +217,32 @@ pub fn align_lines_2d_with_cap<'a>(
         .filter(|&(ai, bi)| {
             let sa = slots.slot_of_old[line_a[ai]];
             let sb = slots.slot_of_new[line_b[bi]];
-            let ca = c_old[ai].and_then(ContainerKind::from_id);
-            let cb = c_new[bi].and_then(ContainerKind::from_id);
+            let ca = ContainerKind::from_id(c_old[ai]);
+            let cb = ContainerKind::from_id(c_new[bi]);
             (!has_mod_slot || sa == sb)
-                && sa.abs_diff(sb) <= max_slot_distance
+                && sa.abs_diff(sb) <= config.max_slot_distance
                 && ContainerKind::is_compatible_with(ca, cb)
         })
         .collect();
 
-    let pair_map = solve_anchored_2d(
-        &ot,
-        &nt,
-        &line_a,
-        &line_b,
-        &old.line_ranges,
-        &new.line_ranges,
-        slots,
-        &anchors,
-        max_slot_distance,
-    );
+    let old_side = Side2D {
+        tokens: &ot,
+        lines: &line_a,
+        line_ranges: &old.line_ranges,
+        slot_of_line: slots.slot_of_old,
+        depths: &d_old,
+        containers: &c_old,
+    };
+    let new_side = Side2D {
+        tokens: &nt,
+        lines: &line_b,
+        line_ranges: &new.line_ranges,
+        slot_of_line: slots.slot_of_new,
+        depths: &d_new,
+        containers: &c_new,
+    };
+
+    let pair_map = solve_anchored_2d(&old_side, &new_side, &anchors, config);
 
     let mut pairs: Vec<(usize, usize)> = pair_map.into_iter().collect();
     pairs.sort_by_key(|&(oi, _)| oi);
@@ -231,51 +267,31 @@ pub fn align_lines_2d_with_cap<'a>(
     Some(MultiLineAlignment { old, new, pairs })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn solve_anchored_2d(
-    ot: &[&str],
-    nt: &[&str],
-    line_a: &[usize],
-    line_b: &[usize],
-    line_ranges_a: &[Range<usize>],
-    line_ranges_b: &[Range<usize>],
-    slots: WindowSlotMap<'_>,
+    old: &Side2D<'_>,
+    new: &Side2D<'_>,
     anchors: &[(usize, usize)],
-    max_slot_distance: usize,
+    config: &MultiLineConfig,
 ) -> FxHashMap<usize, usize> {
-    let run_gap = |a_start: usize,
-                   a_end: usize,
-                   b_start: usize,
-                   b_end: usize,
-                   next_a: Option<&str>,
-                   next_b: Option<&str>| {
+    let run_gap = |a_start: usize, a_end: usize, b_start: usize, b_end: usize| {
         let affinity = SlotAffinity {
-            full_a: ot,
-            full_b: nt,
+            old,
+            new,
             offset_a: a_start,
             offset_b: b_start,
-            line_a,
-            line_b,
-            line_ranges_a,
-            line_ranges_b,
-            slot_of_old: slots.slot_of_old,
-            slot_of_new: slots.slot_of_new,
-            max_slot_distance,
-            same_slot_bonus: SAME_SLOT_AFFINITY_BONUS,
+            max_slot_distance: config.max_slot_distance,
+            same_slot_alnum_bonus: config.same_slot_alnum_bonus,
+            same_slot_punct_bonus: config.same_slot_punct_bonus,
         };
-        raw_lcs_pairs_with_slots_context(
-            &ot[a_start..a_end],
-            &nt[b_start..b_end],
-            &ot[..a_start],
-            &nt[..b_start],
-            next_a,
-            next_b,
+        raw_lcs_pairs_with_slots(
+            &old.tokens[a_start..a_end],
+            &new.tokens[b_start..b_end],
             &affinity,
         )
     };
 
     if anchors.is_empty() {
-        return run_gap(0, ot.len(), 0, nt.len(), None, None);
+        return run_gap(0, old.tokens.len(), 0, new.tokens.len());
     }
 
     let mut pairs = FxHashMap::default();
@@ -286,26 +302,19 @@ fn solve_anchored_2d(
         let next_bounds = anchors
             .get(anchor_idx + 1)
             .copied()
-            .unwrap_or((ot.len(), nt.len()));
+            .unwrap_or((old.tokens.len(), new.tokens.len()));
         let ((back_a, fwd_a), (back_b, fwd_b)) = expand_anchor_span(
-            ot,
-            nt,
-            Some(line_a),
-            Some(line_b),
+            old.tokens,
+            new.tokens,
+            Some(old.lines),
+            Some(new.lines),
             (ai, bi),
             (a_prev, b_prev),
             next_bounds,
         );
 
         if back_a > a_prev && back_b > b_prev {
-            for (si, sj) in run_gap(
-                a_prev,
-                back_a,
-                b_prev,
-                back_b,
-                Some(ot[back_a]),
-                Some(nt[back_b]),
-            ) {
+            for (si, sj) in run_gap(a_prev, back_a, b_prev, back_b) {
                 pairs.insert(a_prev + si, b_prev + sj);
             }
         }
@@ -317,8 +326,8 @@ fn solve_anchored_2d(
         b_prev = fwd_b + 1;
     }
 
-    if a_prev < ot.len() && b_prev < nt.len() {
-        for (si, sj) in run_gap(a_prev, ot.len(), b_prev, nt.len(), None, None) {
+    if a_prev < old.tokens.len() && b_prev < new.tokens.len() {
+        for (si, sj) in run_gap(a_prev, old.tokens.len(), b_prev, new.tokens.len()) {
             pairs.insert(a_prev + si, b_prev + sj);
         }
     }
@@ -339,7 +348,7 @@ mod tests {
 
         for tok in &res.tokens {
             assert_eq!(
-                &lines[tok.line][tok.byte_start..tok.byte_end],
+                &lines[tok.line][tok.byte_range()],
                 tok.text,
                 "byte range must slice back to exact token text"
             );
@@ -365,6 +374,7 @@ mod tests {
 
     #[test]
     fn align_lines_2d_handles_empty_inputs_and_product_cap() {
+        let default_cfg = MultiLineConfig::default();
         let empty = align_lines_2d(
             &[],
             &["let x = 1;"],
@@ -373,6 +383,7 @@ mod tests {
                 slot_of_new: &[0],
             },
             None,
+            &default_cfg,
         )
         .expect("empty old succeeds");
         assert!(empty.pairs.is_empty());
@@ -385,11 +396,16 @@ mod tests {
                 slot_of_new: &[0],
             },
             None,
+            &default_cfg,
         )
         .expect("empty lines succeed");
         assert!(blank_only.pairs.is_empty());
 
-        let capped = align_lines_2d_with_cap(
+        let capped_cfg = MultiLineConfig {
+            token_product_cap: 4,
+            ..default_cfg
+        };
+        let capped = align_lines_2d(
             &["let alpha = compute(a, b);"],
             &["let beta = compute(a, c);"],
             WindowSlotMap {
@@ -397,8 +413,7 @@ mod tests {
                 slot_of_new: &[0],
             },
             None,
-            DEFAULT_MAX_SLOT_DISTANCE,
-            4,
+            &capped_cfg,
         );
         assert!(capped.is_none(), "exceeding token-product cap returns None");
     }
@@ -406,6 +421,7 @@ mod tests {
     #[test]
     fn align_lines_2d_forbids_cross_slot_whitespace_and_respects_slot_affinity() {
         let rs = diffuse_syntax::registry::lang_profile("rs");
+        let cfg = MultiLineConfig::default();
         let old = ["    alpha(x, y);", "    beta(z, w);"];
         let new = ["    alpha(x, y2);", "    beta(z, w2);"];
         let aln = align_lines_2d(
@@ -416,6 +432,7 @@ mod tests {
                 slot_of_new: &[0, 1],
             },
             rs,
+            &cfg,
         )
         .expect("within cap");
 
@@ -439,6 +456,7 @@ mod tests {
                 slot_of_new: &[0, 1],
             },
             None,
+            &cfg,
         )
         .expect("within cap");
         assert!(!dup_aln.pairs.is_empty());
@@ -461,7 +479,8 @@ mod tests {
             slot_of_old: &[1],
             slot_of_new: &[0, 1, 2, 3],
         };
-        let aln = align_lines_2d(&old, &new, slots, rs).expect("within cap");
+        let aln =
+            align_lines_2d(&old, &new, slots, rs, &MultiLineConfig::default()).expect("within cap");
 
         // Zero whitespace tokens matched across different slots.
         for &(oi, ni) in &aln.pairs {
@@ -492,8 +511,9 @@ mod tests {
     #[test]
     fn align_lines_2d_respects_max_slot_distance_and_container_invariance() {
         let rs = diffuse_syntax::registry::lang_profile("rs");
+        let cfg = MultiLineConfig::default();
         // Unique salient token 6 slots apart must be rejected when cap is 4.
-        let aln_far = align_lines_2d_with_cap(
+        let aln_far = align_lines_2d(
             &["    unique_payload_ident();"],
             &["    unique_payload_ident();"],
             WindowSlotMap {
@@ -501,8 +521,7 @@ mod tests {
                 slot_of_new: &[6],
             },
             rs,
-            4,
-            token_product_cap(),
+            &cfg,
         )
         .expect("within cap");
         assert!(
@@ -511,7 +530,7 @@ mod tests {
         );
 
         // Same token within max_slot_distance (3 <= 4) matches cleanly.
-        let aln_near = align_lines_2d_with_cap(
+        let aln_near = align_lines_2d(
             &["    unique_payload_ident();"],
             &["    unique_payload_ident();"],
             WindowSlotMap {
@@ -519,8 +538,7 @@ mod tests {
                 slot_of_new: &[3],
             },
             rs,
-            4,
-            token_product_cap(),
+            &cfg,
         )
         .expect("within cap");
         assert!(
@@ -540,6 +558,7 @@ mod tests {
                 slot_of_new: &[0],
             },
             rs,
+            &cfg,
         )
         .expect("within cap");
         assert!(
@@ -563,6 +582,7 @@ mod tests {
                 slot_of_new: &[0, 1, 2],
             },
             None,
+            &MultiLineConfig::default(),
         )
         .expect("within cap");
         assert_eq!(aln.pairs.len(), 2);

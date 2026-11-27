@@ -169,10 +169,14 @@ impl<'a> AlignmentTape<'a> {
         // across differing container depths or enclosing containers, which
         // would slice compound identifiers open across container boundaries.
         let classifier = diffuse_algo::UniversalDelimiterClassifier;
-        let c_old = diffuse_algo::track_enclosing_containers(&ot, &classifier);
-        let c_new = diffuse_algo::track_enclosing_containers(&nt, &classifier);
-        let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);
-        let d_new = diffuse_algo::track_nesting_depths_with_prev(&[], &nt, &classifier);
+        let mut c_old = vec![0u8; ot.len()];
+        let mut c_new = vec![0u8; nt.len()];
+        let mut d_old = vec![0u16; ot.len()];
+        let mut d_new = vec![0u16; nt.len()];
+        diffuse_algo::track_enclosing_containers_into(&[], &ot, &classifier, &mut c_old);
+        diffuse_algo::track_enclosing_containers_into(&[], &nt, &classifier, &mut c_new);
+        diffuse_algo::track_nesting_depths_into(&[], &ot, &classifier, &mut d_old);
+        diffuse_algo::track_nesting_depths_into(&[], &nt, &classifier, &mut d_new);
 
         filter_container_and_subword_pairs(
             &mut sorted_pairs,
@@ -251,10 +255,8 @@ impl<'a> AlignmentTape<'a> {
                         if is_empty_old && is_empty_new {
                             // Condition A: Incompatible caller containers for
                             // empty delimiter pairs
-                            let c_caller_a =
-                                c_old[pa].and_then(crate::token::ContainerKind::from_id);
-                            let c_caller_b =
-                                c_new[pb].and_then(crate::token::ContainerKind::from_id);
+                            let c_caller_a = crate::token::ContainerKind::from_id(c_old[pa]);
+                            let c_caller_b = crate::token::ContainerKind::from_id(c_new[pb]);
                             if !crate::token::ContainerKind::is_compatible_with(
                                 c_caller_a, c_caller_b,
                             ) {
@@ -302,12 +304,9 @@ impl<'a> AlignmentTape<'a> {
             if token_is_ws(ot[oi]) || classifier.classify(&ot[oi]).is_some() {
                 continue;
             }
-            let is_quoted = c_old[oi]
-                .and_then(crate::token::ContainerKind::from_id)
+            let is_quoted = crate::token::ContainerKind::from_id(c_old[oi])
                 .is_some_and(|c| c.is_quoted())
-                || c_new[ni]
-                    .and_then(crate::token::ContainerKind::from_id)
-                    .is_some_and(|c| c.is_quoted());
+                || crate::token::ContainerKind::from_id(c_new[ni]).is_some_and(|c| c.is_quoted());
             if is_quoted {
                 continue;
             }
