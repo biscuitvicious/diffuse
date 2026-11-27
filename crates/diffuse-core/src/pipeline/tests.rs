@@ -693,11 +693,13 @@ fn test_head_commit_hunk_render() {
         .iter()
         .find(|r| r.old_line == Some(154))
         .expect("line 154 row");
-    // The expanded block repeats the statement verbatim at line 196, so old
-    // line 154 aligns directly with its verbatim copy rather than the filter
-    // line above it.
+    // Old line 154
+    // (`unmark_positions.extend(run.iter().copied().filter(...));`)
+    // expands directly into the multi-line call starting at new line 198
+    // (`unmark_positions.extend(\n run.iter().skip(prefix_len)...`), rather
+    // than pairing with the unrelated `moved_in_run` branch at line 196.
     assert_eq!(r154.kind, crate::parse::RowKind::Mod);
-    assert_eq!(r154.new_line, Some(196));
+    assert_eq!(r154.new_line, Some(198));
 
     let r_filter = rows
         .iter()

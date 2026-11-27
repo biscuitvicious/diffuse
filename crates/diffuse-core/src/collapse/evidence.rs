@@ -13,7 +13,7 @@
 //! statement about the constants below.
 
 use diffuse_syntax::{prelude::first_word, profile::LangProfile};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     collapse::{
@@ -92,8 +92,7 @@ pub(crate) struct PreparedRow<'a> {
     pub(crate) assignment: Option<&'a str>,
     pub(crate) field: Option<&'a str>,
     delim_delta: i32,
-    all_tokens: FxHashSet<&'a str>,
-    salient_runs: Vec<(&'a str, usize)>,
+    salient_counts: FxHashMap<&'a str, (usize, usize)>,
     pub(crate) salient_set: FxHashSet<&'a str>,
     salient_chars: usize,
 }
@@ -154,23 +153,23 @@ impl<'a> PreparedRow<'a> {
                 assignment: None,
                 field: None,
                 delim_delta: 0,
-                all_tokens: FxHashSet::default(),
-                salient_runs: Vec::new(),
+                salient_counts: FxHashMap::default(),
                 salient_set: FxHashSet::default(),
                 salient_chars: 0,
             };
         }
 
         let tokens: Vec<&'a str> = tokenize_line(text).collect();
-        let mut all_tokens = FxHashSet::default();
-        let mut salient_runs = Vec::new();
+        let mut salient_counts: FxHashMap<&'a str, (usize, usize)> = FxHashMap::default();
         let mut salient_set = FxHashSet::default();
         let mut salient_chars = 0usize;
         for (i, &token) in tokens.iter().enumerate() {
-            all_tokens.insert(token);
             if is_token_salient_in_context(&tokens, i, profile) {
                 let len = token.chars().count();
-                salient_runs.push((token, len));
+                salient_counts
+                    .entry(token)
+                    .and_modify(|(count, _)| *count += 1)
+                    .or_insert((1, len));
                 salient_set.insert(token);
                 salient_chars += len;
             }
@@ -190,8 +189,7 @@ impl<'a> PreparedRow<'a> {
             assignment: assignment_target(trimmed),
             field: field_label(trimmed),
             delim_delta: robust_delim_delta(trimmed),
-            all_tokens,
-            salient_runs,
+            salient_counts,
             salient_set,
             salient_chars,
         }
@@ -265,11 +263,17 @@ pub(crate) fn pair_evidence_prepared(
     if !head_link && u.has_salient && v.has_salient {
         let min_salient = u.salient_chars.min(v.salient_chars);
         if min_salient > 0 {
-            let matched_salient: usize = u
-                .salient_runs
+            let (smaller, larger) = if u.salient_counts.len() <= v.salient_counts.len() {
+                (&u.salient_counts, &v.salient_counts)
+            } else {
+                (&v.salient_counts, &u.salient_counts)
+            };
+            let matched_salient: usize = smaller
                 .iter()
-                .filter(|&&(token, _)| v.all_tokens.contains(token))
-                .map(|&(_, len)| len)
+                .filter_map(|(&token, &(count_a, len))| {
+                    let &(count_b, _) = larger.get(token)?;
+                    Some(count_a.min(count_b) * len)
+                })
                 .sum();
             if matched_salient < MIN_MATCHED_SALIENT_CHARS
                 || (matched_salient as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO
@@ -331,18 +335,41 @@ pub(crate) fn pair_evidence_prepared(
             - larger.saturating_sub(matched) as i64 * UNMATCHED_CHAR_PENALTY
     };
 
+    let equal_indent = u.indent == v.indent;
+    let is_prefix =
+        equal_indent && (u.trimmed.starts_with(v.trimmed) || v.trimmed.starts_with(u.trimmed));
+    let block_head_stem = equal_indent
+        .then(|| {
+            block_head_prefix_len(u.trimmed, v.trimmed, profile)
+                .or_else(|| block_head_prefix_len(v.trimmed, u.trimmed, profile))
+        })
+        .flatten();
+    let is_chain_head = is_prefix
+        && !u.is_comment
+        && !v.is_comment
+        && u.delim_delta == 0
+        && v.delim_delta == 0
+        && u.has_salient
+        && v.has_salient
+        && profile.is_some_and(|p| !p.continuation_prefixes.is_empty());
+
     // A headless wrapper stub (e.g. `assert_eq!(` or `Some(` against a full
     // statement) that leaves more of the line unexplained than its own content
     // justifies (`raw_content <= 0`) belongs to the enclosing-frame layer
     // (`reflow.rs`), not to line correspondence: granting affix or opener
     // bonuses to it would let the path solver split one expanded statement
-    // across two adjacent lines.
-    if !head_link && raw_content <= 0 {
+    // across two adjacent lines. Equal-indent brace block heads (e.g.
+    // `.map(|(i, s)| {`) and non-delimited chain heads (`!runs`) are genuine
+    // statement heads rather than enclosing-frame stubs.
+    if !head_link && block_head_stem.is_none() && !is_chain_head && raw_content <= 0 {
         return None;
     }
 
     let mut score = if affix {
         let coverage = smaller as f64 / larger.max(1) as f64;
+        raw_content + (AFFIX_CREDIT * coverage) as i64 - indent_cost
+    } else if let Some(stem_len) = block_head_stem {
+        let coverage = stem_len as f64 / larger.max(1) as f64;
         raw_content + (AFFIX_CREDIT * coverage) as i64 - indent_cost
     } else {
         raw_content - indent_cost
@@ -359,10 +386,9 @@ pub(crate) fn pair_evidence_prepared(
     if key_agrees {
         score += KEY_AGREE_BONUS;
     }
-    if u.indent == v.indent {
-        let is_prefix = u.trimmed.starts_with(v.trimmed) || v.trimmed.starts_with(u.trimmed);
+    if equal_indent {
         let opens_container = u.delim_delta > 0 || v.delim_delta > 0;
-        if is_prefix && opens_container {
+        if (is_prefix || block_head_stem.is_some()) && opens_container {
             score += CONTAINER_OPEN_BONUS;
         } else if is_prefix || (opens_container && head_agrees) {
             score += HEAD_LINE_BONUS;
@@ -446,12 +472,12 @@ fn admissible_from_runs_prechecked(
                 found
             });
             if is_decl_head {
-                let ctx_chars: usize = runs
-                    .iter()
-                    .filter(|run| run.kind == RunKind::Ctx)
-                    .map(|run| run.text.chars().count())
-                    .sum();
-                let total_chars = del_text.chars().count().max(add_text.chars().count());
+                let ctx_chars = matched_chars(runs);
+                let total_chars = del_text
+                    .trim()
+                    .chars()
+                    .count()
+                    .max(add_text.trim().chars().count());
                 if ctx_chars * 2 < total_chars {
                     return false;
                 }
@@ -487,6 +513,25 @@ pub(crate) fn field_label(trimmed: &str) -> Option<&str> {
     (!key.is_empty() && !key.contains(' ')).then_some(key)
 }
 
+/// When `head` opens a brace block (`... {`) whose salient stem before `{` is
+/// a strict prefix of `single_line` (e.g. `Row::Del(x) => {` vs
+/// `Row::Del(x) => expr`), returns the stem's character length.
+fn block_head_prefix_len(
+    head: &str,
+    single_line: &str,
+    profile: Option<&LangProfile>,
+) -> Option<usize> {
+    let stem = head.strip_suffix('{')?.trim_end();
+    if stem.is_empty()
+        || single_line.len() <= stem.len()
+        || !single_line.starts_with(stem)
+        || !line_has_salient_token(stem, profile)
+    {
+        return None;
+    }
+    Some(stem.chars().count())
+}
+
 fn indent_of(text: &str) -> usize {
     text.len() - text.trim_start().len()
 }
@@ -495,12 +540,27 @@ fn is_comment(text: &str, profile: Option<&LangProfile>) -> bool {
     profile.is_some_and(|p| p.is_comment_line(text))
 }
 
-/// Characters explained by a set of borrowed runs from a single alignment tape.
+/// Characters explained by a set of borrowed runs from a single alignment tape,
+/// excluding leading horizontal indentation so matched counts share
+/// trimmed-line coordinates with [`PreparedRow::char_count`].
 fn matched_chars(runs: &[Run<'_>]) -> usize {
-    runs.iter()
-        .filter(|run| run.kind == RunKind::Ctx && !run.text.trim().is_empty())
-        .map(|run| run.text.chars().count())
-        .sum()
+    let mut seen_code = false;
+    let mut total = 0usize;
+    for run in runs {
+        let text = if seen_code {
+            run.text
+        } else {
+            let stripped = run.text.trim_start();
+            if !stripped.is_empty() {
+                seen_code = true;
+            }
+            stripped
+        };
+        if run.kind == RunKind::Ctx && !text.trim().is_empty() {
+            total += text.chars().count();
+        }
+    }
+    total
 }
 
 fn has_salient_ctx(runs: &[Run<'_>], profile: Option<&LangProfile>) -> bool {
@@ -651,6 +711,111 @@ mod tests {
             pair_evidence(
                 "    MouseScrollUp(usize),",
                 "    MouseScrollUp {",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn indentation_depth_does_not_inflate_matched_content_or_decl_guard() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+
+        // Equal-indent lines must score identically at 0 and 16 spaces of
+        // indent.
+        let unindented = pair_evidence("foo(alpha, beta);", "foo(alpha, gamma);", None, None, rs);
+        let indented = pair_evidence(
+            "                foo(alpha, beta);",
+            "                foo(alpha, gamma);",
+            None,
+            None,
+            rs,
+        );
+        assert_eq!(
+            indented, unindented,
+            "leading indentation must not inflate matched_chars"
+        );
+
+        // Fragmented method-call replacement with only `self.(...n...);` shared
+        // must be rejected regardless of indentation depth.
+        for pad in ["", "                ", "                                "] {
+            let old = format!("{pad}self.scroll_to_visual(self.scroll.saturating_sub(n));");
+            let new = format!("{pad}self.on_mouse_scroll(true, n, row, col);");
+            assert_eq!(
+                pair_evidence(&old, &new, None, None, rs),
+                None,
+                "indentation ({} cols) must not subsidize fragmented method replacement",
+                pad.len()
+            );
+        }
+
+        // Deeply indented unrelated `let` declarations must fail the 50%
+        // context guard just like unindented ones.
+        assert!(!is_admissible_mod_pair(
+            "                    let top = stack.pop();",
+            "                    let mut out = vec![0u8; items.len()];",
+            rs,
+        ));
+    }
+
+    #[test]
+    fn pre_tape_salient_bag_caps_repeated_token_multiplicity() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // `foo` appears 4 times on `u` (12 chars if uncapped) but only once on
+        // `v` (3 chars out of 34 salient chars = 8.8% < 30%). Capping by
+        // multiset intersection rejects both directions symmetrically.
+        let u = "foo(foo, foo, foo, alpha_one, beta_two);";
+        let v = "foo(gamma_three, delta_four, eps_five);";
+        assert_eq!(pair_evidence(u, v, None, None, rs), None);
+        assert_eq!(pair_evidence(v, u, None, None, rs), None);
+    }
+
+    #[test]
+    fn equal_indent_block_head_and_chain_head_remain_admissible() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // Brace block head (`Row::Del(x) => {`) must beat its deeper-indented
+        // body line when replacing a 1-line match arm.
+        let one_line = "            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text.clone())),";
+        let head_score = pair_evidence(
+            one_line,
+            "            Row::Del(del_line) => {",
+            None,
+            None,
+            rs,
+        )
+        .expect("brace block head must be admissible");
+        let body_score = pair_evidence(
+            one_line,
+            "                let mut add = AddLine::new(del_line.num, del_line.text.clone());",
+            None,
+            None,
+            rs,
+        )
+        .expect("body line scores");
+        assert!(
+            head_score > body_score,
+            "brace block head ({head_score}) must beat deeper body ({body_score})"
+        );
+
+        // Closure block head (`.map(|(i, s)| {`) and non-delimited chain head
+        // (`!runs`) remain admissible even when shorter than 23% of the 1-line
+        // form.
+        assert!(
+            pair_evidence(
+                "        .map(|(i, s)| {",
+                "        .map(|(i, s)| Row::Del(DelLine::new(i as u32 + 1, s.as_str())))",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
+        assert!(
+            pair_evidence(
+                "        !runs",
+                "        !runs.iter().any(|run| run.kind == RunKind::Ctx)",
                 None,
                 None,
                 rs,

@@ -638,7 +638,7 @@ fn test_multiline_expansion_subword_distribution() {
         ),
         row(RowKind::Add, "                {", Some(1084), None),
     ]);
-    let c = collapse_hunk_rows(&h, None, None, None);
+    let c = collapse_hunk_rows(&h, None, None, lang_profile("rs"));
     assert_eq!(c.len(), 3);
     assert_eq!(c[0].kind(), RowKind::Mod);
     assert_eq!(c[0].new_line(), Some(1082));
