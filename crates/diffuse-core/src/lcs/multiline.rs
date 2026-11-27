@@ -21,10 +21,13 @@ use super::{
     },
 };
 
-/// Bonus awarded to non-whitespace matches staying inside the same peer-group
-/// slot, sized below identifier match rewards so genuine cross-slot moves win
-/// while repeated delimiters and tokens stay anchored to their own `Mod` row.
-pub const SAME_SLOT_AFFINITY_BONUS: i32 = 6;
+/// Bonus awarded to alphanumeric matches staying inside the same peer-group
+/// slot (non-alphanumeric operators/delimiters receive a third of this bonus).
+/// Sized above the maximum single-token match reward (`34` in `lcs::raw`) for
+/// identifiers so an adjacent `Del`/`Add` slot cannot steal a `Mod(i, j)`
+/// slot's shared identifiers, while keeping bare outer delimiters (`{`, `(`)
+/// from overpowering a real cross-slot identifier run like `io::{`.
+pub const SAME_SLOT_AFFINITY_BONUS: i32 = 36;
 
 /// Default maximum slot distance across which a 2D cross-slot match may reach
 /// (matches `CROSS_SLOT_WINDOW` in `collapse::slot`).
@@ -169,6 +172,18 @@ pub fn align_lines_2d_with_cap<'a>(
     let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);
     let d_new = diffuse_algo::track_nesting_depths_with_prev(&[], &nt, &classifier);
 
+    // When the window contains at least one paired `Mod` slot (`slot_of_old`
+    // and `slot_of_new` share a slot index), only hard-pin same-slot unique
+    // anchors (`sa == sb`). Hard-pinning cross-slot anchors beforehand can trap
+    // a `Mod` slot's shared prefix (`//`, `///`, `assert_eq!(`) on the wrong
+    // side of a cross-slot word; letting Gotoh DP solve cross-slot intervals
+    // with `SAME_SLOT_AFFINITY_BONUS` preserves every `Mod` slot's `Ctx` while
+    // still aligning all monotone cross-slot moves.
+    let has_mod_slot = slots
+        .slot_of_old
+        .iter()
+        .any(|so| slots.slot_of_new.contains(so));
+
     let anchors: Vec<(usize, usize)> = unique_token_anchors(&ot, &nt, profile)
         .into_iter()
         .filter(|&(ai, bi)| {
@@ -176,7 +191,9 @@ pub fn align_lines_2d_with_cap<'a>(
             let sb = slots.slot_of_new[line_b[bi]];
             let ca = c_old[ai].and_then(ContainerKind::from_id);
             let cb = c_new[bi].and_then(ContainerKind::from_id);
-            sa.abs_diff(sb) <= max_slot_distance && ContainerKind::is_compatible_with(ca, cb)
+            (!has_mod_slot || sa == sb)
+                && sa.abs_diff(sb) <= max_slot_distance
+                && ContainerKind::is_compatible_with(ca, cb)
         })
         .collect();
 

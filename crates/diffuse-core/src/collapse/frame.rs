@@ -72,6 +72,7 @@ pub(crate) fn robust_delim_delta(text: &str) -> i32 {
 /// Reports whether `line` ends with an open assignment or arrow operator (`=`,
 /// `=>`, `->`) rather than a comparison operator (`==`, `!=`, `<=`, `>=`).
 #[inline]
+#[allow(dead_code)]
 pub(crate) fn is_open_continuation_line(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {

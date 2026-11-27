@@ -2,7 +2,7 @@
 
 - [x] **Phase 1: 2D Token Stream and Slot-Aware Gotoh LCS**
 - [x] **Phase 2: Unified `n × m` Post-Segmentation Slot Projector**
-- [ ] **Phase 3: Hybrid Integration with Non-Monotone Residual Relocation**
+- [x] **Phase 3: Hybrid Integration with Non-Monotone Residual Relocation**
 - [ ] **Phase 4: Legacy `join("\n")` Retirement and Golden Corpus Calibration**
 
 ---

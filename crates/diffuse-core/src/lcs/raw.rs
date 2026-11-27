@@ -282,7 +282,11 @@ fn raw_lcs_dp(
                     gj - rb.start,
                 );
                 let affinity = if sa == sb && !is_ws {
-                    s.same_slot_bonus
+                    if token_is_alnum(a[i]) {
+                        s.same_slot_bonus
+                    } else {
+                        s.same_slot_bonus / 3
+                    }
                 } else {
                     0
                 };

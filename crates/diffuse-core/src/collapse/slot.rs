@@ -13,8 +13,9 @@ use crate::{
         tokens::is_salient_word_match,
     },
     lcs::{
-        WindowSlotMap, align_lines_2d, merged_runs_for_texts_with_profile,
-        owned_runs_for_texts_with_profile, tokenize_line,
+        DEFAULT_MAX_SLOT_DISTANCE, WindowSlotMap, align_lines_2d_with_cap,
+        merged_runs_for_texts_with_profile, owned_runs_for_texts_with_profile, token_is_ws,
+        token_product_cap, tokenize_line,
     },
     merge::{Run, RunKind},
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
@@ -24,6 +25,7 @@ use crate::{
 type Runs = Vec<(RunKind, String)>;
 
 /// A slot's runs split across several lines, one entry per line.
+#[allow(dead_code)]
 type LineRuns = Vec<Runs>;
 
 /// An aligned slot within a peer reflow group.
@@ -200,12 +202,12 @@ pub fn type_window(
 /// window be typed without a second alignment pass over the cluster.
 #[allow(clippy::too_many_arguments)]
 fn type_slot_pairs(
-    mut aligned_pairs: Vec<SlotPair<'_>>,
+    aligned_pairs: Vec<SlotPair<'_>>,
     group: &Formation,
     old_rows: &[Row],
     new_rows: &[Row],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
+    _old_content: Option<&[&str]>,
+    _new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
     let group_old = &old_rows[group.old_range.clone()];
@@ -213,40 +215,8 @@ fn type_slot_pairs(
     let n = group_old.len();
     let m = group_new.len();
 
-    if n == 1
-        && m > 1
-        && aligned_pairs.len() == m
-        && aligned_pairs[0].0.is_some()
-        && aligned_pairs[0].1.is_some()
-        && group_old[0].text().trim() != group_new[0].text().trim()
-        && !group_old.iter().any(Row::is_moved)
-        && !group_new.iter().any(Row::is_moved)
-        && let Some(rows) = align_expansion_1_to_m(group, &group_old[0], group_new, profile)
-    {
-        return rows;
-    }
-
-    if n > 1
-        && m == 1
-        && aligned_pairs.len() == n
-        && aligned_pairs[0].0.is_some()
-        && aligned_pairs[0].1.is_some()
-        && group_old[0].text().trim() != group_new[0].text().trim()
-        && !group_old.iter().any(Row::is_moved)
-        && !group_new.iter().any(Row::is_moved)
-        && let Some(rows) = align_collapse_n_to_1(group, group_old, &group_new[0], profile)
-    {
-        return rows;
-    }
-
-    // Phase-4 post-DP absorption: fold stranded continuation orphans into
-    // adjacent Mods without re-routing the DP alignment.
-    fold_tail_orphans(&mut aligned_pairs, old_content, new_content, profile);
-
     let total_slots = aligned_pairs.len();
 
-    // 2. Intra-slot word diff and initial runs
-    let mut slot_runs: Vec<Vec<(RunKind, String)>> = Vec::with_capacity(total_slots);
     let is_moved_slot: Vec<bool> = aligned_pairs
         .iter()
         .map(|(old_opt, new_opt, _)| {
@@ -255,54 +225,60 @@ fn type_slot_pairs(
         })
         .collect();
 
-    for (old_opt, new_opt, pre_runs) in &aligned_pairs {
-        // Phase-4 multi-line slots carry their `\n`-split runs directly:
-        // shared text is already `MovedSrc`/`MovedTgt`, never bare bait.
-        if let Some(runs) = pre_runs {
-            slot_runs.push(runs.clone());
-            continue;
+    // 1. Stage 1: unified 2D coordinate-aware multi-line tape for multi-slot
+    //    windows (`1 × m`, `n × 1`, and general `n × m`), falling back cleanly
+    //    to per-slot alignment on cap overflow or wholesale `Mod` slots.
+    let mut slot_runs: Vec<Vec<(RunKind, String)>> = if total_slots > 1
+        && let Some(runs_2d) = align_window_2d_tape(&aligned_pairs, profile)
+    {
+        runs_2d
+    } else {
+        let mut fallback = Vec::with_capacity(total_slots);
+        for (old_opt, new_opt, pre_runs) in &aligned_pairs {
+            if let Some(runs) = pre_runs {
+                fallback.push(runs.clone());
+                continue;
+            }
+            match (old_opt, new_opt) {
+                (Some(u), Some(v)) => {
+                    if u.text() == v.text() {
+                        fallback.push(vec![(RunKind::Ctx, u.text().to_string())]);
+                    } else {
+                        fallback.push(owned_runs_for_texts_with_profile(
+                            u.text(),
+                            v.text(),
+                            profile,
+                        ));
+                    }
+                }
+                (Some(u), None) => {
+                    if let Row::MovSrc { cached_runs, .. } = u {
+                        fallback.push(cached_runs.clone());
+                    } else {
+                        fallback.push(vec![(RunKind::Del, u.text().to_string())]);
+                    }
+                }
+                (None, Some(v)) => {
+                    if let Row::MovTgt { cached_runs, .. } = v {
+                        fallback.push(cached_runs.clone());
+                    } else {
+                        fallback.push(vec![(RunKind::Add, v.text().to_string())]);
+                    }
+                }
+                (None, None) => unreachable!(),
+            }
         }
-        match (old_opt, new_opt) {
-            (Some(u), Some(v)) => {
-                if u.text() == v.text() {
-                    slot_runs.push(vec![(RunKind::Ctx, u.text().to_string())]);
-                } else {
-                    slot_runs.push(owned_runs_for_texts_with_profile(
-                        u.text(),
-                        v.text(),
-                        profile,
-                    ));
-                }
-            }
-            (Some(u), None) => {
-                if let Row::MovSrc { cached_runs, .. } = u {
-                    slot_runs.push(cached_runs.clone());
-                } else {
-                    slot_runs.push(vec![(RunKind::Del, u.text().to_string())]);
-                }
-            }
-            (None, Some(v)) => {
-                if let Row::MovTgt { cached_runs, .. } = v {
-                    slot_runs.push(cached_runs.clone());
-                } else {
-                    slot_runs.push(vec![(RunKind::Add, v.text().to_string())]);
-                }
-            }
-            (None, None) => unreachable!(),
-        }
-    }
+        fallback
+    };
 
-    // 3. Cross-slot token relocation (when total_slots > 1)
+    // 2. Stage 2: residual cross-slot relocation for non-monotone / transposed
+    //    moves over leftover `Del` and `Add` runs (when `total_slots > 1`).
     if total_slots > 1 {
         let is_pure_add: Vec<bool> = aligned_pairs
             .iter()
             .map(|(old_opt, new_opt, _)| old_opt.is_none() && new_opt.is_some())
             .collect();
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
-        // Phase 6: leftover frame completion runs strictly last, over the
-        // stranded runs the earlier passes left behind. Pure-Add coverage
-        // repair below still applies to `relocate_cross_slot_tokens`
-        // exchanges only; leftover retypes are pairwise by construction.
         relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
@@ -393,8 +369,6 @@ enum ProjectedPiece<'a> {
 /// Returns `None` when the window has no non-moved lines on both sides, exceeds
 /// `token_product_cap`, or when any `Mod` slot would degrade into a wholesale
 /// replacement (allowing the caller to fall back to per-slot alignment).
-// Wired into `type_slot_pairs` in Phase 3 of the 2D LCS plan.
-#[allow(dead_code)]
 pub(crate) fn align_window_2d_tape(
     aligned_pairs: &[SlotPair<'_>],
     profile: Option<&LangProfile>,
@@ -428,7 +402,19 @@ pub(crate) fn align_window_2d_tape(
         return None;
     }
 
-    let aln = align_lines_2d(
+    // In `1 × m` expansions and `n × 1` collapses, every row belongs to the
+    // single opposite-side construct (bounded by `reflow.rs`), so cross-slot
+    // matches must reach the terminal closing delimiter regardless of window
+    // height (`m` or `n`). Multi-row `n × m` windows keep
+    // `DEFAULT_MAX_SLOT_DISTANCE`.
+    let is_single_construct = old_lines.len() == 1 || new_lines.len() == 1;
+    let max_slot_distance = if is_single_construct {
+        usize::MAX
+    } else {
+        DEFAULT_MAX_SLOT_DISTANCE
+    };
+
+    let aln = align_lines_2d_with_cap(
         &old_lines,
         &new_lines,
         WindowSlotMap {
@@ -436,6 +422,8 @@ pub(crate) fn align_window_2d_tape(
             slot_of_new: &slot_of_new,
         },
         profile,
+        max_slot_distance,
+        token_product_cap(),
     )?;
 
     // Determine which cross-slot pairs carry salient content or touch a
@@ -460,7 +448,7 @@ pub(crate) fn align_window_2d_tape(
         }
     }
 
-    let mut kept_pairs: Vec<(usize, usize)> = aln
+    let kept_pairs: Vec<(usize, usize)> = aln
         .pairs
         .iter()
         .copied()
@@ -470,18 +458,153 @@ pub(crate) fn align_window_2d_tape(
             let so = slot_of_old[ol];
             let sn = slot_of_new[nl];
             so == sn
+                || is_single_construct
                 || salient_linked.contains(&(so, sn))
                 || !old_line_has_salient[ol]
                 || !new_line_has_salient[nl]
         })
         .collect();
 
+    // Extend cross-slot moved phrases across adjacent unmatched identical
+    // non-whitespace boundary tokens (optionally separated by one identical
+    // non-leading interior space) on the same `(ol, nl)` line pair — recovering
+    // isolated low-weight operators/punctuation such as `self.vis_line =` or
+    // trailing `,`, plus a trailing interior separator space (such as
+    // `|pat: &str| `) when both lines carry the exact same separator before a
+    // following token (preventing stray red/green space flashes).
+    let mut extended_pairs: Vec<(usize, usize)> = Vec::with_capacity(kept_pairs.len());
+    for (idx, &(oi, ni)) in kept_pairs.iter().enumerate() {
+        let ol = aln.old.tokens[oi].line;
+        let nl = aln.new.tokens[ni].line;
+        let is_cross = slot_of_old[ol] != slot_of_new[nl];
+
+        // Backward boundary extension strictly after the previous matched pair.
+        if is_cross {
+            let min_oi = extended_pairs.last().map_or(0, |&(po, _)| po + 1);
+            let min_ni = extended_pairs.last().map_or(0, |&(_, pn)| pn + 1);
+            let mut prefix = Vec::new();
+            let (mut co, mut cn) = (oi, ni);
+            loop {
+                if co > min_oi && cn > min_ni {
+                    let po = aln.old.tokens[co - 1];
+                    let pn = aln.new.tokens[cn - 1];
+                    if po.line == ol && pn.line == nl && !token_is_ws(po.text) && po.text == pn.text
+                    {
+                        prefix.push((co - 1, cn - 1));
+                        co -= 1;
+                        cn -= 1;
+                        continue;
+                    }
+                    if co >= min_oi + 2 && cn >= min_ni + 2 {
+                        let wo = aln.old.tokens[co - 1];
+                        let wn = aln.new.tokens[cn - 1];
+                        let to = aln.old.tokens[co - 2];
+                        let tn = aln.new.tokens[cn - 2];
+                        if wo.line == ol
+                            && wn.line == nl
+                            && to.line == ol
+                            && tn.line == nl
+                            && !wo.is_leading_ws
+                            && !wn.is_leading_ws
+                            && token_is_ws(wo.text)
+                            && wo.text == wn.text
+                            && !token_is_ws(to.text)
+                            && to.text == tn.text
+                        {
+                            prefix.push((co - 1, cn - 1));
+                            prefix.push((co - 2, cn - 2));
+                            co -= 2;
+                            cn -= 2;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+            prefix.reverse();
+            extended_pairs.extend(prefix);
+        }
+
+        extended_pairs.push((oi, ni));
+
+        // Forward boundary extension strictly before the next matched pair.
+        if is_cross {
+            let max_oi = kept_pairs
+                .get(idx + 1)
+                .map_or(aln.old.tokens.len(), |&(no, _)| no);
+            let max_ni = kept_pairs
+                .get(idx + 1)
+                .map_or(aln.new.tokens.len(), |&(_, nn)| nn);
+            let (mut co, mut cn) = (oi, ni);
+            loop {
+                if co + 1 < max_oi && cn + 1 < max_ni {
+                    let no = aln.old.tokens[co + 1];
+                    let nn = aln.new.tokens[cn + 1];
+                    if no.line == ol && nn.line == nl && !token_is_ws(no.text) && no.text == nn.text
+                    {
+                        extended_pairs.push((co + 1, cn + 1));
+                        co += 1;
+                        cn += 1;
+                        continue;
+                    }
+                    if co + 2 < max_oi && cn + 2 < max_ni {
+                        let wo = aln.old.tokens[co + 1];
+                        let wn = aln.new.tokens[cn + 1];
+                        let to = aln.old.tokens[co + 2];
+                        let tn = aln.new.tokens[cn + 2];
+                        if wo.line == ol
+                            && wn.line == nl
+                            && to.line == ol
+                            && tn.line == nl
+                            && !wo.is_leading_ws
+                            && !wn.is_leading_ws
+                            && token_is_ws(wo.text)
+                            && wo.text == wn.text
+                            && !token_is_ws(to.text)
+                            && to.text == tn.text
+                        {
+                            extended_pairs.push((co + 1, cn + 1));
+                            extended_pairs.push((co + 2, cn + 2));
+                            co += 2;
+                            cn += 2;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
+
+            // Absorb a single identical interior separator space immediately
+            // following a moved phrase when both lines have a subsequent token
+            // on the same line (e.g. `|pat: &str| `), avoiding stray red/green
+            // separator flashes.
+            if co + 1 < max_oi && cn + 1 < max_ni {
+                let wo = aln.old.tokens[co + 1];
+                let wn = aln.new.tokens[cn + 1];
+                let old_has_after = co + 2 < aln.old.line_ranges[ol].end;
+                let new_has_after = cn + 2 < aln.new.line_ranges[nl].end;
+                if wo.line == ol
+                    && wn.line == nl
+                    && !wo.is_leading_ws
+                    && !wn.is_leading_ws
+                    && token_is_ws(wo.text)
+                    && wo.text == wn.text
+                    && old_has_after
+                    && new_has_after
+                {
+                    extended_pairs.push((co + 1, cn + 1));
+                }
+            }
+        }
+    }
+
     // Bridge identical non-leading intervening token spans strictly enclosed
     // between two cross-slot moved tokens on the same `(ol, nl)` line pair so
-    // relocated phrases like `tag = "kind",` or `first, second` stay one clean
-    // moved run without isolated-operator/whitespace flashes.
-    let mut bridged_pairs: Vec<(usize, usize)> = Vec::with_capacity(kept_pairs.len());
-    for pair in kept_pairs.drain(..) {
+    // relocated phrases like `tag = "kind",` or `the pi review extension` stay
+    // one clean moved run (runs AFTER boundary extension so newly extended
+    // tokens bridge cleanly with adjacent matches).
+    let mut bridged_pairs: Vec<(usize, usize)> = Vec::with_capacity(extended_pairs.len());
+    for pair in extended_pairs.drain(..) {
         if let Some(&(prev_oi, prev_ni)) = bridged_pairs.last() {
             let (oi, ni) = pair;
             let gap = oi.saturating_sub(prev_oi);
@@ -635,7 +758,6 @@ pub(crate) fn align_window_2d_tape(
     Some(slot_runs)
 }
 
-#[allow(dead_code)]
 fn push_projected_run(
     out: &mut Runs,
     last_phrase: &mut Option<usize>,
@@ -663,7 +785,6 @@ fn push_projected_run(
     }
 }
 
-#[allow(dead_code)]
 fn emit_2d_single_side(pieces: &[ProjectedPiece<'_>]) -> Runs {
     let mut out = Vec::new();
     let mut last_phrase = None;
@@ -688,7 +809,6 @@ fn emit_2d_single_side(pieces: &[ProjectedPiece<'_>]) -> Runs {
 /// Lockstep `Ctx`-anchored merger for a paired `Mod(ol, nl)` slot, applying
 /// per-line leading-indentation splitting on the initial leading whitespace
 /// pair.
-#[allow(dead_code)]
 fn merge_2d_mod_slot(old_pieces: &[ProjectedPiece<'_>], new_pieces: &[ProjectedPiece<'_>]) -> Runs {
     let mut out = Vec::new();
     let mut last_phrase = None;
@@ -789,6 +909,7 @@ fn merge_2d_mod_slot(old_pieces: &[ProjectedPiece<'_>], new_pieces: &[ProjectedP
     out
 }
 
+#[allow(dead_code)]
 fn combine_mod_runs_expansion(
     u_runs: &[(RunKind, String)],
     v0_runs: &[(RunKind, String)],
@@ -844,6 +965,7 @@ fn combine_mod_runs_expansion(
 /// becomes `MovedSrc` (Mod) / `MovedTgt` (continuation Add) pairs, which
 /// keeps the closed economy balanced by construction and hides the shared
 /// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
+#[allow(dead_code)]
 fn distribute_expansion_runs(full_runs: &[(RunKind, String)], m: usize) -> (Runs, LineRuns) {
     let mut u_runs: Vec<(RunKind, String)> = Vec::new();
     let mut v_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); m];
@@ -918,6 +1040,7 @@ fn slot_runs_are_wholesale(runs: &[(RunKind, String)], old_text: &str, new_text:
     !has_non_ws_ctx && (!old_text.trim().is_empty() || !new_text.trim().is_empty())
 }
 
+#[allow(dead_code)]
 fn align_expansion_1_to_m(
     group: &Formation,
     old_row: &Row,
@@ -986,6 +1109,7 @@ fn align_expansion_1_to_m(
     })
 }
 
+#[allow(dead_code)]
 fn combine_mod_runs_collapse(
     u0_runs: &[(RunKind, String)],
     v_runs: &[(RunKind, String)],
@@ -1041,6 +1165,7 @@ fn combine_mod_runs_collapse(
 /// becomes `MovedSrc` (continuation Del) / `MovedTgt` (Mod) pairs, which
 /// keeps the closed economy balanced by construction and hides the shared
 /// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
+#[allow(dead_code)]
 fn distribute_collapse_runs(full_runs: &[(RunKind, String)], n: usize) -> (LineRuns, Runs) {
     let mut u_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); n];
     let mut v_runs: Vec<(RunKind, String)> = Vec::new();
@@ -1105,6 +1230,7 @@ fn distribute_collapse_runs(full_runs: &[(RunKind, String)], n: usize) -> (LineR
     (u_runs, v_runs)
 }
 
+#[allow(dead_code)]
 fn align_collapse_n_to_1(
     group: &Formation,
     old_rows: &[Row],
@@ -1194,6 +1320,7 @@ pub(crate) fn has_salient_moved_link(
 
 /// Determines if a pair of old and new texts is admissible for a post-DP
 /// multi-line fold, reusing one already-built borrowed alignment tape.
+#[allow(dead_code)]
 fn is_admissible_fold_pair(
     u_text: &str,
     v_text: &str,
@@ -1237,6 +1364,7 @@ fn is_admissible_fold_pair(
 /// cluster-factoring continuation guard). Block openers (`{`) count too:
 /// a flattened `fn f() { body(); }` is a genuine 2-to-1 collapse, and the
 /// coverage gate — not this pre-filter — rejects merged independents.
+#[allow(dead_code)]
 fn is_expression_head_open(trim: &str, delim: i32) -> bool {
     delim > 0
         || is_open_continuation_line(trim)
@@ -1248,6 +1376,7 @@ fn is_expression_head_open(trim: &str, delim: i32) -> bool {
 /// Evidence that a line is the tail of a multi-line expression, using the
 /// Invariant-2 continuation vocabulary: `&&`, `||`, or a chaining `.`
 /// (which can never start a standalone statement).
+#[allow(dead_code)]
 fn is_expression_tail(trim: &str) -> bool {
     trim.starts_with("&&")
         || trim.starts_with("||")
@@ -1260,6 +1389,7 @@ fn is_expression_tail(trim: &str) -> bool {
 /// evidence (trailing `{`/`,`/`&&`/`||` on balanced lines) needs the
 /// bilateral crutch: the other side must be substantially explained too,
 /// otherwise a sibling line (next struct field, next arg) gets absorbed.
+#[allow(dead_code)]
 fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
     (delim > 0 && !trim.ends_with('{')) || is_open_continuation_line(trim)
 }
@@ -1271,6 +1401,7 @@ fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
 /// explained, otherwise two independent statements would merge into a
 /// Frankenstein Mod. Returns the matched chars, other-side chars, and the
 /// owned runs from the same tape so callers distribute them directly.
+#[allow(dead_code)]
 fn joined_alignment(
     joined: &str,
     other: &str,
@@ -1344,6 +1475,7 @@ type SlotPair<'a> = (
 /// `SlotPair`): unmatched join-side text can straddle the line boundary
 /// inside one run, and the newline is not part of any real line. Runs left
 /// empty are dropped and same-kind neighbors re-coalesced.
+#[allow(dead_code)]
 fn strip_join_newlines(runs: &mut [Runs]) {
     for line_runs in runs.iter_mut() {
         let mut clean = Vec::with_capacity(line_runs.len());
@@ -1364,6 +1496,7 @@ fn strip_join_newlines(runs: &mut [Runs]) {
 /// text can scramble the Mod's run order (see the `len,` expansion case).
 /// A garbled fold abstains instead of tripping the group check, which
 /// would dissolve the whole group into raw rows.
+#[allow(dead_code)]
 fn folded_runs_project(
     runs: &[(RunKind, String)],
     old_text: Option<&str>,
@@ -1397,6 +1530,7 @@ fn folded_runs_project(
 /// — only ever converting (Mod + honest orphan) into (Mod + grouped
 /// continuation) — cannot steal partners, and keeps the closed economy
 /// balanced by construction (shared text becomes `MovedSrc`/`MovedTgt`).
+#[allow(dead_code)]
 fn fold_tail_orphans(
     pairs: &mut [SlotPair<'_>],
     old_content: Option<&[&str]>,
@@ -1416,6 +1550,7 @@ fn fold_tail_orphans(
 }
 
 /// Attempts the collapse and expansion folds on one adjacent slot pair.
+#[allow(dead_code)]
 fn fold_window(
     window: &mut [SlotPair<'_>],
     old_content: Option<&[&str]>,
@@ -1428,6 +1563,7 @@ fn fold_window(
 
 /// Folds `(Mod(u, v), Del(u'))` into a joined Mod when `u'` directly
 /// continues `u`'s expression and `v` covers the joined text.
+#[allow(dead_code)]
 fn fold_collapse_window(
     window: &mut [SlotPair<'_>],
     old_content: Option<&[&str]>,
@@ -1496,6 +1632,7 @@ fn fold_collapse_window(
 
 /// Folds `(Mod(u, v), Add(v'))` into a joined Mod when `v'` directly
 /// continues `v`'s expression and the joined text covers `u`.
+#[allow(dead_code)]
 fn fold_expansion_window(
     window: &mut [SlotPair<'_>],
     old_content: Option<&[&str]>,
@@ -3568,6 +3705,54 @@ mod tests {
         assert_eq!(
             moved_runs[1],
             vec![(RunKind::Ctx, "    moved_line();".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_type_window_hybrid_2d_monotone_plus_non_monotone_transposition() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // Reproduces `scrollbar-grab-drag` `geometry.rs` Hunk 1 (5x2):
+        // Stage 1 (2D monotone tape) aligns `.round()` and both Mod slots;
+        // Stage 2 (residual cross-slot relocation) catches the transposed
+        // `Some(` crossing `((vh ...)` and closing `)`.
+        let dels = vec![
+            make_del(231, "        Some("),
+            make_del(
+                232,
+                "            ((vh as f64 / total_vis_lines as f64) * track_h as f64)",
+            ),
+            make_del(233, "                .round()"),
+            make_del(
+                234,
+                "                .clamp(2.0, max_thumb as f64) as usize,",
+            ),
+            make_del(235, "        )"),
+        ];
+        let adds = vec![
+            make_add(
+                243,
+                "        let prop_thumb = ((vh as f64 / total_vis_lines as f64) * track_h as f64).round() as usize;",
+            ),
+            make_add(244, "        Some(prop_thumb.clamp(min_thumb, max_thumb))"),
+        ];
+
+        let mut res = type_window(GroupId(1), &dels, &adds, &[(1, 0), (3, 1)], None, None, rs);
+        res.repair_unmatched_moves();
+        res.assert_token_conservation();
+
+        let moved_src: String = res
+            .slots
+            .iter()
+            .flat_map(|s| s.runs.iter())
+            .filter(|(k, _)| *k == RunKind::MovedSrc)
+            .map(|(_, t)| t.as_str())
+            .collect();
+        assert!(
+            moved_src.contains("Some(")
+                && moved_src.contains(".round()")
+                && moved_src.contains("as usize")
+                && moved_src.contains(')'),
+            "hybrid 2D + residual relocation must capture both monotone (.round()) and transposed (Some(, as usize, )) moves, got: {moved_src:?}"
         );
     }
 }

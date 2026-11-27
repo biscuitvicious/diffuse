@@ -390,6 +390,7 @@ pub(crate) fn is_admissible_mod_pair(
 /// The admissibility rule over a borrowed alignment that the caller has
 /// already built, so evidence scoring and slot folds share one tape instead of
 /// rebuilding it.
+#[allow(dead_code)]
 pub(crate) fn admissible_from_runs(
     del_text: &str,
     add_text: &str,
