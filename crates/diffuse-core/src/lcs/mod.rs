@@ -18,6 +18,7 @@ pub use multiline::{
     DEFAULT_MAX_SLOT_DISTANCE, MultiLineAlignment, MultiLineTokens, SAME_SLOT_AFFINITY_BONUS,
     Token2D, WindowSlotMap, align_lines_2d, align_lines_2d_with_cap, tokenize_lines_2d,
 };
+pub(crate) use pairs::{TokenContainerContext, filter_container_and_subword_pairs};
 pub use pairs::{
     lcs_matched_chars_ids, lcs_pairs, lcs_pairs_anchored, lcs_pairs_ids, lcs_pairs_recursive,
     lcs_pairs_with_profile,
@@ -37,4 +38,4 @@ pub use tokenizer::{
     line_has_salient_token, token_is_alnum, token_is_salient, token_is_ws, tokenize_line,
     unique_token_anchors,
 };
-pub(crate) use tokenizer::{are_contiguous_subwords, is_subword_token, tokens_can_match};
+pub(crate) use tokenizer::{is_subword_token, tokens_can_match};

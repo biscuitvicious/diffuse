@@ -5,8 +5,9 @@ use diffuse_syntax::profile::LangProfile;
 
 use crate::{
     lcs::{
-        char_len, char_slice, lcs_pairs_anchored, raw_lcs_pairs, token_is_ws, token_product_cap,
-        tokenize_line, unique_token_anchors,
+        TokenContainerContext, char_len, char_slice, filter_container_and_subword_pairs,
+        lcs_pairs_anchored, raw_lcs_pairs, token_is_ws, token_product_cap, tokenize_line,
+        unique_token_anchors,
     },
     tape::{AlignmentTape, TapeChunk},
     token::classify_whitespace,
@@ -173,32 +174,21 @@ impl<'a> AlignmentTape<'a> {
         let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);
         let d_new = diffuse_algo::track_nesting_depths_with_prev(&[], &nt, &classifier);
 
-        sorted_pairs.retain(|&(oi, ni)| {
-            let ca = c_old[oi].and_then(crate::token::ContainerKind::from_id);
-            let cb = c_new[ni].and_then(crate::token::ContainerKind::from_id);
-            if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
-                return false;
-            }
-
-            if crate::lcs::is_subword_token(ot[oi]) {
-                let la = oi > 0
-                    && crate::lcs::is_subword_token(ot[oi - 1])
-                    && crate::lcs::are_contiguous_subwords(ot[oi - 1], ot[oi]);
-                let ra = oi + 1 < ot.len()
-                    && crate::lcs::is_subword_token(ot[oi + 1])
-                    && crate::lcs::are_contiguous_subwords(ot[oi], ot[oi + 1]);
-                let lb = ni > 0
-                    && crate::lcs::is_subword_token(nt[ni - 1])
-                    && crate::lcs::are_contiguous_subwords(nt[ni - 1], nt[ni]);
-                let rb = ni + 1 < nt.len()
-                    && crate::lcs::is_subword_token(nt[ni + 1])
-                    && crate::lcs::are_contiguous_subwords(nt[ni], nt[ni + 1]);
-                if (la != lb || ra != rb) && (d_old[oi] != d_new[ni] || ca != cb) {
-                    return false;
-                }
-            }
-            true
-        });
+        filter_container_and_subword_pairs(
+            &mut sorted_pairs,
+            &TokenContainerContext {
+                tokens: &ot,
+                containers: &c_old,
+                depths: &d_old,
+                lines: None,
+            },
+            &TokenContainerContext {
+                tokens: &nt,
+                containers: &c_new,
+                depths: &d_new,
+                lines: None,
+            },
+        );
 
         // Delimiter Container Invariance & Inner Salience Admission Gate.
         // Purge any delimiter pair where:

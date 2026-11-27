@@ -15,10 +15,9 @@ use crate::token::ContainerKind;
 
 use super::{
     arena::token_product_cap,
+    pairs::{TokenContainerContext, expand_anchor_span, filter_container_and_subword_pairs},
     raw::{SlotAffinity, raw_lcs_pairs_with_slots_context},
-    tokenizer::{
-        are_contiguous_subwords, is_subword_token, token_is_ws, tokenize_line, unique_token_anchors,
-    },
+    tokenizer::{token_is_ws, tokenize_line, unique_token_anchors},
 };
 
 /// Bonus awarded to alphanumeric matches staying inside the same peer-group
@@ -213,35 +212,21 @@ pub fn align_lines_2d_with_cap<'a>(
     pairs.sort_by_key(|&(oi, _)| oi);
 
     // Defense-in-depth: container invariance & line-bounded subword cohesion.
-    pairs.retain(|&(oi, ni)| {
-        let ca = c_old[oi].and_then(ContainerKind::from_id);
-        let cb = c_new[ni].and_then(ContainerKind::from_id);
-        if !ContainerKind::is_compatible_with(ca, cb) {
-            return false;
-        }
-        if is_subword_token(ot[oi]) {
-            let la = oi > 0
-                && line_a[oi - 1] == line_a[oi]
-                && is_subword_token(ot[oi - 1])
-                && are_contiguous_subwords(ot[oi - 1], ot[oi]);
-            let ra = oi + 1 < ot.len()
-                && line_a[oi + 1] == line_a[oi]
-                && is_subword_token(ot[oi + 1])
-                && are_contiguous_subwords(ot[oi], ot[oi + 1]);
-            let lb = ni > 0
-                && line_b[ni - 1] == line_b[ni]
-                && is_subword_token(nt[ni - 1])
-                && are_contiguous_subwords(nt[ni - 1], nt[ni]);
-            let rb = ni + 1 < nt.len()
-                && line_b[ni + 1] == line_b[ni]
-                && is_subword_token(nt[ni + 1])
-                && are_contiguous_subwords(nt[ni], nt[ni + 1]);
-            if (la != lb || ra != rb) && (d_old[oi] != d_new[ni] || ca != cb) {
-                return false;
-            }
-        }
-        true
-    });
+    filter_container_and_subword_pairs(
+        &mut pairs,
+        &TokenContainerContext {
+            tokens: &ot,
+            containers: &c_old,
+            depths: &d_old,
+            lines: Some(&line_a),
+        },
+        &TokenContainerContext {
+            tokens: &nt,
+            containers: &c_new,
+            depths: &d_new,
+            lines: Some(&line_b),
+        },
+    );
 
     Some(MultiLineAlignment { old, new, pairs })
 }
@@ -298,38 +283,19 @@ fn solve_anchored_2d(
     let mut b_prev = 0usize;
 
     for (anchor_idx, &(ai, bi)) in anchors.iter().enumerate() {
-        let mut back_a = ai;
-        let mut back_b = bi;
-        while back_a > a_prev
-            && back_b > b_prev
-            && line_a[back_a - 1] == line_a[back_a]
-            && line_b[back_b - 1] == line_b[back_b]
-            && is_subword_token(ot[back_a - 1])
-            && is_subword_token(nt[back_b - 1])
-            && ot[back_a - 1] == nt[back_b - 1]
-        {
-            back_a -= 1;
-            back_b -= 1;
-        }
-
-        let (next_limit_a, next_limit_b) = anchors
+        let next_bounds = anchors
             .get(anchor_idx + 1)
             .copied()
             .unwrap_or((ot.len(), nt.len()));
-
-        let mut fwd_a = ai;
-        let mut fwd_b = bi;
-        while fwd_a + 1 < next_limit_a
-            && fwd_b + 1 < next_limit_b
-            && line_a[fwd_a + 1] == line_a[fwd_a]
-            && line_b[fwd_b + 1] == line_b[fwd_b]
-            && are_contiguous_subwords(ot[fwd_a], ot[fwd_a + 1])
-            && are_contiguous_subwords(nt[fwd_b], nt[fwd_b + 1])
-            && ot[fwd_a + 1] == nt[fwd_b + 1]
-        {
-            fwd_a += 1;
-            fwd_b += 1;
-        }
+        let ((back_a, fwd_a), (back_b, fwd_b)) = expand_anchor_span(
+            ot,
+            nt,
+            Some(line_a),
+            Some(line_b),
+            (ai, bi),
+            (a_prev, b_prev),
+            next_bounds,
+        );
 
         if back_a > a_prev && back_b > b_prev {
             for (si, sj) in run_gap(

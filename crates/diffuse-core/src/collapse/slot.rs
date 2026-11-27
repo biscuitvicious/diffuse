@@ -13,6 +13,7 @@ use crate::{
     },
     merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
+    tape::spans::{LeadingIndentSplit, split_leading_indent},
 };
 
 /// One styled run of a slot's text: a kind plus its exact source text.
@@ -809,26 +810,23 @@ fn merge_2d_mod_slot(old_pieces: &[ProjectedPiece<'_>], new_pieces: &[ProjectedP
                 is_leading_ws: true,
                 ..
             }) = new_gap.first().copied()
+            && let Some(split) = split_leading_indent(d_ws, a_ws)
         {
-            if d_ws == a_ws {
-                push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, a_ws, None);
-                old_gap = &old_gap[1..];
-                new_gap = &new_gap[1..];
-            } else if d_ws.len() < a_ws.len()
-                && let Some(add_prefix) = a_ws.strip_suffix(d_ws)
-            {
-                push_projected_run(&mut out, &mut last_phrase, RunKind::Add, add_prefix, None);
-                push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, d_ws, None);
-                old_gap = &old_gap[1..];
-                new_gap = &new_gap[1..];
-            } else if d_ws.len() > a_ws.len()
-                && let Some(del_prefix) = d_ws.strip_suffix(a_ws)
-            {
-                push_projected_run(&mut out, &mut last_phrase, RunKind::Del, del_prefix, None);
-                push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, a_ws, None);
-                old_gap = &old_gap[1..];
-                new_gap = &new_gap[1..];
+            match split {
+                LeadingIndentSplit::Same(shared) => {
+                    push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, shared, None);
+                }
+                LeadingIndentSplit::Indented { added, shared } => {
+                    push_projected_run(&mut out, &mut last_phrase, RunKind::Add, added, None);
+                    push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, shared, None);
+                }
+                LeadingIndentSplit::Dedented { removed, shared } => {
+                    push_projected_run(&mut out, &mut last_phrase, RunKind::Del, removed, None);
+                    push_projected_run(&mut out, &mut last_phrase, RunKind::Ctx, shared, None);
+                }
             }
+            old_gap = &old_gap[1..];
+            new_gap = &new_gap[1..];
         }
 
         for &piece in old_gap {

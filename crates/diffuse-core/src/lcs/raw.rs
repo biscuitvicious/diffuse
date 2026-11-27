@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     arena::{LcsScratchArena, Weights},
+    pairs::subword_neighbor_flags,
     tokenizer::{
         are_contiguous_subwords, char_len, is_subword_token, token_is_alnum, token_is_ws,
         token_ws_kind, tokens_can_match,
@@ -318,20 +319,9 @@ fn raw_lcs_dp(
 
                 let is_subword = is_subword_token(a[i]);
                 let (la, ra, lb, rb) = if is_subword {
-                    (
-                        same_line_prev_a
-                            && is_subword_token(a[i - 1])
-                            && are_contiguous_subwords(a[i - 1], a[i]),
-                        same_line_next_a
-                            && is_subword_token(a[i + 1])
-                            && are_contiguous_subwords(a[i], a[i + 1]),
-                        same_line_prev_b
-                            && is_subword_token(b[j - 1])
-                            && are_contiguous_subwords(b[j - 1], b[j]),
-                        same_line_next_b
-                            && is_subword_token(b[j + 1])
-                            && are_contiguous_subwords(b[j], b[j + 1]),
-                    )
+                    let (la, ra) = subword_neighbor_flags(a, i, same_line_prev_a, same_line_next_a);
+                    let (lb, rb) = subword_neighbor_flags(b, j, same_line_prev_b, same_line_next_b);
+                    (la, ra, lb, rb)
                 } else {
                     (false, false, false, false)
                 };

@@ -9,6 +9,45 @@ use crate::{
     tape::{AlignmentTape, TapeChunk},
 };
 
+/// Alignment between two leading-indentation whitespace runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LeadingIndentSplit<'a> {
+    /// Identical leading indentation on both lines.
+    Same(&'a str),
+    /// New line indented further, sharing `shared` as a trailing suffix.
+    Indented { added: &'a str, shared: &'a str },
+    /// New line dedented, sharing `shared` as a trailing suffix of `old_ws`.
+    Dedented { removed: &'a str, shared: &'a str },
+}
+
+/// Splits two leading-indentation runs into their common trailing suffix and
+/// any added or removed prefix, returning `None` when neither is a suffix of
+/// the other (for example mixed tabs and spaces).
+pub(crate) fn split_leading_indent<'a>(
+    old_ws: &'a str,
+    new_ws: &'a str,
+) -> Option<LeadingIndentSplit<'a>> {
+    if old_ws == new_ws {
+        Some(LeadingIndentSplit::Same(new_ws))
+    } else if old_ws.len() < new_ws.len()
+        && let Some(added) = new_ws.strip_suffix(old_ws)
+    {
+        Some(LeadingIndentSplit::Indented {
+            added,
+            shared: &new_ws[added.len()..],
+        })
+    } else if old_ws.len() > new_ws.len()
+        && let Some(removed) = old_ws.strip_suffix(new_ws)
+    {
+        Some(LeadingIndentSplit::Dedented {
+            removed,
+            shared: new_ws,
+        })
+    } else {
+        None
+    }
+}
+
 #[inline]
 fn is_ws_char(c: char) -> bool {
     c.is_whitespace() || c == '\u{200b}'
@@ -47,82 +86,53 @@ impl<'a> AlignmentTape<'a> {
                 if is_leading {
                     let d_ws_len = d.len() - d.trim_start().len();
                     let a_ws_len = a.len() - a.trim_start().len();
-                    if d_ws_len > 0 && a_ws_len > 0 {
-                        let d_ws = &d[..d_ws_len];
-                        let a_ws = &a[..a_ws_len];
-                        if d_ws.len() < a_ws.len()
-                            && let Some(add_prefix) = a_ws.strip_suffix(d_ws)
-                        {
-                            runs.push(Run {
-                                kind: RunKind::Add,
-                                text: add_prefix,
-                            });
-                            runs.push(Run {
-                                kind: RunKind::Ctx,
-                                text: &a_ws[add_prefix.len()..],
-                            });
-                            if d_ws_len < d.len() {
+                    if d_ws_len > 0
+                        && a_ws_len > 0
+                        && let Some(split) = split_leading_indent(&d[..d_ws_len], &a[..a_ws_len])
+                    {
+                        match split {
+                            LeadingIndentSplit::Same(shared) => {
                                 runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: &d[d_ws_len..],
+                                    kind: RunKind::Ctx,
+                                    text: shared,
                                 });
                             }
-                            if a_ws_len < a.len() {
+                            LeadingIndentSplit::Indented { added, shared } => {
                                 runs.push(Run {
                                     kind: RunKind::Add,
-                                    text: &a[a_ws_len..],
+                                    text: added,
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Ctx,
+                                    text: shared,
                                 });
                             }
-                            is_leading = false;
-                            idx += 2;
-                            continue;
-                        } else if d_ws.len() > a_ws.len()
-                            && let Some(del_prefix) = d_ws.strip_suffix(a_ws)
-                        {
+                            LeadingIndentSplit::Dedented { removed, shared } => {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: removed,
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Ctx,
+                                    text: shared,
+                                });
+                            }
+                        }
+                        if d_ws_len < d.len() {
                             runs.push(Run {
                                 kind: RunKind::Del,
-                                text: del_prefix,
+                                text: &d[d_ws_len..],
                             });
-                            runs.push(Run {
-                                kind: RunKind::Ctx,
-                                text: a_ws,
-                            });
-                            if d_ws_len < d.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: &d[d_ws_len..],
-                                });
-                            }
-                            if a_ws_len < a.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Add,
-                                    text: &a[a_ws_len..],
-                                });
-                            }
-                            is_leading = false;
-                            idx += 2;
-                            continue;
-                        } else if d_ws == a_ws {
-                            runs.push(Run {
-                                kind: RunKind::Ctx,
-                                text: a_ws,
-                            });
-                            if d_ws_len < d.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: &d[d_ws_len..],
-                                });
-                            }
-                            if a_ws_len < a.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Add,
-                                    text: &a[a_ws_len..],
-                                });
-                            }
-                            is_leading = false;
-                            idx += 2;
-                            continue;
                         }
+                        if a_ws_len < a.len() {
+                            runs.push(Run {
+                                kind: RunKind::Add,
+                                text: &a[a_ws_len..],
+                            });
+                        }
+                        is_leading = false;
+                        idx += 2;
+                        continue;
                     }
                 } else if all_ws(d) && all_ws(a) {
                     // Non-leading whitespace: shared prefix is common
