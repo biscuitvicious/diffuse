@@ -12,6 +12,7 @@ pub mod lattice;
 pub mod normalize;
 pub mod peer;
 pub mod project;
+pub mod prose;
 pub mod reflow;
 pub mod relocate;
 pub mod residual;

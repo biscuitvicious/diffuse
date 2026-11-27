@@ -2359,6 +2359,150 @@ fn test_scrollbar_grab_drag_dispatch_hunk_2_not_collapsed() {
     let _applied = diffuse::core::apply::apply_hunk_rows(&[reconstructed_hunk], &old_vec);
 }
 
+/// Step 3 specification test: comment/code parity in Step 4 and Stage 1/2 prose
+/// cross-slot relocation hygiene suppress bare-punctuation, stopword, mixed
+/// comment/code, and lone mid-sentence noun relocations across golden corpora
+/// while preserving fenced Markdown code blocks and genuine boundary wraps.
+#[test]
+fn test_prose_relocation_hygiene_and_comment_code_parity_across_goldens() {
+    if !is_golden_initialized() {
+        return;
+    }
+
+    let run_corpus = |name: &str| {
+        let fixture = load_fixture(name);
+        diffuse::core::pipeline::run_pipeline_arc(
+            Arc::clone(&fixture.diff),
+            (!fixture.new_content.is_empty()).then(|| fixture.new_content.clone()),
+            (!fixture.old_content.is_empty()).then(|| fixture.old_content.clone()),
+            diffuse::core::pipeline::PipelineOptions::default(),
+        )
+    };
+    fn find_row<'a>(
+        out: &'a PipelineOutput,
+        path: &str,
+        old_line: Option<u32>,
+        new_line: Option<u32>,
+    ) -> Option<&'a diffuse::core::wire::OutputRow> {
+        let file = out.files.iter().find(|f| f.path == path)?;
+        file.hunks.iter().flat_map(|h| &h.rows).find(|r| {
+            old_line.is_none_or(|ol| r.old_line == Some(ol))
+                && new_line.is_none_or(|nl| r.new_line == Some(nl))
+        })
+    }
+
+    // 1. Comment/code parity (`review-notes`): comment row 307/311 must not
+    //    absorb deleted code line 308 (`let last_line_hash =
+    //    hash_line_content...`).
+    let review_notes = run_corpus("review-notes");
+    let r307 = find_row(
+        &review_notes,
+        "crates/diffuse-tui/src/app/notes/tests.rs",
+        Some(307),
+        Some(311),
+    )
+    .expect("review-notes 307/311");
+    assert!(
+        r307.group.is_none(),
+        "comment line 307/311 must not form a peer group with code del 308: {r307:?}"
+    );
+
+    // 2. Bare punctuation in prose/comments must not relocate
+    //    (`diffuse-2026-08` `.`, `rust-lifetime-char` `).`,
+    //    `theme-light-toggle` `).`).
+    let diffuse_2026 = run_corpus("diffuse-2026-08");
+    let r83 = find_row(&diffuse_2026, "AGENTS.md", Some(83), Some(106))
+        .expect("diffuse-2026-08 AGENTS.md 83/106");
+    assert!(
+        r83.group.is_none(),
+        "bare `.` must not form a peer group in AGENTS.md:83/106: {r83:?}"
+    );
+    let r91 = find_row(&diffuse_2026, "README.md", Some(91), Some(97))
+        .expect("diffuse-2026-08 README.md 91/97");
+    assert!(
+        r91.group.is_none(),
+        "lone mid-sentence `golden` must not form a peer group in README.md:91/97: {r91:?}"
+    );
+
+    let rust_lt = run_corpus("rust-lifetime-char");
+    let r442 = find_row(
+        &rust_lt,
+        "crates/diffuse-core/src/cluster/render.rs",
+        Some(442),
+        Some(412),
+    )
+    .expect("rust-lifetime-char render.rs 442/412");
+    assert!(
+        r442.group.is_none(),
+        "bare `).` must not form a peer group in render.rs:442/412: {r442:?}"
+    );
+
+    let theme_toggle = run_corpus("theme-light-toggle");
+    let r267 = find_row(
+        &theme_toggle,
+        "crates/diffuse-render/src/theme.rs",
+        Some(267),
+        Some(273),
+    )
+    .expect("theme-light-toggle theme.rs 267/273");
+    assert!(
+        r267.group.is_none(),
+        "bare `).` must not form a peer group in theme.rs:267/273: {r267:?}"
+    );
+
+    // 3. Lone mid-sentence noun (`scrollbar-grab-drag` `thumb` on deleted line
+    //    291) must not relocate onto line 359.
+    let sb = run_corpus("scrollbar-grab-drag");
+    let r291 = find_row(
+        &sb,
+        "crates/diffuse-tui/src/app/geometry.rs",
+        Some(291),
+        None,
+    )
+    .expect("scrollbar-grab-drag geometry.rs 291");
+    assert!(
+        !r291
+            .runs
+            .iter()
+            .any(|run| run.kind == diffuse::core::merge::RunKind::MovedSrc),
+        "deleted comment line 291 must not donate lone mid-sentence `thumb`: {r291:?}"
+    );
+
+    // 4. Positive guards: fenced Rust code block in Markdown
+    //    (`diffuse-history-mid` 52/68) and genuine single-word boundary wrap
+    //    (`diffcoord-anchoring` 1405/1629 `them!)`) must both remain intact.
+    let hist = run_corpus("diffuse-history-mid");
+    let r52 = find_row(&hist, "CODE_STYLE.md", Some(52), Some(68))
+        .expect("diffuse-history-mid CODE_STYLE.md 52/68");
+    assert!(
+        r52.group.is_some(),
+        "fenced Rust code block in Markdown CODE_STYLE.md:52/68 must retain its group: {r52:?}"
+    );
+    let r10 = find_row(&hist, "extension/pi/AGENTS.md", Some(10), Some(9))
+        .expect("diffuse-history-mid extension/pi/AGENTS.md 10/9");
+    assert!(
+        r10.group.is_none(),
+        "stopword-only `and` must not form a peer group in extension/pi/AGENTS.md:10/9: {r10:?}"
+    );
+
+    let diffcoord = run_corpus("diffcoord-anchoring");
+    let r1405 = find_row(
+        &diffcoord,
+        "crates/diffuse-tui/src/app/notes/tests.rs",
+        Some(1405),
+        Some(1629),
+    )
+    .expect("diffcoord-anchoring notes/tests.rs 1405/1629");
+    assert!(
+        r1405
+            .runs
+            .iter()
+            .any(|run| run.kind == diffuse::core::merge::RunKind::MovedSrc
+                && run.text.contains("them")),
+        "genuine boundary wrap `them!)` must remain relocated: {r1405:?}"
+    );
+}
+
 #[test]
 fn test_scrollbar_grab_drag_dispatch_hunk_1_has_no_groups() {
     if !is_golden_initialized() {

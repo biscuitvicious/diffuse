@@ -14,10 +14,13 @@
 use std::ops::Range;
 
 use diffuse_syntax::profile::LangProfile;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    collapse::slot::{Runs, WindowSlot},
+    collapse::{
+        prose::{LineSpan, count_salient_words, is_prose_window, prose_move_allowed},
+        slot::{Runs, WindowSlot},
+    },
     lcs::{
         MultiLineAlignment, MultiLineConfig, Token2D, WindowSlotMap, align_lines_2d,
         line_has_salient_token, token_is_ws,
@@ -65,7 +68,8 @@ pub(crate) fn align_window_2d_tape(
     let kept_pairs = filter_cross_slot_punctuation(&aln, &window, is_single_construct, profile);
     let extended_pairs = extend_cross_slot_phrases(&aln, &window, &kept_pairs);
     let bridged_pairs = bridge_enclosed_cross_slot_spans(&aln, &window, extended_pairs);
-    let (old_matches, new_matches) = assign_phrase_matches(&aln, &window, &bridged_pairs);
+    let clean_pairs = filter_weak_prose_cross_slot_phrases(&aln, &window, bridged_pairs, profile);
+    let (old_matches, new_matches) = assign_phrase_matches(&aln, &window, &clean_pairs);
 
     let mut slot_runs: Vec<Runs> = Vec::with_capacity(window_slots.len());
     for (slot_idx, &slot) in window_slots.iter().enumerate() {
@@ -459,6 +463,99 @@ fn bridge_enclosed_cross_slot_spans(
         bridged.push(pair);
     }
     bridged
+}
+
+/// Demotes weak cross-slot prose/comment matches (bare punctuation, stopwords,
+/// and isolated mid-sentence single words) back to `Del`/`Add` before Stage 2
+/// runs, so spurious single-word hits cannot steal tokens from longer wrapped
+/// phrases or form noisy prose peer groups.
+fn filter_weak_prose_cross_slot_phrases(
+    aln: &MultiLineAlignment<'_>,
+    window: &WindowLines<'_>,
+    pairs: Vec<(usize, usize)>,
+    profile: Option<&LangProfile>,
+) -> Vec<(usize, usize)> {
+    let all_lines = window
+        .old_lines
+        .iter()
+        .chain(window.new_lines.iter())
+        .copied();
+    if !is_prose_window(all_lines, profile) {
+        return pairs;
+    }
+
+    let mut pair_salient_words: FxHashMap<(usize, usize), usize> = FxHashMap::default();
+    let mut spans: Vec<(usize, usize, bool)> = Vec::new();
+    let mut i = 0usize;
+    while i < pairs.len() {
+        let (oi, ni) = pairs[i];
+        let ol = aln.old.tokens[oi].line;
+        let nl = aln.new.tokens[ni].line;
+        let so = window.slot_of_old[ol];
+        let sn = window.slot_of_new[nl];
+        if so == sn {
+            spans.push((i, i + 1, false));
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < pairs.len() {
+            let (po, pn) = pairs[i - 1];
+            let (co, cn) = pairs[i];
+            if co == po + 1
+                && cn == pn + 1
+                && aln.old.tokens[co].line == ol
+                && aln.new.tokens[cn].line == nl
+                && window.slot_of_old[ol] != window.slot_of_new[nl]
+            {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let phrase: String = pairs[start..i]
+            .iter()
+            .map(|&(o, _)| aln.old.tokens[o].text)
+            .collect();
+        *pair_salient_words.entry((so, sn)).or_default() += count_salient_words(&phrase, profile);
+        spans.push((start, i, true));
+    }
+
+    let mut out = Vec::with_capacity(pairs.len());
+    for (start, end, is_cross) in spans {
+        if !is_cross {
+            out.push(pairs[start]);
+            continue;
+        }
+        let run = &pairs[start..end];
+        let first_o = aln.old.tokens[run[0].0];
+        let last_o = aln.old.tokens[run[run.len() - 1].0];
+        let first_n = aln.new.tokens[run[0].1];
+        let last_n = aln.new.tokens[run[run.len() - 1].1];
+        let ol = first_o.line;
+        let nl = first_n.line;
+        let so = window.slot_of_old[ol];
+        let sn = window.slot_of_new[nl];
+        let phrase: String = run.iter().map(|&(o, _)| aln.old.tokens[o].text).collect();
+        let pair_sal = pair_salient_words.get(&(so, sn)).copied().unwrap_or(0);
+        let old_span = LineSpan {
+            line: window.old_lines[ol],
+            slot: so,
+            start: first_o.byte_start,
+            end: last_o.byte_end,
+        };
+        let new_span = LineSpan {
+            line: window.new_lines[nl],
+            slot: sn,
+            start: first_n.byte_start,
+            end: last_n.byte_end,
+        };
+        if prose_move_allowed(&phrase, old_span, new_span, pair_sal, profile) {
+            out.extend_from_slice(run);
+        }
+    }
+    out
 }
 
 /// Assigns identical `phrase_id` to contiguous cross-slot runs adjacent on

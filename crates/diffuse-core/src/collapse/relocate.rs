@@ -11,7 +11,11 @@ use diffuse_algo::dyck::{DelimiterCategory, DelimiterClassifier, UniversalDelimi
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
-    collapse::{slot::Runs, tokens::is_salient_word_match},
+    collapse::{
+        prose::{LineSpan, count_salient_words, is_prose_window, prose_move_allowed},
+        slot::Runs,
+        tokens::is_salient_word_match,
+    },
     lcs::{
         DEFAULT_MAX_SLOT_DISTANCE, line_has_salient_token, merged_runs_for_texts_with_profile,
         token_is_salient, tokenize_line, tokenizer::COMMON_KEYWORDS,
@@ -119,6 +123,7 @@ pub(crate) fn relocate_cross_slot_tokens(
     let mut linked: Vec<(usize, usize)> = Vec::new();
     let mut donors_for_tgt = vec![Vec::<usize>::new(); num_slots];
     let mut exchanges = Vec::<(usize, usize, String)>::new();
+    let prose_win = is_prose_slot_runs(slot_runs, profile);
 
     for token in &salient {
         apply_relocation_candidate(
@@ -130,23 +135,27 @@ pub(crate) fn relocate_cross_slot_tokens(
             token,
             None,
             false,
+            prose_win,
             &mut linked,
             profile,
         );
     }
-    for token in &bare {
-        apply_relocation_candidate(
-            slot_runs,
-            is_moved_slot,
-            is_pure_add,
-            &mut donors_for_tgt,
-            &mut exchanges,
-            token,
-            Some(&linked),
-            true,
-            &mut Vec::new(),
-            profile,
-        );
+    if !prose_win {
+        for token in &bare {
+            apply_relocation_candidate(
+                slot_runs,
+                is_moved_slot,
+                is_pure_add,
+                &mut donors_for_tgt,
+                &mut exchanges,
+                token,
+                Some(&linked),
+                true,
+                false,
+                &mut Vec::new(),
+                profile,
+            );
+        }
     }
 
     // 4. Anti-scavenging coverage floor on pure Add rows:
@@ -824,6 +833,7 @@ fn apply_relocation_candidate(
     token: &str,
     gate: Option<&[(usize, usize)]>,
     allow_bare_lines: bool,
+    prose_win: bool,
     linked: &mut Vec<(usize, usize)>,
     profile: Option<&LangProfile>,
 ) {
@@ -926,6 +936,17 @@ fn apply_relocation_candidate(
                 );
 
                 let matched_text = slot_runs[src][d_run_idx].1[start_d..end_d].to_string();
+                if prose_win
+                    && !prose_stage2_match_allowed(
+                        &matched_text,
+                        (&slot_runs[src], d_run_idx, start_d, src),
+                        (&slot_runs[tgt], a_run_idx, start_a, tgt),
+                        exchanges,
+                        profile,
+                    )
+                {
+                    break;
+                }
 
                 replace_span_in_run(
                     &mut slot_runs[src],
@@ -1077,6 +1098,86 @@ fn replace_span_in_run(
     }
 
     runs.splice(run_idx..=run_idx, new_pieces);
+}
+
+fn is_prose_slot_runs(slot_runs: &[Runs], profile: Option<&LangProfile>) -> bool {
+    let Some(p) = profile else {
+        return false;
+    };
+    let mut lines: Vec<String> = Vec::with_capacity(slot_runs.len() * 2);
+    for runs in slot_runs {
+        lines.push(slot_old_text(runs));
+        lines.push(slot_new_text(runs));
+    }
+    is_prose_window(lines.iter().map(String::as_str), Some(p))
+}
+
+fn prose_stage2_match_allowed(
+    matched_text: &str,
+    src_pos: (&[(RunKind, String)], usize, usize, usize),
+    tgt_pos: (&[(RunKind, String)], usize, usize, usize),
+    exchanges: &[(usize, usize, String)],
+    profile: Option<&LangProfile>,
+) -> bool {
+    let (src_runs, d_run_idx, start_d, src) = src_pos;
+    let (tgt_runs, a_run_idx, start_a, tgt) = tgt_pos;
+
+    let (old_line, o_off) = slot_side_projection_and_offset(
+        src_runs,
+        d_run_idx,
+        [RunKind::Del, RunKind::Ctx, RunKind::MovedSrc],
+    );
+    let (new_line, n_off) = slot_side_projection_and_offset(
+        tgt_runs,
+        a_run_idx,
+        [RunKind::Add, RunKind::Ctx, RunKind::MovedTgt],
+    );
+    let trimmed = matched_text.trim();
+    let trim_lead = matched_text.len() - matched_text.trim_start().len();
+    let trim_end = trim_lead + trimmed.len();
+
+    let prior_sal: usize = exchanges
+        .iter()
+        .filter(|(s, t, _)| *s == src && *t == tgt)
+        .map(|(_, _, text)| count_salient_words(text, profile))
+        .sum();
+    let pair_sal = prior_sal + count_salient_words(trimmed, profile);
+
+    prose_move_allowed(
+        trimmed,
+        LineSpan {
+            line: &old_line,
+            slot: src,
+            start: o_off + start_d + trim_lead,
+            end: o_off + start_d + trim_end,
+        },
+        LineSpan {
+            line: &new_line,
+            slot: tgt,
+            start: n_off + start_a + trim_lead,
+            end: n_off + start_a + trim_end,
+        },
+        pair_sal,
+        profile,
+    )
+}
+
+fn slot_side_projection_and_offset(
+    runs: &[(RunKind, String)],
+    target_run: usize,
+    side: [RunKind; 3],
+) -> (String, usize) {
+    let mut proj = String::new();
+    let mut offset = 0usize;
+    for (idx, (k, text)) in runs.iter().enumerate() {
+        if side.contains(k) {
+            if idx == target_run {
+                offset = proj.len();
+            }
+            proj.push_str(text);
+        }
+    }
+    (proj, offset)
 }
 
 #[cfg(test)]

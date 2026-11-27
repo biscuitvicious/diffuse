@@ -293,6 +293,19 @@ impl<'a> PathSegmenter<'a> {
         if self.old_rows[ao].text().trim() == self.new_rows[an].text().trim() {
             return false;
         }
+        // Comment/code parity: never absorb a code skip into a comment pair or
+        // a comment skip into a code pair (Markdown `#` headings are prose, not
+        // code-vs-comment transitions).
+        if let Some(p) = self.profile
+            && !p.markdown
+        {
+            let head_old_comment = p.is_comment_line(self.old_rows[ao].text());
+            let head_new_comment = p.is_comment_line(self.new_rows[an].text());
+            let skip_comment = p.is_comment_line(self.side_rows(side)[skip].text());
+            if head_old_comment == head_new_comment && skip_comment != head_old_comment {
+                return false;
+            }
+        }
         match side {
             Side::Old => matches_unmatched_tokens(
                 &self.old_tokens[skip],
@@ -1891,6 +1904,40 @@ mod tests {
                 Segment::Del { old: 4 },
                 Segment::Del { old: 5 },
             ]
+        );
+    }
+
+    /// Comment/code parity in Step 4 blocks both directions (code head must not
+    /// absorb a comment skip; comment head must not absorb a code skip) while
+    /// leaving Markdown `#` headings exempt because they are prose.
+    #[test]
+    fn step4_comment_code_parity_blocks_cross_boundary_skips_and_exempts_markdown() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let md = diffuse_syntax::registry::lang_profile("md");
+
+        // Code head must not absorb an adjacent comment skip sharing
+        // `widget_id`.
+        let old_code = ["let alpha = build_alpha();", "// mention widget_id here"];
+        let new_code = ["let alpha = build_alpha(widget_id);"];
+        assert_eq!(
+            segment_with_profile(
+                &old_code,
+                &new_code,
+                &[PathStep::Diag, PathStep::DropOld],
+                rs
+            ),
+            vec![Segment::Pair { old: 0, new: 0 }, Segment::Del { old: 1 }]
+        );
+
+        // Markdown `#` heading is prose, not a code-vs-comment boundary.
+        let old_md = ["# Section overview", "details about widget_id"];
+        let new_md = ["# Section overview for widget_id"];
+        assert_eq!(
+            segment_with_profile(&old_md, &new_md, &[PathStep::Diag, PathStep::DropOld], md),
+            vec![Segment::Window {
+                old: 0..2,
+                new: 0..1
+            }]
         );
     }
 }

@@ -600,21 +600,37 @@ impl LangProfile {
         self.import_prefixes.iter().any(|&pf| t.starts_with(pf))
     }
 
-    /// Whether a line starts a comment in this language.
-    pub fn is_comment_line(&self, line: &str) -> bool {
-        let t = line.trim();
-        if self.line_comment
-            && (t.starts_with("//") || t.starts_with("///") || t.starts_with("//!"))
-        {
-            return true;
+    /// Returns the leading comment marker (`///`, `//!`, `//`, `/*`, `*`, `#`)
+    /// for `line` when recognized by this language profile, or `None`
+    /// otherwise.
+    ///
+    /// Canonical single source of truth for comment-line detection shared by
+    /// [`Self::is_comment_line`] and prose/comment reflow hygiene.
+    pub fn leading_comment_prefix(&self, line: &str) -> Option<&'static str> {
+        let t = line.trim_start();
+        if self.line_comment {
+            for marker in ["///", "//!", "//"] {
+                if t.starts_with(marker) {
+                    return Some(marker);
+                }
+            }
         }
-        if self.block_comment && (t.starts_with("/*") || t.starts_with('*')) {
-            return true;
+        if self.block_comment {
+            for marker in ["/*", "*"] {
+                if t.starts_with(marker) {
+                    return Some(marker);
+                }
+            }
         }
         if self.hash_comment && t.starts_with('#') {
-            return true;
+            return Some("#");
         }
-        false
+        None
+    }
+
+    /// Whether a line starts a comment in this language.
+    pub fn is_comment_line(&self, line: &str) -> bool {
+        self.leading_comment_prefix(line).is_some()
     }
 
     /// Whether a line is a doc comment line (`///` or `//!` in Rust).
