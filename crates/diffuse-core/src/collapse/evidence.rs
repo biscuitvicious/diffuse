@@ -18,7 +18,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     collapse::{
         frame::robust_delim_delta,
-        residual::{are_roles_compatible, declaration_role, has_verbatim_rival},
+        residual::{declaration_role, has_verbatim_rival},
     },
     lcs::{
         for_each_token, is_affix_pair, is_token_salient_in_context, line_has_salient_token,
@@ -74,6 +74,14 @@ const MIN_MATCHED_SALIENT_CHARS: usize = 4;
 /// Floor on the matched fraction of the smaller side. A pair must explain at
 /// least this much of the line it is replacing to count as a modification.
 const MIN_MATCHED_SALIENT_RATIO: f64 = 0.30;
+/// Floor on surviving non-whitespace context relative to the larger side for a
+/// multi-island (`>= 2` edit spans) modification without an agreeing field or
+/// assignment key.
+const MIN_MULTI_ISLAND_LARGER_RATIO: f64 = 0.25;
+/// Companion floor relative to the smaller side so genuine 1-to-N expansion
+/// heads (which cover a large fraction of the shorter line despite being a
+/// small fraction of the longer one) are preserved.
+const MIN_MULTI_ISLAND_SMALLER_RATIO: f64 = 0.45;
 
 /// Precomputed per-row metadata shared across all candidate pairs scored in a
 /// cluster so tokenization, salient checks, delimiter deltas, and snapshot
@@ -86,7 +94,6 @@ pub(crate) struct PreparedRow<'a> {
     is_comment: bool,
     has_alnum: bool,
     has_salient: bool,
-    decl_role: Option<&'static str>,
     has_rival: bool,
     pub(crate) head: Option<&'a str>,
     pub(crate) assignment: Option<&'a str>,
@@ -106,14 +113,10 @@ impl<'a> PreparedRow<'a> {
         profile: Option<&LangProfile>,
     ) -> Self {
         let trimmed = text.trim();
-        let decl_role = if trimmed.is_empty() {
-            None
-        } else {
-            declaration_role(trimmed)
-        };
-        let has_rival =
-            decl_role.is_some() && opposite_trimmed.is_some_and(|set| set.contains(trimmed));
-        Self::build(text, trimmed, decl_role, has_rival, profile)
+        let has_rival = !trimmed.is_empty()
+            && declaration_role(trimmed).is_some()
+            && opposite_trimmed.is_some_and(|set| set.contains(trimmed));
+        Self::build(text, trimmed, has_rival, profile)
     }
 
     fn from_single_text(
@@ -122,19 +125,15 @@ impl<'a> PreparedRow<'a> {
         profile: Option<&LangProfile>,
     ) -> Self {
         let trimmed = text.trim();
-        let decl_role = if trimmed.is_empty() {
-            None
-        } else {
-            declaration_role(trimmed)
-        };
-        let has_rival = decl_role.is_some() && has_verbatim_rival(trimmed, opposite_content);
-        Self::build(text, trimmed, decl_role, has_rival, profile)
+        let has_rival = !trimmed.is_empty()
+            && declaration_role(trimmed).is_some()
+            && has_verbatim_rival(trimmed, opposite_content);
+        Self::build(text, trimmed, has_rival, profile)
     }
 
     fn build(
         text: &'a str,
         trimmed: &'a str,
-        decl_role: Option<&'static str>,
         has_rival: bool,
         profile: Option<&LangProfile>,
     ) -> Self {
@@ -147,7 +146,6 @@ impl<'a> PreparedRow<'a> {
                 is_comment: false,
                 has_alnum: false,
                 has_salient: false,
-                decl_role: None,
                 has_rival: false,
                 head: None,
                 assignment: None,
@@ -183,7 +181,6 @@ impl<'a> PreparedRow<'a> {
             is_comment: is_comment(text, profile),
             has_alnum: trimmed.chars().any(char::is_alphanumeric),
             has_salient: line_has_salient_token(text, profile),
-            decl_role,
             has_rival,
             head: first_word(trimmed).filter(|w| is_statement_head_keyword(w, profile)),
             assignment: assignment_target(trimmed),
@@ -260,26 +257,24 @@ pub(crate) fn pair_evidence_prepared(
     // content covering the minimum fraction of the smaller side. Checking this
     // on precomputed token tables skips building an alignment tape for most
     // unrelated candidate pairs.
-    if !head_link && u.has_salient && v.has_salient {
-        let min_salient = u.salient_chars.min(v.salient_chars);
-        if min_salient > 0 {
-            let (smaller, larger) = if u.salient_counts.len() <= v.salient_counts.len() {
-                (&u.salient_counts, &v.salient_counts)
-            } else {
-                (&v.salient_counts, &u.salient_counts)
-            };
-            let matched_salient: usize = smaller
-                .iter()
-                .filter_map(|(&token, &(count_a, len))| {
-                    let &(count_b, _) = larger.get(token)?;
-                    Some(count_a.min(count_b) * len)
-                })
-                .sum();
-            if matched_salient < MIN_MATCHED_SALIENT_CHARS
-                || (matched_salient as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO
-            {
-                return None;
-            }
+    let min_salient = u.salient_chars.min(v.salient_chars);
+    if !head_link && u.has_salient && v.has_salient && min_salient > 0 {
+        let (smaller, larger) = if u.salient_counts.len() <= v.salient_counts.len() {
+            (&u.salient_counts, &v.salient_counts)
+        } else {
+            (&v.salient_counts, &u.salient_counts)
+        };
+        let matched_salient: usize = smaller
+            .iter()
+            .filter_map(|(&token, &(count_a, len))| {
+                let &(count_b, _) = larger.get(token)?;
+                Some(count_a.min(count_b) * len)
+            })
+            .sum();
+        if matched_salient < MIN_MATCHED_SALIENT_CHARS
+            || (matched_salient as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO
+        {
+            return None;
         }
     }
 
@@ -303,8 +298,6 @@ pub(crate) fn pair_evidence_prepared(
         || (v.trimmed.len() > u.trimmed.len()
             && u.has_salient
             && (v.trimmed.starts_with(u.trimmed) || v.trimmed.ends_with(u.trimmed)));
-    let decl_compat = matches!((u.decl_role, v.decl_role), (Some(ur), Some(vr))
-        if are_roles_compatible(ur, vr) && u.trimmed.ends_with('{') == v.trimmed.ends_with('{'));
     if !(shared_affix
         || admissible_from_runs_prechecked(
             u.text,
@@ -314,8 +307,7 @@ pub(crate) fn pair_evidence_prepared(
             v.has_salient,
             runs_have_salient_ctx,
             profile,
-        )
-        || decl_compat)
+        ))
     {
         return None;
     }
@@ -352,6 +344,47 @@ pub(crate) fn pair_evidence_prepared(
         && u.has_salient
         && v.has_salient
         && profile.is_some_and(|p| !p.continuation_prefixes.is_empty());
+
+    // Post-tape salient coverage & multi-island fragmentation gate:
+    // 1. Re-enforce the salient floor on surviving `Ctx` runs (catching cases
+    //    where the pre-tape bag matched subwords that the alignment tape
+    //    refused to align across unrelated compound identifiers).
+    // 2. Reject multi-island (`>= 2` edit spans) replacements without an
+    //    agreeing field/assignment key when surviving anchors are overwhelmed
+    //    by edits (preferring clean `Del` + `Add` over fragmented confetti).
+    if u.has_salient
+        && v.has_salient
+        && min_salient > 0
+        && !affix
+        && block_head_stem.is_none()
+        && !is_chain_head
+    {
+        let ctx_sal = ctx_salient_chars(&runs, profile);
+        let min_sal_floor = MIN_MATCHED_SALIENT_CHARS.min(min_salient);
+        if !head_link
+            && (ctx_sal < min_sal_floor
+                || (ctx_sal as f64 / min_salient as f64) < MIN_MATCHED_SALIENT_RATIO)
+        {
+            return None;
+        }
+        // Even with an agreeing statement-head keyword (`if`, `for`, `fn`,
+        // `let`), a line with zero surviving salient context whose matched
+        // scaffolding cannot even cover its own unmatched penalty
+        // (`raw_content <= 0`) is an unrelated statement replacement rather
+        // than an edit.
+        if !key_agrees && ctx_sal == 0 && raw_content <= 0 {
+            return None;
+        }
+        if !key_agrees && count_edit_islands(&runs) >= 2 {
+            let nws_ctx = matched_non_ws_chars(&runs);
+            let low_coverage = (nws_ctx as f64 / larger.max(1) as f64)
+                < MIN_MULTI_ISLAND_LARGER_RATIO
+                && (nws_ctx as f64 / smaller.max(1) as f64) < MIN_MULTI_ISLAND_SMALLER_RATIO;
+            if ctx_sal < min_sal_floor || low_coverage {
+                return None;
+            }
+        }
+    }
 
     // A headless wrapper stub (e.g. `assert_eq!(` or `Some(` against a full
     // statement) that leaves more of the line unexplained than its own content
@@ -566,6 +599,51 @@ fn matched_chars(runs: &[Run<'_>]) -> usize {
 fn has_salient_ctx(runs: &[Run<'_>], profile: Option<&LangProfile>) -> bool {
     runs.iter()
         .any(|run| run.kind == RunKind::Ctx && line_has_salient_token(run.text, profile))
+}
+
+/// Counts salient token characters surviving inside `Ctx` runs of an alignment
+/// tape, using the same tokenization and context-aware salience rules as
+/// [`PreparedRow`].
+fn ctx_salient_chars(runs: &[Run<'_>], profile: Option<&LangProfile>) -> usize {
+    let mut total = 0usize;
+    for run in runs {
+        if run.kind != RunKind::Ctx {
+            continue;
+        }
+        let tokens: Vec<&str> = tokenize_line(run.text).collect();
+        for (i, &tok) in tokens.iter().enumerate() {
+            if is_token_salient_in_context(&tokens, i, profile) {
+                total += tok.chars().count();
+            }
+        }
+    }
+    total
+}
+
+/// Counts non-whitespace characters surviving in `Ctx` runs.
+fn matched_non_ws_chars(runs: &[Run<'_>]) -> usize {
+    runs.iter()
+        .filter(|run| run.kind == RunKind::Ctx)
+        .map(|run| run.text.chars().filter(|c| !c.is_whitespace()).count())
+        .sum()
+}
+
+/// Counts maximal contiguous non-`Ctx` edit regions separated by non-whitespace
+/// `Ctx` anchors.
+fn count_edit_islands(runs: &[Run<'_>]) -> usize {
+    let mut islands = 0usize;
+    let mut in_edit = false;
+    for run in runs {
+        if run.kind == RunKind::Ctx {
+            if !run.text.trim().is_empty() {
+                in_edit = false;
+            }
+        } else if !in_edit {
+            islands += 1;
+            in_edit = true;
+        }
+    }
+    islands
 }
 
 #[cfg(test)]
@@ -822,5 +900,104 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    #[test]
+    fn post_tape_salient_floor_rejects_weak_surviving_anchors() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // Pre-tape bag matches `"scroll"`, but the alignment tape rejects it
+        // across different method names, leaving only 1-char `"n"` in Ctx.
+        assert_eq!(
+            pair_evidence(
+                "                self.scroll_to_visual(self.scroll + n);",
+                "                self.on_mouse_scroll(false, n, row, col);",
+                None,
+                None,
+                rs,
+            ),
+            None
+        );
+        // Same method rename WITH shared salient argument stays paired.
+        assert!(
+            pair_evidence(
+                "                self.scroll_to_visual(target_vis);",
+                "                self.on_mouse_scroll(target_vis);",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
+        // Compound-identifier rename with strong surviving subword Ctx stays
+        // paired.
+        assert!(
+            pair_evidence(
+                "        line_hash: n.line_hash,",
+                "        content_hash: n.content_hash,",
+                None,
+                None,
+                rs,
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn multi_island_fragmentation_and_decl_compat_reject_confetti_while_preserving_valid_edits() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        // Unrelated declarations and fragmented multi-island replacements
+        // split.
+        for (old, new) in [
+            (
+                "        let top = stack.pop();",
+                "        let mut out = vec![0u8; items.len()];",
+            ),
+            (
+                "pub fn note_anchors_cleanly(note: &ReviewNote, line_content: &str) -> bool {",
+                "pub fn label(self) -> String {",
+            ),
+            (
+                "fn wholesale_pairs_render_as_baseline_rows() {",
+                "fn subword_diff_token_spans() {",
+            ),
+            (
+                "    let thumb_row = header_offset + vh / 2;",
+                "    let (thumb_off, _) = AppState::scrollbar_thumb_for(track_h, vh, total, scrolled, header_vis)",
+            ),
+            (
+                "        if m.start() > last {",
+                "        if is_ws_char(c) {",
+            ),
+        ] {
+            assert_eq!(
+                pair_evidence(old, new, None, None, rs),
+                None,
+                "expected split for ({old:?}, {new:?})"
+            );
+        }
+
+        // Valid edits remain paired: short 3-char identifier (`min_salient`
+        // clamp), 1-to-N expansion head (`smaller` ratio protection), shared
+        // field key (`key_agrees`), and single-island control-flow swap.
+        for (old, new) in [
+            ("impl Run {", "impl<'a> Run<'a> {"),
+            (
+                "    while share < dch.len() && share < ach.len() && dch[share] == ach[share] {",
+                "    while share < d_bytes.len()",
+            ),
+            (
+                "        location: NoteLocation::line(side_val, start_line, end_line),",
+                "        location: provisional_location,",
+            ),
+            (
+                "        if scrollbar_seek {",
+                "        if is_on_scrollbar {",
+            ),
+        ] {
+            assert!(
+                pair_evidence(old, new, None, None, rs).is_some(),
+                "expected pair for ({old:?}, {new:?})"
+            );
+        }
     }
 }

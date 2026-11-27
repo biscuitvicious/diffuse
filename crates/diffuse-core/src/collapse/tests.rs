@@ -2707,8 +2707,8 @@ fn test_grouped_delimiter_run_with_whitespace_variation() {
 }
 
 #[test]
-fn test_residual_declaration_roles_and_compatibility() {
-    use super::residual::{are_roles_compatible, declaration_role, has_verbatim_rival};
+fn test_residual_declaration_roles_and_rivals() {
+    use super::residual::{declaration_role, has_verbatim_rival};
 
     // Declarations
     assert_eq!(declaration_role("pub struct Foo {"), Some("struct"));
@@ -2724,14 +2724,6 @@ fn test_residual_declaration_roles_and_compatibility() {
     );
     assert_eq!(declaration_role("let x = 1;"), None);
     assert_eq!(declaration_role(""), None);
-
-    // Compatibility
-    assert!(are_roles_compatible("struct", "struct"));
-    assert!(are_roles_compatible("struct", "enum"));
-    assert!(are_roles_compatible("interface", "type"));
-    assert!(are_roles_compatible("const", "static"));
-    assert!(!are_roles_compatible("struct", "fn"));
-    assert!(!are_roles_compatible("fn", "const"));
 
     // Verbatim rivals
     let snapshot = ["    pub enum Side {", "    fn run() {}"];

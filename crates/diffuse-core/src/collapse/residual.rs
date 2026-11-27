@@ -35,25 +35,6 @@ pub(crate) fn declaration_role(line: &str) -> Option<&'static str> {
     }
 }
 
-/// Checks whether two declaration roles are semantically compatible for
-/// refactoring.
-pub(crate) fn are_roles_compatible(role1: &str, role2: &str) -> bool {
-    if role1 == role2 {
-        return true;
-    }
-    let is_type_decl = |r: &str| {
-        matches!(
-            r,
-            "struct" | "enum" | "union" | "trait" | "interface" | "type" | "class"
-        )
-    };
-    if is_type_decl(role1) && is_type_decl(role2) {
-        return true;
-    }
-    let is_var_decl = |r: &str| matches!(r, "const" | "static");
-    is_var_decl(role1) && is_var_decl(role2)
-}
-
 /// Checks if a trimmed line text appears verbatim anywhere in the snapshot
 /// content.
 pub(crate) fn has_verbatim_rival(text: &str, content: Option<&[&str]>) -> bool {
