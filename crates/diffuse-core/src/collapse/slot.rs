@@ -1,15 +1,19 @@
 //! Closed-economy token typing and window slot layout for peer reflow
 //! formations.
 
+use std::cmp::{Ordering, Reverse};
+
+use diffuse_algo::dyck::{DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier};
 use diffuse_syntax::profile::LangProfile;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     collapse::tokens::is_salient_word_match,
     lcs::{
         DEFAULT_MAX_SLOT_DISTANCE, MultiLineConfig, WindowSlotMap, align_lines_2d,
-        merged_runs_for_texts_with_profile, owned_runs_for_texts_with_profile, token_is_ws,
-        tokenize_line,
+        line_has_salient_token, merged_runs_for_texts_with_profile,
+        owned_runs_for_texts_with_profile, token_is_salient, token_is_ws, tokenize_line,
+        tokenizer::COMMON_KEYWORDS,
     },
     merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
@@ -17,10 +21,72 @@ use crate::{
 };
 
 /// One styled run of a slot's text: a kind plus its exact source text.
-type Runs = Vec<(RunKind, String)>;
+pub(crate) type Runs = Vec<(RunKind, String)>;
 
-/// One aligned slot in a segmented window: `(old_row, new_row)`.
-type SlotPair<'a> = (Option<&'a Row>, Option<&'a Row>);
+/// One aligned slot in a segmented peer-reflow window.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum WindowSlot<'a> {
+    Mod(&'a Row, &'a Row),
+    Del(&'a Row),
+    Add(&'a Row),
+    MovSrc(&'a Row),
+    MovTgt(&'a Row),
+}
+
+impl<'a> WindowSlot<'a> {
+    #[inline]
+    fn from_old(row: &'a Row) -> Self {
+        if matches!(row, Row::MovSrc { .. }) {
+            Self::MovSrc(row)
+        } else {
+            Self::Del(row)
+        }
+    }
+
+    #[inline]
+    fn from_new(row: &'a Row) -> Self {
+        if matches!(row, Row::MovTgt { .. }) {
+            Self::MovTgt(row)
+        } else {
+            Self::Add(row)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_moved(self) -> bool {
+        matches!(self, Self::MovSrc(_) | Self::MovTgt(_))
+    }
+
+    #[inline]
+    pub(crate) fn is_pure_add(self) -> bool {
+        matches!(self, Self::Add(_))
+    }
+
+    #[inline]
+    pub(crate) fn old_row(self) -> Option<&'a Row> {
+        match self {
+            Self::Mod(u, _) | Self::Del(u) | Self::MovSrc(u) => Some(u),
+            Self::Add(_) | Self::MovTgt(_) => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn new_row(self) -> Option<&'a Row> {
+        match self {
+            Self::Mod(_, v) | Self::Add(v) | Self::MovTgt(v) => Some(v),
+            Self::Del(_) | Self::MovSrc(_) => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn cached_moved_runs(self) -> Option<&'a Runs> {
+        match self {
+            Self::MovSrc(Row::MovSrc { cached_runs, .. })
+            | Self::MovTgt(Row::MovTgt { cached_runs, .. }) => Some(cached_runs),
+            _ => None,
+        }
+    }
+}
 
 /// An aligned slot within a peer reflow group.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,7 +146,6 @@ impl PeerGroupRows {
     /// conservation checks and projection, so it renders as Del/Add.
     /// Call before [`Self::assert_token_conservation`].
     pub fn repair_unmatched_moves(&mut self) {
-        use rustc_hash::FxHashMap;
         // Owned keys: the counts must not borrow the runs they retype.
         let mut src_counts: FxHashMap<String, usize> = FxHashMap::default();
         let mut tgt_counts: FxHashMap<String, usize> = FxHashMap::default();
@@ -139,39 +204,39 @@ pub fn type_window(
     pairs: &[(usize, usize)],
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
-    let mut aligned_pairs: Vec<SlotPair<'_>> = Vec::with_capacity(old_rows.len() + new_rows.len());
+    let mut window_slots: Vec<WindowSlot<'_>> = Vec::with_capacity(old_rows.len() + new_rows.len());
     let (mut o, mut n) = (0usize, 0usize);
     let mut pi = 0usize;
     while o < old_rows.len() || n < new_rows.len() {
         if let Some(&(po, pn)) = pairs.get(pi) {
             if (o, n) == (po, pn) {
-                aligned_pairs.push((Some(&old_rows[o]), Some(&new_rows[n])));
+                window_slots.push(WindowSlot::Mod(&old_rows[o], &new_rows[n]));
                 o += 1;
                 n += 1;
                 pi += 1;
                 continue;
             }
             if o < po {
-                aligned_pairs.push((Some(&old_rows[o]), None));
+                window_slots.push(WindowSlot::from_old(&old_rows[o]));
                 o += 1;
                 continue;
             }
             if n < pn {
-                aligned_pairs.push((None, Some(&new_rows[n])));
+                window_slots.push(WindowSlot::from_new(&new_rows[n]));
                 n += 1;
                 continue;
             }
         }
         if o < old_rows.len() {
-            aligned_pairs.push((Some(&old_rows[o]), None));
+            window_slots.push(WindowSlot::from_old(&old_rows[o]));
             o += 1;
         } else {
-            aligned_pairs.push((None, Some(&new_rows[n])));
+            window_slots.push(WindowSlot::from_new(&new_rows[n]));
             n += 1;
         }
     }
-    type_slot_pairs(
-        aligned_pairs,
+    type_window_slots(
+        window_slots,
         group_id,
         old_rows.len(),
         new_rows.len(),
@@ -185,35 +250,29 @@ pub fn type_window(
 /// Slot alignment, not membership, is this function's subject: the caller has
 /// already decided which rows belong together, which is what lets a segmented
 /// window be typed without a second alignment pass over the cluster.
-fn type_slot_pairs(
-    aligned_pairs: Vec<SlotPair<'_>>,
+fn type_window_slots(
+    window_slots: Vec<WindowSlot<'_>>,
     group_id: GroupId,
     n: usize,
     m: usize,
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
-    let total_slots = aligned_pairs.len();
+    let total_slots = window_slots.len();
 
-    let is_moved_slot: Vec<bool> = aligned_pairs
-        .iter()
-        .map(|(old_opt, new_opt)| {
-            old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }))
-                || new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }))
-        })
-        .collect();
+    let is_moved_slot: Vec<bool> = window_slots.iter().map(|s| s.is_moved()).collect();
 
     // 1. Stage 1: unified 2D coordinate-aware multi-line tape for multi-slot
     //    windows (`1 × m`, `n × 1`, and general `n × m`), falling back cleanly
     //    to per-slot alignment on cap overflow or wholesale `Mod` slots.
-    let mut slot_runs: Vec<Vec<(RunKind, String)>> = if total_slots > 1
-        && let Some(runs_2d) = align_window_2d_tape(&aligned_pairs, profile)
+    let mut slot_runs: Vec<Runs> = if total_slots > 1
+        && let Some(runs_2d) = align_window_2d_tape(&window_slots, profile)
     {
         runs_2d
     } else {
         let mut fallback = Vec::with_capacity(total_slots);
-        for (old_opt, new_opt) in &aligned_pairs {
-            match (old_opt, new_opt) {
-                (Some(u), Some(v)) => {
+        for &slot in &window_slots {
+            match slot {
+                WindowSlot::Mod(u, v) => {
                     if u.text() == v.text() {
                         fallback.push(vec![(RunKind::Ctx, u.text().to_string())]);
                     } else {
@@ -224,21 +283,15 @@ fn type_slot_pairs(
                         ));
                     }
                 }
-                (Some(u), None) => {
-                    if let Row::MovSrc { cached_runs, .. } = u {
-                        fallback.push(cached_runs.clone());
-                    } else {
-                        fallback.push(vec![(RunKind::Del, u.text().to_string())]);
-                    }
+                WindowSlot::Del(u) => fallback.push(vec![(RunKind::Del, u.text().to_string())]),
+                WindowSlot::Add(v) => fallback.push(vec![(RunKind::Add, v.text().to_string())]),
+                WindowSlot::MovSrc(_) | WindowSlot::MovTgt(_) => {
+                    fallback.push(
+                        slot.cached_moved_runs()
+                            .expect("moved slot holds MovSrc/MovTgt row")
+                            .clone(),
+                    );
                 }
-                (None, Some(v)) => {
-                    if let Row::MovTgt { cached_runs, .. } = v {
-                        fallback.push(cached_runs.clone());
-                    } else {
-                        fallback.push(vec![(RunKind::Add, v.text().to_string())]);
-                    }
-                }
-                (None, None) => unreachable!(),
             }
         }
         fallback
@@ -247,47 +300,32 @@ fn type_slot_pairs(
     // 2. Stage 2: residual cross-slot relocation for non-monotone / transposed
     //    moves over leftover `Del` and `Add` runs (when `total_slots > 1`).
     if total_slots > 1 {
-        let is_pure_add: Vec<bool> = aligned_pairs
-            .iter()
-            .map(|(old_opt, new_opt)| old_opt.is_none() && new_opt.is_some())
-            .collect();
+        let is_pure_add: Vec<bool> = window_slots.iter().map(|s| s.is_pure_add()).collect();
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
         relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
     // 3. Construct final AlignedSlotRow list
     let mut slots = Vec::with_capacity(total_slots);
-    for (idx, ((old_opt, new_opt), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate() {
-        let spans = if let Some(Row::MovSrc { spans, .. }) = old_opt {
-            spans.clone()
-        } else if let Some(Row::MovTgt { spans, .. }) = new_opt {
-            spans.clone()
-        } else {
-            compute_slot_spans(&runs)
+    for (idx, (slot, runs)) in window_slots.into_iter().zip(slot_runs).enumerate() {
+        let spans = match slot {
+            WindowSlot::MovSrc(Row::MovSrc { spans, .. })
+            | WindowSlot::MovTgt(Row::MovTgt { spans, .. }) => spans.clone(),
+            _ => compute_slot_spans(&runs),
         };
+        let old_opt = slot.old_row();
+        let new_opt = slot.new_row();
         let old_line = old_opt.and_then(Row::old_line);
         let new_line = new_opt.and_then(Row::new_line);
         let old_text = old_opt.map(|r| r.text().to_string());
         let new_text = new_opt.map(|r| r.text().to_string());
-        let is_moved_src = old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }));
-        let is_moved_tgt = new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }));
-        let kind = match (old_line, new_line) {
-            (Some(_), Some(_)) => RowKind::Mod,
-            (Some(_), None) => {
-                if is_moved_src {
-                    RowKind::Mov
-                } else {
-                    RowKind::Del
-                }
-            }
-            (None, Some(_)) => {
-                if is_moved_tgt {
-                    RowKind::Mov
-                } else {
-                    RowKind::Add
-                }
-            }
-            (None, None) => RowKind::Ctx,
+        let is_moved_src = matches!(slot, WindowSlot::MovSrc(_));
+        let is_moved_tgt = matches!(slot, WindowSlot::MovTgt(_));
+        let kind = match slot {
+            WindowSlot::Mod(_, _) => RowKind::Mod,
+            WindowSlot::Del(_) => RowKind::Del,
+            WindowSlot::Add(_) => RowKind::Add,
+            WindowSlot::MovSrc(_) | WindowSlot::MovTgt(_) => RowKind::Mov,
         };
 
         slots.push(AlignedSlotRow {
@@ -339,10 +377,10 @@ enum ProjectedPiece<'a> {
 /// `token_product_cap`, or when any `Mod` slot would degrade into a wholesale
 /// replacement (allowing the caller to fall back to per-slot alignment).
 pub(crate) fn align_window_2d_tape(
-    aligned_pairs: &[SlotPair<'_>],
+    window_slots: &[WindowSlot<'_>],
     profile: Option<&LangProfile>,
 ) -> Option<Vec<Runs>> {
-    let total_slots = aligned_pairs.len();
+    let total_slots = window_slots.len();
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
     let mut slot_of_old: Vec<usize> = Vec::new();
@@ -350,20 +388,27 @@ pub(crate) fn align_window_2d_tape(
     let mut old_line_of_slot: Vec<Option<usize>> = vec![None; total_slots];
     let mut new_line_of_slot: Vec<Option<usize>> = vec![None; total_slots];
 
-    for (slot_idx, (old_opt, new_opt)) in aligned_pairs.iter().enumerate() {
-        if let Some(u) = old_opt
-            && !matches!(u, Row::MovSrc { .. })
-        {
-            old_line_of_slot[slot_idx] = Some(old_lines.len());
-            old_lines.push(u.text());
-            slot_of_old.push(slot_idx);
-        }
-        if let Some(v) = new_opt
-            && !matches!(v, Row::MovTgt { .. })
-        {
-            new_line_of_slot[slot_idx] = Some(new_lines.len());
-            new_lines.push(v.text());
-            slot_of_new.push(slot_idx);
+    for (slot_idx, &slot) in window_slots.iter().enumerate() {
+        match slot {
+            WindowSlot::Mod(u, v) => {
+                old_line_of_slot[slot_idx] = Some(old_lines.len());
+                old_lines.push(u.text());
+                slot_of_old.push(slot_idx);
+                new_line_of_slot[slot_idx] = Some(new_lines.len());
+                new_lines.push(v.text());
+                slot_of_new.push(slot_idx);
+            }
+            WindowSlot::Del(u) => {
+                old_line_of_slot[slot_idx] = Some(old_lines.len());
+                old_lines.push(u.text());
+                slot_of_old.push(slot_idx);
+            }
+            WindowSlot::Add(v) => {
+                new_line_of_slot[slot_idx] = Some(new_lines.len());
+                new_lines.push(v.text());
+                slot_of_new.push(slot_idx);
+            }
+            WindowSlot::MovSrc(_) | WindowSlot::MovTgt(_) => {}
         }
     }
 
@@ -399,11 +444,11 @@ pub(crate) fn align_window_2d_tape(
     // unrelated full lines back to Del/Add.
     let old_line_has_salient: Vec<bool> = old_lines
         .iter()
-        .map(|line| text_has_salient_token(line, profile))
+        .map(|line| line_has_salient_token(line, profile))
         .collect();
     let new_line_has_salient: Vec<bool> = new_lines
         .iter()
-        .map(|line| text_has_salient_token(line, profile))
+        .map(|line| line_has_salient_token(line, profile))
         .collect();
     let mut salient_linked: FxHashSet<(usize, usize)> = FxHashSet::default();
     for &(oi, ni) in &aln.pairs {
@@ -411,7 +456,7 @@ pub(crate) fn align_window_2d_tape(
         let nl = aln.new.tokens[ni].line;
         let so = slot_of_old[ol];
         let sn = slot_of_new[nl];
-        if so != sn && text_has_salient_token(aln.old.tokens[oi].text, profile) {
+        if so != sn && line_has_salient_token(aln.old.tokens[oi].text, profile) {
             salient_linked.insert((so, sn));
         }
     }
@@ -690,7 +735,7 @@ pub(crate) fn align_window_2d_tape(
     };
 
     let mut slot_runs: Vec<Runs> = Vec::with_capacity(total_slots);
-    for (slot_idx, (old_opt, new_opt)) in aligned_pairs.iter().enumerate() {
+    for (slot_idx, &slot) in window_slots.iter().enumerate() {
         match (old_line_of_slot[slot_idx], new_line_of_slot[slot_idx]) {
             (Some(ol), Some(nl)) => {
                 let old_pieces = build_old_pieces(ol);
@@ -712,13 +757,11 @@ pub(crate) fn align_window_2d_tape(
             (None, None) => {
                 // Pre-moved `Row::MovSrc` / `Row::MovTgt` slot retains its
                 // cached runs untouched.
-                if let Some(Row::MovSrc { cached_runs, .. }) = old_opt {
-                    slot_runs.push(cached_runs.clone());
-                } else if let Some(Row::MovTgt { cached_runs, .. }) = new_opt {
-                    slot_runs.push(cached_runs.clone());
-                } else {
-                    unreachable!("every slot owns at least one old or new row");
-                }
+                slot_runs.push(
+                    slot.cached_moved_runs()
+                        .expect("only pre-moved slots omit both old and new lines")
+                        .clone(),
+                );
             }
         }
     }
@@ -884,10 +927,6 @@ fn slot_runs_are_wholesale(runs: &[(RunKind, String)], old_text: &str, new_text:
     !has_non_ws_ctx && (!old_text.trim().is_empty() || !new_text.trim().is_empty())
 }
 
-fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
-    crate::lcs::line_has_salient_token(text, profile)
-}
-
 /// Whether a peer group without any paired `Mod` slot still establishes a
 /// strong cross-slot relationship: at least one balanced
 /// `MovedSrc`/`MovedTgt` run carries a salient identifier token. Call after
@@ -899,7 +938,7 @@ pub(crate) fn has_salient_moved_link(
     profile: Option<&LangProfile>,
 ) -> bool {
     group_rows.slots.iter().flat_map(|s| &s.runs).any(|(k, t)| {
-        matches!(k, RunKind::MovedSrc | RunKind::MovedTgt) && text_has_salient_token(t, profile)
+        matches!(k, RunKind::MovedSrc | RunKind::MovedTgt) && line_has_salient_token(t, profile)
     })
 }
 
@@ -1027,9 +1066,6 @@ fn relocate_leftover_frames(
     // Per-slot projections of each side, with each run's byte offset into
     // its slot projection. Retyping never alters slot texts, so these are
     // computed once; they locate a frame block's neighbours exactly.
-    use diffuse_algo::dyck::{
-        DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier,
-    };
     let dyck_classifier = UniversalDelimiterClassifier;
     let is_bracket = |c: char| {
         matches!(
@@ -1405,7 +1441,7 @@ fn relocate_cross_slot_tokens(
         }
     }
 
-    candidates.sort_by_key(|a| std::cmp::Reverse(a.len()));
+    candidates.sort_by_key(|a| Reverse(a.len()));
     candidates.dedup();
 
     // Salient candidates relocate freely within the window; delimiter-only
@@ -1417,7 +1453,7 @@ fn relocate_cross_slot_tokens(
     // is coincidental punctuation reuse, not a move.
     let (salient, bare): (Vec<_>, Vec<_>) = candidates
         .into_iter()
-        .partition(|t| text_has_salient_token(t, profile));
+        .partition(|t| line_has_salient_token(t, profile));
     let mut linked: Vec<(usize, usize)> = Vec::new();
     let mut donors_for_tgt = vec![Vec::<usize>::new(); num_slots];
     let mut exchanges = Vec::<(usize, usize, String)>::new();
@@ -1659,7 +1695,7 @@ fn is_generic_subtoken(token: &str, profile: Option<&LangProfile>) -> bool {
         return true;
     }
     words.iter().all(|&w| {
-        crate::lcs::tokenizer::COMMON_KEYWORDS.contains(&w)
+        COMMON_KEYWORDS.contains(&w)
             || PRIMITIVES_AND_LITERALS.contains(&w)
             || profile.is_some_and(|p| p.is_non_salient(w))
             || (w.len() <= 4 && !w.contains('_'))
@@ -1745,7 +1781,7 @@ fn apply_relocation_candidate(
                     let tgt_words = contextual_words(&tgt_text);
                     let token_words = contextual_words(token);
                     src_words.iter().any(|sw| {
-                        crate::lcs::token_is_salient(sw, profile)
+                        token_is_salient(sw, profile)
                             && !token_words.iter().any(|tw| is_salient_word_match(sw, tw))
                             && tgt_words.iter().any(|tw| is_salient_word_match(sw, tw))
                     })
@@ -1786,7 +1822,7 @@ fn apply_relocation_candidate(
         // In case of ties, prefer closer distance, then lower tgt index.
         candidate_targets.sort_by(|&(t1, a1), &(t2, a2)| {
             a2.partial_cmp(&a1)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(Ordering::Equal)
                 .then_with(|| {
                     let d1 = (src as isize - t1 as isize).unsigned_abs();
                     let d2 = (src as isize - t2 as isize).unsigned_abs();
@@ -2738,16 +2774,20 @@ mod tests {
         }
     }
 
-    fn assert_2d_conservation_and_projection(pairs: &[SlotPair<'_>], slot_runs: &[Runs]) {
-        assert_eq!(pairs.len(), slot_runs.len());
+    fn assert_2d_conservation_and_projection(slots: &[WindowSlot<'_>], slot_runs: &[Runs]) {
+        assert_eq!(slots.len(), slot_runs.len());
         let mut src: Vec<&str> = Vec::new();
         let mut tgt: Vec<&str> = Vec::new();
-        for ((old_opt, new_opt), runs) in pairs.iter().zip(slot_runs) {
+        for (&slot, runs) in slots.iter().zip(slot_runs) {
             assert!(
-                runs_project_to_text(runs, old_opt.map(Row::text), new_opt.map(Row::text)),
+                runs_project_to_text(
+                    runs,
+                    slot.old_row().map(Row::text),
+                    slot.new_row().map(Row::text)
+                ),
                 "slot projection mismatch: old={:?}, new={:?}, runs={:?}",
-                old_opt.map(Row::text),
-                new_opt.map(Row::text),
+                slot.old_row().map(Row::text),
+                slot.new_row().map(Row::text),
                 runs
             );
             for (k, t) in runs {
@@ -2774,15 +2814,15 @@ mod tests {
         let new1 = make_add(135, "        super::resolve_theme(Some(\"dark\"), false),");
         let new2 = make_add(136, "        DiffuseTheme::dark()");
         let new3 = make_add(137, "    );");
-        let pairs: Vec<SlotPair<'_>> = vec![
-            (None, Some(&new0)),
-            (Some(&old), Some(&new1)),
-            (None, Some(&new2)),
-            (None, Some(&new3)),
+        let slots = vec![
+            WindowSlot::Add(&new0),
+            WindowSlot::Mod(&old, &new1),
+            WindowSlot::Add(&new2),
+            WindowSlot::Add(&new3),
         ];
 
-        let runs = align_window_2d_tape(&pairs, rs).expect("2D tape succeeds");
-        assert_2d_conservation_and_projection(&pairs, &runs);
+        let runs = align_window_2d_tape(&slots, rs).expect("2D tape succeeds");
+        assert_2d_conservation_and_projection(&slots, &runs);
 
         // Slot 0 receives `assert_eq!(` as MovedTgt, Slot 2 receives
         // `DiffuseTheme::dark()`, Slot 3 receives `);`.
@@ -2826,15 +2866,15 @@ mod tests {
         let o2 = make_del(44, "    rename_all = \"camelCase\",");
         let o3 = make_del(45, ")]");
         let n0 = make_add(97, "#[serde(tag = \"kind\", rename_all = \"camelCase\")]");
-        let pairs: Vec<SlotPair<'_>> = vec![
-            (Some(&o0), None),
-            (Some(&o1), None),
-            (Some(&o2), Some(&n0)),
-            (Some(&o3), None),
+        let slots = vec![
+            WindowSlot::Del(&o0),
+            WindowSlot::Del(&o1),
+            WindowSlot::Mod(&o2, &n0),
+            WindowSlot::Del(&o3),
         ];
 
-        let runs = align_window_2d_tape(&pairs, rs).expect("2D collapse succeeds");
-        assert_2d_conservation_and_projection(&pairs, &runs);
+        let runs = align_window_2d_tape(&slots, rs).expect("2D collapse succeeds");
+        assert_2d_conservation_and_projection(&slots, &runs);
 
         // Interior spaces inside `tag = "kind",` bridge into one clean moved
         // phrase rather than splitting into red/green space flashes.
@@ -2871,14 +2911,14 @@ mod tests {
         let n1 = make_add(11, "        first, second");
         let n2 = make_add(12, "    );");
         let n3 = make_add(13, "    let beta = finish(alpha);");
-        let pairs: Vec<SlotPair<'_>> = vec![
-            (Some(&o0), Some(&n0)),
-            (None, Some(&n1)),
-            (None, Some(&n2)),
-            (Some(&o1), Some(&n3)),
+        let slots = vec![
+            WindowSlot::Mod(&o0, &n0),
+            WindowSlot::Add(&n1),
+            WindowSlot::Add(&n2),
+            WindowSlot::Mod(&o1, &n3),
         ];
-        let runs = align_window_2d_tape(&pairs, rs).expect("2x4 2D alignment succeeds");
-        assert_2d_conservation_and_projection(&pairs, &runs);
+        let runs = align_window_2d_tape(&slots, rs).expect("2x4 2D alignment succeeds");
+        assert_2d_conservation_and_projection(&slots, &runs);
         // Slot 3 has dedented leading spaces (`Del("    ")` followed by
         // coalesced `Ctx("    let beta = finish(alpha);")`).
         assert_eq!(runs[3][0], (RunKind::Del, "    ".to_string()));
@@ -2896,14 +2936,14 @@ mod tests {
         );
 
         // Single-sided window returns None.
-        let del_only: Vec<SlotPair<'_>> = vec![(Some(&o0), None)];
+        let del_only = vec![WindowSlot::Del(&o0)];
         assert!(align_window_2d_tape(&del_only, rs).is_none());
 
         // Wholesale Mod slot triggers clean None fallback.
         let w_old = make_del(1, "    alpha_one");
         let w_new = make_add(1, "    beta_two");
-        let wholesale_pairs: Vec<SlotPair<'_>> = vec![(Some(&w_old), Some(&w_new))];
-        assert!(align_window_2d_tape(&wholesale_pairs, rs).is_none());
+        let wholesale_slots = vec![WindowSlot::Mod(&w_old, &w_new)];
+        assert!(align_window_2d_tape(&wholesale_slots, rs).is_none());
 
         // Pre-moved slot retains cached_runs untouched alongside normal slots.
         let mov_src = Row::MovSrc {
@@ -2912,7 +2952,7 @@ mod tests {
             cached_runs: vec![(RunKind::Ctx, "    moved_line();".to_string())],
             group: None,
         };
-        let with_moved: Vec<SlotPair<'_>> = vec![(Some(&o0), Some(&n0)), (Some(&mov_src), None)];
+        let with_moved = vec![WindowSlot::Mod(&o0, &n0), WindowSlot::MovSrc(&mov_src)];
         let moved_runs = align_window_2d_tape(&with_moved, rs).expect("preserves MovSrc slot");
         assert_eq!(
             moved_runs[1],
