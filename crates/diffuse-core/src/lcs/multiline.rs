@@ -212,7 +212,7 @@ pub fn align_lines_2d<'a>(
         .iter()
         .any(|so| slots.slot_of_new.contains(so));
 
-    let anchors: Vec<(usize, usize)> = unique_token_anchors(&ot, &nt, profile)
+    let unique_anchors: Vec<(usize, usize)> = unique_token_anchors(&ot, &nt, profile)
         .into_iter()
         .filter(|&(ai, bi)| {
             let sa = slots.slot_of_old[line_a[ai]];
@@ -224,6 +224,17 @@ pub fn align_lines_2d<'a>(
                 && ContainerKind::is_compatible_with(ca, cb)
         })
         .collect();
+
+    let anchors = merge_mod_comment_prefix_anchors(
+        old_lines,
+        new_lines,
+        &old,
+        &new,
+        slots,
+        (&c_old, &c_new),
+        profile,
+        unique_anchors,
+    );
 
     let old_side = Side2D {
         tokens: &ot,
@@ -265,6 +276,125 @@ pub fn align_lines_2d<'a>(
     );
 
     Some(MultiLineAlignment { old, new, pairs })
+}
+
+/// Pins identical leading comment-marker tokens (`///`, `//!`, `//`, `/*`, `*`,
+/// `#`) on paired `Mod` slots as same-slot anchors so Stage 1 Gotoh never
+/// sacrifices an unchanged comment gutter (`[-///-][+///+]`) to force a
+/// downward cross-slot match; Stage 2 relocates wrapped prose cleanly across
+/// the preserved gutter instead.
+#[allow(clippy::too_many_arguments)]
+fn merge_mod_comment_prefix_anchors(
+    old_lines: &[&str],
+    new_lines: &[&str],
+    old: &MultiLineTokens<'_>,
+    new: &MultiLineTokens<'_>,
+    slots: WindowSlotMap<'_>,
+    containers: (&[u8], &[u8]),
+    profile: Option<&LangProfile>,
+    unique_anchors: Vec<(usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let Some(prof) = profile.filter(|p| !p.markdown) else {
+        return unique_anchors;
+    };
+    let (c_old, c_new) = containers;
+
+    let mut prefix_anchors: Vec<(usize, usize)> = Vec::new();
+    let mut ni_line = 0usize;
+    for (ol, &o_line) in old_lines.iter().enumerate() {
+        let so = slots.slot_of_old[ol];
+        while ni_line < new_lines.len() && slots.slot_of_new[ni_line] < so {
+            ni_line += 1;
+        }
+        if ni_line >= new_lines.len() || slots.slot_of_new[ni_line] != so {
+            continue;
+        }
+        let nl = ni_line;
+        let n_line = new_lines[nl];
+        let (Some(om), Some(nm)) = (
+            prof.leading_comment_prefix(o_line),
+            prof.leading_comment_prefix(n_line),
+        ) else {
+            continue;
+        };
+        if om != nm {
+            continue;
+        }
+        let o_range = old.line_ranges[ol].clone();
+        let n_range = new.line_ranges[nl].clone();
+        let mut oi = o_range.start;
+        let mut ni = n_range.start;
+        if oi < o_range.end && old.tokens[oi].is_leading_ws {
+            oi += 1;
+        }
+        if ni < n_range.end && new.tokens[ni].is_leading_ws {
+            ni += 1;
+        }
+        let mut covered = 0usize;
+        let mut line_pairs = Vec::new();
+        while covered < om.len() && oi < o_range.end && ni < n_range.end {
+            let ot = old.tokens[oi];
+            let nt = new.tokens[ni];
+            let ca = ContainerKind::from_id(c_old[oi]);
+            let cb = ContainerKind::from_id(c_new[ni]);
+            if ot.text != nt.text || !ContainerKind::is_compatible_with(ca, cb) {
+                line_pairs.clear();
+                break;
+            }
+            covered += ot.text.len();
+            line_pairs.push((oi, ni));
+            oi += 1;
+            ni += 1;
+        }
+        if covered == om.len() {
+            prefix_anchors.extend(line_pairs);
+        }
+    }
+
+    if prefix_anchors.is_empty() {
+        return unique_anchors;
+    }
+
+    // Merge strictly increasing `(ai, bi)` pairs, preferring comment-prefix
+    // anchors whenever a unique anchor would cross or duplicate one.
+    let mut merged: Vec<(usize, usize)> =
+        Vec::with_capacity(prefix_anchors.len() + unique_anchors.len());
+    let (mut pi, mut ui) = (0usize, 0usize);
+    while pi < prefix_anchors.len() || ui < unique_anchors.len() {
+        let take_prefix = match (prefix_anchors.get(pi), unique_anchors.get(ui)) {
+            (Some(&(pa, _)), Some(&(ua, _))) => pa <= ua,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => break,
+        };
+        if take_prefix {
+            let pair = prefix_anchors[pi];
+            pi += 1;
+            // Prefix anchors are strictly monotonic by construction; pop any
+            // previously pushed unique anchor that conflicts with this gutter.
+            while let Some(&(la, lb)) = merged.last() {
+                if la >= pair.0 || lb >= pair.1 {
+                    merged.pop();
+                } else {
+                    break;
+                }
+            }
+            merged.push(pair);
+        } else {
+            let pair = unique_anchors[ui];
+            ui += 1;
+            let fits_prev = merged
+                .last()
+                .is_none_or(|&(la, lb)| pair.0 > la && pair.1 > lb);
+            let fits_next = prefix_anchors
+                .get(pi)
+                .is_none_or(|&(pa, pb)| pair.0 < pa && pair.1 < pb);
+            if fits_prev && fits_next {
+                merged.push(pair);
+            }
+        }
+    }
+    merged
 }
 
 fn solve_anchored_2d(
@@ -590,5 +720,39 @@ mod tests {
         assert_eq!(aln.new.tokens[aln.pairs[0].1].line, 0);
         assert_eq!(aln.old.tokens[aln.pairs[1].0].line, 1);
         assert_eq!(aln.new.tokens[aln.pairs[1].1].line, 2);
+    }
+
+    #[test]
+    fn align_lines_2d_pins_identical_mod_comment_prefixes_against_downward_wraps() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+        let old = [
+            "/// left-edge stripe from amber to active cyan, and if `is_current_line` is",
+            "/// true, highlights the line background with cursor",
+        ];
+        let new = [
+            "/// left-edge stripe from the status color to active cyan, and if",
+            "/// `is_current_line` is true, highlights the line background with cursor",
+        ];
+        let aln = align_lines_2d(
+            &old,
+            &new,
+            WindowSlotMap {
+                slot_of_old: &[0, 1],
+                slot_of_new: &[0, 1],
+            },
+            rs,
+            &MultiLineConfig::default(),
+        )
+        .expect("within cap");
+
+        // The `///` marker on line 1 must stay matched same-slot (`Ctx`).
+        assert!(
+            aln.pairs.iter().any(|&(oi, ni)| {
+                aln.old.tokens[oi].line == 1
+                    && aln.new.tokens[ni].line == 1
+                    && aln.old.tokens[oi].text == "///"
+            }),
+            "identical `///` prefix on paired Mod slot 1 must stay same-slot Ctx"
+        );
     }
 }

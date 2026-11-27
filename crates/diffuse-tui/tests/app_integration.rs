@@ -1550,27 +1550,29 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
         diffuse_render::DiffuseTheme::dark(),
     );
 
-    // Find old line 2229 in flat rows (app/tests.rs). The line
-    // `let row_relative = r.saturating_sub(header_offset);` is deleted and its
-    // `offset` token travels into the following `scrollbar_scroll_for_row`
-    // call, so the deletion row carries a moved-out run.
+    // Find old line 233 in flat rows (app/geometry.rs). The line
+    // `                .round()` is deleted inside the 5×2 scrollbar thumb
+    // reflow and its `.round()` call travels into the preceding `let
+    // prop_thumb` line, so the deletion row carries both a plain Del prefix and
+    // a moved-out MovedSrc run.
     let mut target_idx = None;
     for (idx, item) in state.flat.iter().enumerate() {
         if let Some(r) = state.row_of(item)
-            && r.old_line == Some(2229)
+            && r.old_line == Some(233)
+            && r.old_text().contains(".round()")
         {
             target_idx = Some(idx);
             break;
         }
     }
-    let target_idx = target_idx.expect("must find old line 2229 in flat list");
+    let target_idx = target_idx.expect("must find old line 233 in flat list");
     state.row_idx = target_idx;
     state.vis_line = 0;
 
     let (w, h) = (200, 40);
     let buf = state.render_to_buffer(w, h);
 
-    // Locate the deleted line containing the moved-out `offset` token.
+    // Locate the deleted line containing the moved-out `.round()` token.
     let mut found_line = false;
     let mut found_struck = false;
     let mut found_non_struck_head = false;
@@ -1579,13 +1581,12 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
         for x in 0..w {
             line_str.push_str(buf[(x, y)].symbol());
         }
-        if line_str.contains("let row_relative = r.saturating_sub(header_offset);") {
+        if line_str.contains("                .round()") {
             found_line = true;
-            let head_pos = line_str.find("let row_relative").unwrap();
-            // The moved span is `offset`, not the `header_` prefix it follows.
-            let offset_pos = line_str.find("header_offset").unwrap() + "header_".len();
+            let moved_pos = line_str.find(".round()").unwrap();
+            let head_pos = moved_pos - 4;
 
-            // Head (let row_relative) must not have CROSSED_OUT
+            // Plain Del indentation before `.round()` must not have CROSSED_OUT
             let head_cell = &buf[(head_pos as u16, y)];
             if !head_cell
                 .modifier
@@ -1594,8 +1595,8 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
                 found_non_struck_head = true;
             }
 
-            // Moved-out token (offset) must have CROSSED_OUT
-            let moved_cell = &buf[(offset_pos as u16, y)];
+            // Moved-out token (`.round()`) must have CROSSED_OUT
+            let moved_cell = &buf[(moved_pos as u16, y)];
             if moved_cell
                 .modifier
                 .contains(ratatui::style::Modifier::CROSSED_OUT)
@@ -1605,14 +1606,14 @@ fn test_scrollbar_grab_drag_peer_del_row_moved_src_struck() {
             break;
         }
     }
-    assert!(found_line, "must find old line 2229 rendered in buffer");
+    assert!(found_line, "must find old line 233 rendered in buffer");
     assert!(
         found_non_struck_head,
-        "deletion head let row_relative must not be struck out on the del row"
+        "plain deletion indentation before .round() must not be struck out on the del row"
     );
     assert!(
         found_struck,
-        "moved-out source token offset must be struck out (CROSSED_OUT) on the del row"
+        "moved-out source token .round() must be struck out (CROSSED_OUT) on the del row"
     );
 }
 

@@ -29,7 +29,10 @@ use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    collapse::tokens::is_salient_word_match,
+    collapse::{
+        prose::{is_prose_boundary_wrap, is_prose_or_comment_line, prose_prefix_sig},
+        tokens::is_salient_word_match,
+    },
     lcs::{is_token_salient_in_context, tokenize_line},
     parse::Row,
 };
@@ -84,6 +87,7 @@ struct WindowSpan {
     last_diag: usize,
     old: Range<usize>,
     new: Range<usize>,
+    prose_folded: bool,
 }
 
 impl WindowSpan {
@@ -93,6 +97,7 @@ impl WindowSpan {
             last_diag: diag_idx,
             old: old..old + 1,
             new: new..new + 1,
+            prose_folded: false,
         }
     }
 
@@ -434,9 +439,28 @@ impl<'a> PathSegmenter<'a> {
             }
         }
 
+        // 3.75. Prose/comment cross-`Diag` boundary-wrap folding: chain
+        //       consecutive prose/comment correspondences inside the same
+        //       paragraph (matching indent & comment/blockquote prefix, no
+        //       blank lines, at most 2 prose gap rows per side) whenever an
+        //       unmatched tail wraps onto the opposite head.
+        let mut prose_folded = false;
+        if !delim_extended
+            && val_old == ValenceOutcome::None
+            && val_new == ValenceOutcome::None
+            && let Some((end_diag, oe, ne)) = self.fold_prose_boundary_wraps(p)
+        {
+            last_diag = end_diag;
+            old_end = oe;
+            new_end = ne;
+            prose_folded = true;
+        }
+
         // 4. Unmatched salient evidence: when delimiter balance did not extend
         //    the correspondence, check the immediately adjacent skip on each
         //    side independently (invariant to 1D `DropOld`/`DropNew` order).
+        //    Following skips attach to `last_diag` so trailing skips stay
+        //    connected to the tail of a folded prose wrap chain.
         if !delim_extended && !is_symmetric_closer {
             if let Some(so) = self.salient_preceding_skip(Side::Old, p, floor_old, ao, an) {
                 old_start = so;
@@ -445,14 +469,17 @@ impl<'a> PathSegmenter<'a> {
                 new_start = sn;
             }
         }
-        if !delim_extended && !is_symmetric_opener {
-            if val_old == ValenceOutcome::None
-                && let Some(so) = self.salient_following_skip(Side::Old, p, ao, an)
+        let (tail_o, tail_n) = self.diags[last_diag];
+        let tail_sym_opener = !self.old_delims[tail_o].opens.is_empty()
+            && self.old_delims[tail_o].opens == self.new_delims[tail_n].opens;
+        if !delim_extended && !tail_sym_opener {
+            if (prose_folded || val_old == ValenceOutcome::None)
+                && let Some(so) = self.salient_following_skip(Side::Old, last_diag, tail_o, tail_n)
             {
                 old_end = so + 1;
             }
-            if val_new == ValenceOutcome::None
-                && let Some(sn) = self.salient_following_skip(Side::New, p, ao, an)
+            if (prose_folded || val_new == ValenceOutcome::None)
+                && let Some(sn) = self.salient_following_skip(Side::New, last_diag, tail_o, tail_n)
             {
                 new_end = sn + 1;
             }
@@ -463,7 +490,62 @@ impl<'a> PathSegmenter<'a> {
             last_diag,
             old: old_start..old_end,
             new: new_start..new_end,
+            prose_folded,
         }
+    }
+
+    /// Chains consecutive prose/comment `Diag` pairs starting at `seed_diag`
+    /// while each adjacent pair exhibits a directional boundary wrap inside the
+    /// same comment/blockquote paragraph.
+    fn fold_prose_boundary_wraps(&self, seed_diag: usize) -> Option<(usize, usize, usize)> {
+        let mut cur_q = seed_diag;
+        while cur_q + 1 < self.diags.len() {
+            let (co, cn) = self.diags[cur_q];
+            let (no, nn) = self.diags[cur_q + 1];
+            if self.is_blank_pair(cur_q + 1) {
+                break;
+            }
+            let co_text = self.old_rows[co].text();
+            let cn_text = self.new_rows[cn].text();
+            let no_text = self.old_rows[no].text();
+            let nn_text = self.new_rows[nn].text();
+            if !is_prose_or_comment_line(co_text, self.profile)
+                || !is_prose_or_comment_line(cn_text, self.profile)
+                || !is_prose_or_comment_line(no_text, self.profile)
+                || !is_prose_or_comment_line(nn_text, self.profile)
+            {
+                break;
+            }
+            let gap = &self.gaps[cur_q + 1];
+            if gap.old.len() > 2 || gap.new.len() > 2 {
+                break;
+            }
+            let gap_is_prose = gap
+                .old
+                .clone()
+                .all(|i| is_prose_or_comment_line(self.old_rows[i].text(), self.profile))
+                && gap
+                    .new
+                    .clone()
+                    .all(|i| is_prose_or_comment_line(self.new_rows[i].text(), self.profile));
+            if !gap_is_prose {
+                break;
+            }
+            if prose_prefix_sig(co_text, self.profile) != prose_prefix_sig(no_text, self.profile)
+                || prose_prefix_sig(cn_text, self.profile)
+                    != prose_prefix_sig(nn_text, self.profile)
+            {
+                break;
+            }
+            if !is_prose_boundary_wrap(co_text, cn_text, no_text, nn_text, self.profile) {
+                break;
+            }
+            cur_q += 1;
+        }
+        (cur_q > seed_diag).then(|| {
+            let (no, nn) = self.diags[cur_q];
+            (cur_q, no + 1, nn + 1)
+        })
     }
 
     /// Scans forward within `gaps[p + 1]` on `side` for deeper-indented
@@ -778,6 +860,7 @@ impl<'a> PathSegmenter<'a> {
                         last_diag: q,
                         old,
                         new,
+                        prose_folded: false,
                     });
                 }
             }
@@ -863,7 +946,7 @@ impl<'a> PathSegmenter<'a> {
                 ni += 1;
             }
 
-            if win.has_skips() {
+            if win.has_skips() || win.prose_folded {
                 segments.push(Segment::Window {
                     old: win.old.clone(),
                     new: win.new.clone(),
@@ -1938,6 +2021,53 @@ mod tests {
                 old: 0..2,
                 new: 0..1
             }]
+        );
+    }
+
+    #[test]
+    fn prose_boundary_wrap_folding_respects_prefix_blank_and_gap_limits() {
+        let rs = diffuse_syntax::registry::lang_profile("rs");
+
+        // Differing comment prefix (`///` vs `//`) must not fold.
+        let old_pfx = ["/// alpha beta gamma delta", "// gamma delta epsilon"];
+        let new_pfx = ["/// alpha beta", "// epsilon zeta"];
+        assert_eq!(
+            segment_with_profile(&old_pfx, &new_pfx, &[PathStep::Diag, PathStep::Diag], rs),
+            vec![
+                Segment::Pair { old: 0, new: 0 },
+                Segment::Pair { old: 1, new: 1 },
+            ]
+        );
+
+        // Intervening gap exceeding 2 rows must not fold.
+        let old_gap = [
+            "/// alpha beta",
+            "/// filler one",
+            "/// filler two",
+            "/// filler three",
+            "/// gamma delta epsilon",
+        ];
+        let new_gap = ["/// alpha beta gamma delta", "/// epsilon zeta"];
+        assert_eq!(
+            segment_with_profile(
+                &old_gap,
+                &new_gap,
+                &[
+                    PathStep::Diag,
+                    PathStep::DropOld,
+                    PathStep::DropOld,
+                    PathStep::DropOld,
+                    PathStep::Diag,
+                ],
+                rs,
+            ),
+            vec![
+                Segment::Pair { old: 0, new: 0 },
+                Segment::Del { old: 1 },
+                Segment::Del { old: 2 },
+                Segment::Del { old: 3 },
+                Segment::Pair { old: 4, new: 1 },
+            ]
         );
     }
 }

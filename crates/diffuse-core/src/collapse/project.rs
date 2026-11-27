@@ -66,6 +66,7 @@ pub(crate) fn align_window_2d_tape(
     )?;
 
     let kept_pairs = filter_cross_slot_punctuation(&aln, &window, is_single_construct, profile);
+    let kept_pairs = filter_isolated_intraword_punct(&aln, &window, kept_pairs);
     let extended_pairs = extend_cross_slot_phrases(&aln, &window, &kept_pairs);
     let bridged_pairs = bridge_enclosed_cross_slot_spans(&aln, &window, extended_pairs);
     let clean_pairs = filter_weak_prose_cross_slot_phrases(&aln, &window, bridged_pairs, profile);
@@ -277,6 +278,44 @@ fn filter_cross_slot_punctuation(
                 || !new_line_has_salient[nl]
         })
         .collect()
+}
+
+/// Drops isolated single-token same-slot punctuation (such as `-` in
+/// `1-indexed` vs `re-anchor`) when both immediate neighbors on both sides are
+/// unmatched alphanumeric tokens, preventing coincidental hyphen matches from
+/// splitting a hyphenated word across a `Ctx` island.
+fn filter_isolated_intraword_punct(
+    aln: &MultiLineAlignment<'_>,
+    window: &WindowLines<'_>,
+    pairs: Vec<(usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let is_alnum_tok = |tok: Token2D<'_>| tok.text.chars().any(char::is_alphanumeric);
+    let mut out = Vec::with_capacity(pairs.len());
+    for (idx, &(oi, ni)) in pairs.iter().enumerate() {
+        let ot = aln.old.tokens[oi];
+        let nt = aln.new.tokens[ni];
+        let same_slot = window.slot_of_old[ot.line] == window.slot_of_new[nt.line];
+        let is_punct = !token_is_ws(ot.text) && !is_alnum_tok(ot);
+        if same_slot && is_punct {
+            let prev_adj = idx > 0 && pairs[idx - 1] == (oi.wrapping_sub(1), ni.wrapping_sub(1));
+            let next_adj = idx + 1 < pairs.len() && pairs[idx + 1] == (oi + 1, ni + 1);
+            let o_range = &aln.old.line_ranges[ot.line];
+            let n_range = &aln.new.line_ranges[nt.line];
+            let o_between_alnum = oi > o_range.start
+                && oi + 1 < o_range.end
+                && is_alnum_tok(aln.old.tokens[oi - 1])
+                && is_alnum_tok(aln.old.tokens[oi + 1]);
+            let n_between_alnum = ni > n_range.start
+                && ni + 1 < n_range.end
+                && is_alnum_tok(aln.new.tokens[ni - 1])
+                && is_alnum_tok(aln.new.tokens[ni + 1]);
+            if !prev_adj && !next_adj && o_between_alnum && n_between_alnum {
+                continue;
+            }
+        }
+        out.push((oi, ni));
+    }
+    out
 }
 
 #[inline]

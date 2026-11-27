@@ -5,7 +5,7 @@
 - [x] **Step 1 (Experiment)** — [Cross-`Diag` Boundary-Wrap Window Folding for Prose & Comments](#step-1-experiment--cross-diag-boundary-wrap-window-folding-for-prose--comments) — **Pivot → Promote (`1B` + `prose_folded` + Stage 2 wholesale bypass)**
 - [x] **Step 2 (Experiment)** — [Step 4 Skip-Evidence & Single-Word Prose Relocation Hygiene](#step-2-experiment--step-4-skip-evidence--single-word-prose-relocation-hygiene) — **Pivot → Promote (Comment/Code Parity + Stage 1/2 Slot-Pair Prose Hygiene)**
 - [x] **Step 3 (Action)** — [Implement Comment/Code Parity & Prose Cross-Slot Relocation Hygiene](#step-3-action--implement-commentcode-parity--prose-cross-slot-relocation-hygiene)
-- [ ] **Step 4 (Action)** — [Implement Cross-`Diag` Prose Boundary-Wrap Folding, Comment-Prefix Preservation & Stage 2 Substring Fallback](#step-4-action--implement-cross-diag-prose-boundary-wrap-folding-comment-prefix-preservation--stage-2-substring-fallback)
+- [x] **Step 4 (Action)** — [Implement Cross-`Diag` Prose Boundary-Wrap Folding, Comment-Prefix Preservation & Stage 2 Substring Fallback](#step-4-action--implement-cross-diag-prose-boundary-wrap-folding-comment-prefix-preservation--stage-2-substring-fallback)
 
 ---
 
@@ -143,3 +143,12 @@ Builds cleanly on Step 3's hygiene layer to solve `scrollbar-grab-drag:290–292
 4. **Tests & golden review**:
    - Golden-driven integration test asserting `scrollbar-grab-drag` `geometry.rs:290–292` emits `". The thumb"` moved from `292 → 359` with `291` pure `Del`, plus `diffcoord-anchoring:110–113` & `727–730` multi-line wraps without `[-/// -][+///+]` flashes, and unit tests for all boundary branches.
    - Regenerate affected goldens, review visual diffs carefully (including `less -R` / ANSI inspection if helpful), and pass `scripts/check.sh`.
+
+### Check Result
+
+- **Implemented**:
+  - `WindowSpan.prose_folded`, Step 3.75 (`fold_prose_boundary_wraps`), and `last_diag`-anchored trailing Step 4 skip attachment in [`reflow.rs`](../crates/diffuse-core/src/collapse/reflow.rs) using shared helpers in [`prose.rs`](../crates/diffuse-core/src/collapse/prose.rs).
+  - Paired-`Mod` comment-prefix `Ctx` anchoring (`merge_mod_comment_prefix_anchors`) in [`multiline.rs`](../crates/diffuse-core/src/lcs/multiline.rs).
+  - Isolated intra-word same-slot punctuation filtering (`filter_isolated_intraword_punct`) in [`project.rs`](../crates/diffuse-core/src/collapse/project.rs) to prevent coincidental `-` / `::` / `.` splits across unrelated hyphenated words or paths (`1-indexed` vs `re-anchor`, `Side::New` vs `DiffCoord::new_side`).
+  - Stage 2 wholesale-bypass common contiguous token-span fallback (`collect_common_token_spans`) and prose-window exemption from the 35% pure-`Add` anti-scavenging rollback in [`relocate.rs`](../crates/diffuse-core/src/collapse/relocate.rs).
+- **Golden delta**: 10 of 23 corpora updated: `scrollbar-grab-drag:290–292` cleanly relocates `". The thumb"` (`292 → 359`) with `del:291` pure `Del` (plus `281–282` `'exact'` and bonus cleanup of `2229/2315`), 23 genuine prose/comment wraps rescued across `diffcoord-anchoring`, `diffuse-2026-08`, `diffuse-history-mid`, `review-notes`, `rust-lifetime-char`, and `scrollbar-grab-drag`, all `[-/// -][+///+]` flashes eliminated (`osc11-query-gate`, `rust-lifetime-char`, `theme-light-toggle`, `diffcoord-anchoring`), and bonus intra-word punctuation un-splitting on `diffcoord-anchoring`, `diffuse-history-mid`, `linenum-u32`, `opt-1-cache-regex-window-slice`, and `review-notes`. Zero false-positive new groups.

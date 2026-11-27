@@ -1697,18 +1697,30 @@ fn test_grouped_deletion_in_expansion_block_receives_row_group_peer() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    // Each rewritten line pairs one-to-one and nothing is relocated, so the
-    // three modifications carry no formation.
+    // Lines 53/67 and 54/68 wrap `"stored inline. Empty when"` across the
+    // doc-comment boundary and therefore form a 2×2 prose peer group, while the
+    // following code signature 55/69 pairs one-to-one with no group.
     assert_eq!(c.len(), 3);
     for (row, (old, new)) in c.iter().zip([(53, 67), (54, 68), (55, 69)]) {
         assert_eq!(row.kind(), RowKind::Mod);
         assert_eq!(row.old_line(), Some(old));
         assert_eq!(row.new_line(), Some(new));
-        assert!(
-            row.group().is_none(),
-            "unpaired rewrite must not be grouped"
-        );
     }
+    assert!(
+        c[0].group().is_some() && c[1].group().is_some(),
+        "wrapped doc-comment lines 53/67 and 54/68 must form a prose peer group"
+    );
+    assert!(
+        c[0].cached_runs()
+            .iter()
+            .any(|(k, t)| *k == RunKind::MovedSrc && t.contains("stored inline. Empty when")),
+        "53/67 must relocate `stored inline. Empty when`: {:?}",
+        c[0].cached_runs()
+    );
+    assert!(
+        c[2].group().is_none(),
+        "code signature 55/69 must not be grouped with the doc-comment wrap"
+    );
 }
 
 /// Seeded groups must not swallow run members: a verbatim seed pairs

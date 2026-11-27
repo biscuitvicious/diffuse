@@ -2503,6 +2503,143 @@ fn test_prose_relocation_hygiene_and_comment_code_parity_across_goldens() {
     );
 }
 
+/// Step 4 specification test: cross-`Diag` prose boundary-wrap folding,
+/// paired-`Mod` comment-prefix `Ctx` preservation, and Stage 2 wholesale-bypass
+/// common-token extraction rescue `scrollbar-grab-drag:290-292` (`. The thumb`)
+/// and multi-line comment/Markdown wrap chains without `[-///-][+///+]` flashes
+/// or skip-free code window leaks (`linenum-u32`).
+#[test]
+fn test_prose_boundary_wrap_folding_and_comment_prefix_preservation() {
+    if !is_golden_initialized() {
+        return;
+    }
+
+    let run_corpus = |name: &str| {
+        let fixture = load_fixture(name);
+        diffuse::core::pipeline::run_pipeline_arc(
+            Arc::clone(&fixture.diff),
+            (!fixture.new_content.is_empty()).then(|| fixture.new_content.clone()),
+            (!fixture.old_content.is_empty()).then(|| fixture.old_content.clone()),
+            diffuse::core::pipeline::PipelineOptions::default(),
+        )
+    };
+    fn find_row<'a>(
+        out: &'a PipelineOutput,
+        path: &str,
+        old_line: Option<u32>,
+        new_line: Option<u32>,
+    ) -> Option<&'a diffuse::core::wire::OutputRow> {
+        let file = out.files.iter().find(|f| f.path == path)?;
+        file.hunks.iter().flat_map(|h| &h.rows).find(|r| {
+            old_line.is_none_or(|ol| r.old_line == Some(ol))
+                && new_line.is_none_or(|nl| r.new_line == Some(nl))
+        })
+    }
+    let has_ctx_comment_prefix = |row: &diffuse::core::wire::OutputRow, marker: &str| {
+        row.runs
+            .iter()
+            .any(|run| run.kind == diffuse::core::merge::RunKind::Ctx && run.text.contains(marker))
+    };
+
+    // 1. `scrollbar-grab-drag` `geometry.rs:290-292` -> `359-360`: `. The
+    //    thumb` moves cleanly from 292 to 359, deleted line 291 stays 100% pure
+    //    Del, and `///` stays Ctx on 292/360.
+    let sb = run_corpus("scrollbar-grab-drag");
+    let geo = "crates/diffuse-tui/src/app/geometry.rs";
+    let r290 = find_row(&sb, geo, Some(290), Some(359)).expect("geometry.rs 290/359");
+    let r291 = find_row(&sb, geo, Some(291), None).expect("geometry.rs 291");
+    let r292 = find_row(&sb, geo, Some(292), Some(360)).expect("geometry.rs 292/360");
+    assert!(
+        r290.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedTgt
+                && r.text.contains(". The thumb")),
+        "359 must receive `. The thumb` as MovedTgt: {r290:?}"
+    );
+    assert!(
+        r292.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedSrc
+                && r.text.contains(". The thumb")),
+        "292 must donate `. The thumb` as MovedSrc: {r292:?}"
+    );
+    assert!(
+        r291.runs
+            .iter()
+            .all(|r| r.kind == diffuse::core::merge::RunKind::Del),
+        "deleted middle line 291 must stay pure Del: {r291:?}"
+    );
+    assert!(
+        has_ctx_comment_prefix(r292, "///"),
+        "292/360 must preserve `///` as Ctx: {r292:?}"
+    );
+
+    // 2. `diffcoord-anchoring` `notes.rs:110-113` (2x3) and `727-730` (4x3):
+    //    wrapped phrases move cleanly and every Mod row preserves `///` as Ctx.
+    let dc = run_corpus("diffcoord-anchoring");
+    let notes = "crates/diffuse-tui/src/app/notes.rs";
+    let r110 = find_row(&dc, notes, Some(110), Some(111)).expect("notes.rs 110/111");
+    let r111 = find_row(&dc, notes, Some(111), Some(112)).expect("notes.rs 111/112");
+    assert!(
+        r110.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedSrc
+                && r.text.contains("`is_current_line` is")),
+        "110/111 must donate `` `is_current_line` is ``: {r110:?}"
+    );
+    assert!(
+        has_ctx_comment_prefix(r111, "///"),
+        "111/112 must preserve `///` as Ctx (no [-///-][+///+] flash): {r111:?}"
+    );
+    assert!(
+        r111.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedSrc
+                && r.text.contains("background")),
+        "111/112 must still donate `background (`Fixed(237)`).` to 113: {r111:?}"
+    );
+
+    let r728 = find_row(&dc, notes, Some(728), Some(734)).expect("notes.rs 728/734");
+    let r729 = find_row(&dc, notes, Some(729), Some(735)).expect("notes.rs 729/735");
+    assert!(
+        r728.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedSrc
+                && r.text.contains("their target line display")),
+        "728/734 must donate `their target line display`: {r728:?}"
+    );
+    assert!(
+        has_ctx_comment_prefix(r728, "///") && has_ctx_comment_prefix(r729, "///"),
+        "chained doc-comment Mod rows 728/734 and 729/735 must keep `///` as Ctx"
+    );
+
+    // 3. `diffuse-2026-08` `README.md:108-110` (3x3 Markdown wrap chain).
+    let d26 = run_corpus("diffuse-2026-08");
+    let r108 = find_row(&d26, "README.md", Some(108), Some(122)).expect("README.md 108/122");
+    assert!(
+        r108.runs
+            .iter()
+            .any(|r| r.kind == diffuse::core::merge::RunKind::MovedSrc
+                && r.text.contains("deliberate: it")),
+        "README.md:108/122 must donate `deliberate: it`: {r108:?}"
+    );
+
+    // 4. Negative guard (`linenum-u32`): skip-free code `fold_multi_pair`
+    //    blocks must remain ungrouped plain Mod rows.
+    let ln = run_corpus("linenum-u32");
+    let r61 = find_row(
+        &ln,
+        "crates/diffuse-core/src/apply/tests.rs",
+        Some(61),
+        Some(61),
+    )
+    .expect("linenum-u32 apply/tests.rs 61/61");
+    assert!(
+        r61.group.is_none(),
+        "skip-free code fold in linenum-u32:61 must not leak a peer group: {r61:?}"
+    );
+}
+
 #[test]
 fn test_scrollbar_grab_drag_dispatch_hunk_1_has_no_groups() {
     if !is_golden_initialized() {

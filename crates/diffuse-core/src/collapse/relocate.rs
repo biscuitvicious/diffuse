@@ -96,6 +96,13 @@ pub(crate) fn relocate_cross_slot_tokens(
                             }
                         }
                     }
+                } else {
+                    // Line-level wholesale rejection in
+                    // `merged_runs_for_texts_with_profile` can hide a genuinely
+                    // wrapped phrase (e.g. `. The thumb`) inside a much longer
+                    // opposite-side run. Fall back to longest common contiguous
+                    // token spans carrying at least one salient token.
+                    collect_common_token_spans(del_text, add_text, profile, &mut candidates);
                 }
             }
             // Check container and statement closing delimiters
@@ -160,9 +167,12 @@ pub(crate) fn relocate_cross_slot_tokens(
 
     // 4. Anti-scavenging coverage floor on pure Add rows:
     // Pure Add rows must not scavenge minor scraps (< 35% coverage) that turn
-    // clean addition lines into pseudo-modified rows.
+    // clean addition lines into pseudo-modified rows. Prose/comment windows
+    // already enforce multi-word / boundary-wrap hygiene above, where a
+    // legitimate 2-3 word wrap onto an 80-column comment line is routinely
+    // 15-30% of the line length.
     for tgt in 0..num_slots {
-        if !is_pure_add.get(tgt).copied().unwrap_or(false) {
+        if prose_win || !is_pure_add.get(tgt).copied().unwrap_or(false) {
             continue;
         }
         let total_new_len: usize = slot_new_text(&slot_runs[tgt]).trim().len();
@@ -1178,6 +1188,41 @@ fn slot_side_projection_and_offset(
         }
     }
     (proj, offset)
+}
+
+/// Extracts common contiguous multi-token spans (`>= 3` tokens, trimmed length
+/// `>= 6`, carrying a salient token) shared by `del_text` and `add_text`.
+/// Invoked only when `merged_runs_for_texts_with_profile` returns zero `Ctx`
+/// runs due to wholesale rejection on asymmetric run lengths.
+fn collect_common_token_spans(
+    del_text: &str,
+    add_text: &str,
+    profile: Option<&LangProfile>,
+    out: &mut Vec<String>,
+) {
+    let dt: Vec<&str> = tokenize_line(del_text).collect();
+    let at: Vec<&str> = tokenize_line(add_text).collect();
+    for i in 0..dt.len() {
+        if dt[i].trim().is_empty() {
+            continue;
+        }
+        for j in 0..at.len() {
+            if dt[i] != at[j] {
+                continue;
+            }
+            let mut k = 1usize;
+            while i + k < dt.len() && j + k < at.len() && dt[i + k] == at[j + k] {
+                k += 1;
+            }
+            if k >= 3 {
+                let joined: String = dt[i..i + k].concat();
+                let trimmed = joined.trim();
+                if trimmed.len() >= 6 && line_has_salient_token(trimmed, profile) {
+                    out.push(trimmed.to_string());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
