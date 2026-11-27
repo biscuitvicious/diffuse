@@ -298,11 +298,6 @@ pub fn peer_reflow_pipeline(
                     let path =
                         solve_cluster_path(&old_rows, &new_rows, old_content, new_content, profile);
                     let segments = segment_path(&path, &old_rows, &new_rows, profile);
-                    let ctx = WindowTypingCtx {
-                        old_content,
-                        new_content,
-                        profile,
-                    };
 
                     // Each segment is emitted or typed on its own, with the
                     // correspondences the path already chose. Plain single rows
@@ -365,7 +360,7 @@ pub fn peer_reflow_pipeline(
                                     &old_rows,
                                     &new_rows,
                                     &pairs,
-                                    &ctx,
+                                    profile,
                                     &mut cluster_out,
                                 );
                             }
@@ -441,12 +436,6 @@ pub fn peer_reflow_pipeline(
     res
 }
 
-struct WindowTypingCtx<'a> {
-    old_content: Option<&'a [&'a str]>,
-    new_content: Option<&'a [&'a str]>,
-    profile: Option<&'a LangProfile>,
-}
-
 fn emit_plain_pair(u: &Row, v: &Row, profile: Option<&LangProfile>, cluster_out: &mut Vec<Row>) {
     let (Some(u_num), Some(v_num)) = (u.old_line(), v.new_line()) else {
         cluster_out.push(u.clone());
@@ -479,20 +468,12 @@ fn emit_window_segment(
     old_rows: &[Row],
     new_rows: &[Row],
     pairs: &[(usize, usize)],
-    ctx: &WindowTypingCtx<'_>,
+    profile: Option<&LangProfile>,
     cluster_out: &mut Vec<Row>,
 ) {
     let old_slice = &old_rows[formation.old_range.clone()];
     let new_slice = &new_rows[formation.new_range.clone()];
-    let mut group_rows = type_window(
-        formation.id,
-        old_slice,
-        new_slice,
-        pairs,
-        ctx.old_content,
-        ctx.new_content,
-        ctx.profile,
-    );
+    let mut group_rows = type_window(formation.id, old_slice, new_slice, pairs, profile);
     group_rows.repair_unmatched_moves();
     group_rows.assert_token_conservation();
 
@@ -519,7 +500,7 @@ fn emit_window_segment(
                 .iter()
                 .all(|(k, _)| *k != RunKind::MovedSrc && *k != RunKind::MovedTgt)
         });
-    let has_strong_link = has_mod || has_salient_moved_link(&group_rows, ctx.profile);
+    let has_strong_link = has_mod || has_salient_moved_link(&group_rows, profile);
 
     for slot in group_rows.slots {
         let group_meta = peer_group_meta(n, m, has_strong_link, is_all_1to1_mods, slot.group);
@@ -942,7 +923,7 @@ mod tests {
             Row::add(AddLine::new(11, "eee row fff")),
             Row::add(AddLine::new(12, "ggg row hhh")),
         ];
-        let mut aligned = type_window(GroupId(1), &dels, &adds, &[], None, None, None);
+        let mut aligned = type_window(GroupId(1), &dels, &adds, &[], None);
         aligned.repair_unmatched_moves();
         aligned.assert_token_conservation();
         // No pair was admissible, so every slot stays single-sided …

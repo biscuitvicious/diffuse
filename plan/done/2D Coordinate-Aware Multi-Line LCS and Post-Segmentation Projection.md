@@ -3,13 +3,13 @@
 - [x] **Phase 1: 2D Token Stream and Slot-Aware Gotoh LCS**
 - [x] **Phase 2: Unified `n × m` Post-Segmentation Slot Projector**
 - [x] **Phase 3: Hybrid Integration with Non-Monotone Residual Relocation**
-- [ ] **Phase 4: Legacy `join("\n")` Retirement and Golden Corpus Calibration**
+- [x] **Phase 4: Legacy `join("\n")` Retirement and Golden Corpus Calibration**
 
 ---
 
 ## Executive Summary
 
-After [`Unified Reflow Lattice`](done/Unified%20Reflow%20Lattice.md) and [`Two-Sided Gap Partitioning and Single-Tape Evidence`](done/Two-Sided%20Gap%20Partitioning%20and%20Single-Tape%20Evidence.md), cluster correspondence (`lattice.rs`) and window membership (`reflow.rs`) are cleanly separated from sub-line token typing (`slot.rs`). However, window typing in [`slot.rs`](../crates/diffuse-core/src/collapse/slot.rs) still splits across four overlapping mechanisms:
+After [`Unified Reflow Lattice`](Unified%20Reflow%20Lattice.md) and [`Two-Sided Gap Partitioning and Single-Tape Evidence`](Two-Sided%20Gap%20Partitioning%20and%20Single-Tape%20Evidence.md), cluster correspondence (`lattice.rs`) and window membership (`reflow.rs`) are cleanly separated from sub-line token typing (`slot.rs`). However, window typing in [`slot.rs`](../../crates/diffuse-core/src/collapse/slot.rs) still splits across four overlapping mechanisms:
 
 1. **Slot-0-only `1 × m` expansion** (`align_expansion_1_to_m`) and **`n × 1` collapse** (`align_collapse_n_to_1`), which concatenate companion lines with `join("\n")`, run a 1D `AlignmentTape`, and reconstruct per-line runs via `split('\n')` and `combine_mod_runs_*`. Because both require the single `Mod` at slot `0`, enclosing-frame windows whose `Mod` lands on a body line at slot `k > 0` (such as `assert_eq!(` … `);` in `osc11-query-gate` and `scrollbar-grab-drag`, `stack.push(` in `rust-lifetime-char`, and `#[serde(` in `diffcoord-anchoring`) bypass multi-line alignment altogether.
 2. **Post-DP tail-orphan folding** (`fold_tail_orphans`), which duplicates the same `join("\n")` + `split('\n')` + `strip_join_newlines` + `folded_runs_project` machinery for adjacent `2 × 1` and `1 × 2` pairs.
@@ -71,7 +71,7 @@ Extend the Gotoh 3-state affine gap solver (reusing `LcsScratchArena` and `uniqu
 - **Cross-slot whitespace prohibition**: Two tokens with `slot_of_old[ot.line] != slot_of_new[nt.line]` must not match when either is whitespace (`token_is_ws`). Leading indentation on `old[i]` can never bleed into `new[j]` of a different slot, while paired `Mod(i, j)` lines (`slot_of_old[i] == slot_of_new[j]`) retain full whitespace alignment.
 - **Same-slot affinity bonus**: When `slot_of_old[ot.line] == slot_of_new[nt.line]`, add a small affinity reward (sized below an identifier match so genuine cross-slot content moves still win, but above ties so repeated delimiters or common tokens like `,`, `)`, and `as f64` stay anchored to their own `Mod` partner instead of drifting across slots).
 - **Cross-slot distance window**: Disallow cross-slot matches whose slot distance exceeds `CROSS_SLOT_WINDOW`, preventing stray matches across distant lines in wide formations.
-- **Defense-in-depth preservation**: Run the existing container-compatibility and subword-cohesion checks ([`tape/builder.rs`](../crates/diffuse-core/src/tape/builder.rs#L170-L201)) over the 2D token streams (with container tracking spanning the multi-line construct and subword adjacency restricted to same-line neighbors).
+- **Defense-in-depth preservation**: Run the existing container-compatibility and subword-cohesion checks ([`tape/builder.rs`](../../crates/diffuse-core/src/tape/builder.rs#L170-L201)) over the 2D token streams (with container tracking spanning the multi-line construct and subword adjacency restricted to same-line neighbors).
 - **Token-product cap**: Return `None` immediately when `old_tokens.len() * new_tokens.len() > token_product_cap()` so the caller falls back cleanly to per-slot alignment.
 
 ### 1.3 Test-First Criteria
@@ -104,14 +104,14 @@ Implement `align_window_2d_tape(aligned_pairs: &[SlotPair<'_>], profile: Option<
        - `slot_of_old[ol] == slot_of_new[nl]` → `Ctx` (with shared anchor id `k`) on `old_runs[ol]` and `new_runs[nl]`.
        - `slot_of_old[ol] != slot_of_new[nl]` → `MovedSrc` on `old_runs[ol]` and `MovedTgt` on `new_runs[nl]`.
    - For every unmatched new token `ni` on new line `nl` → `Add` on `new_runs[nl]`.
-   - **Cross-slot punctuation discipline**: Demote bare-punctuation cross-slot matches (`!text_has_salient_token`) between slot pairs `(s_old, s_new)` that neither share a salient moved token nor have a bare-punctuation line on one side (matching the existing relocation contract in [`slot.rs`](../crates/diffuse-core/src/collapse/slot.rs#L1650-L1658)), demoting both sides together to `Del` + `Add` so conservation remains exact.
+   - **Cross-slot punctuation discipline**: Demote bare-punctuation cross-slot matches (`!text_has_salient_token`) between slot pairs `(s_old, s_new)` that neither share a salient moved token nor have a bare-punctuation line on one side (matching the existing relocation contract in [`slot.rs`](../../crates/diffuse-core/src/collapse/slot.rs)), demoting both sides together to `Del` + `Add` so conservation remains exact.
 
 3. **Per-line leading-whitespace alignment & lockstep `Mod` merge**:
    - For each `Del(ol)` slot: coalesce `old_runs[ol]`.
    - For each `Add(nl)` slot: coalesce `new_runs[nl]`.
    - For each `Mod(ol, nl)` slot:
      - Because `pairs` is monotone, the `Ctx` anchor ids on `old_runs[ol]` and `new_runs[nl]` are identical in sequence.
-     - Interleave lockstep at each `Ctx` anchor: emit old `Del`/`MovedSrc` runs before the anchor, then new `Add`/`MovedTgt` runs before the anchor, then the `Ctx` anchor (applying the leading-indentation shared-suffix/prefix split from [`tape/spans.rs`](../crates/diffuse-core/src/tape/spans.rs#L47-L126) on the initial leading-whitespace `Del`/`Add` pair of every `Mod` line, not just slot `0`).
+     - Interleave lockstep at each `Ctx` anchor: emit old `Del`/`MovedSrc` runs before the anchor, then new `Add`/`MovedTgt` runs before the anchor, then the `Ctx` anchor (applying the leading-indentation shared-suffix/prefix split from [`tape/spans.rs`](../../crates/diffuse-core/src/tape/spans.rs#L47-L126) on the initial leading-whitespace `Del`/`Add` pair of every `Mod` line, not just slot `0`).
    - Verify no `Mod` slot became wholesale (`slot_runs_are_wholesale`); if any `Mod` slot loses all non-whitespace `Ctx`, return `None` to fall back cleanly to per-slot alignment.
 
 ### 2.2 Test-First Criteria
@@ -158,6 +158,6 @@ Once Phase 3 passes all unit, integration, and corpus invariants:
 
 ### 4.2 Golden Review, Performance, and Verification
 
-- Inspect every changed corpus across [`tests/golden/`](../tests/golden/) per [`tests/AGENTS.md`](../tests/AGENTS.md), verifying every diff is strictly cleaner or equivalent (zero regressions, zero `MovedSrc`/`MovedTgt` conservation violations).
+- Inspect every changed corpus across [`tests/golden/`](../../tests/golden/) per [`tests/AGENTS.md`](../../tests/AGENTS.md), verifying every diff is strictly cleaner or equivalent (zero regressions, zero `MovedSrc`/`MovedTgt` conservation violations).
 - Run `cargo test -p diffuse-core --test big_hunk_perf -- --nocapture --test-threads=1` to confirm no latency regression on large hunks.
 - Execute `./scripts/check.sh` cleanly with zero warnings, then archive this plan to `plan/done/`.

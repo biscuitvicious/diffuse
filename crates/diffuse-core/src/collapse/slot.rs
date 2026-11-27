@@ -5,28 +5,21 @@ use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    collapse::{
-        evidence::admissible_from_runs,
-        formation::Formation,
-        frame::{is_open_continuation_line, robust_delim_delta},
-        residual::{are_roles_compatible, declaration_role, has_verbatim_rival},
-        tokens::is_salient_word_match,
-    },
+    collapse::tokens::is_salient_word_match,
     lcs::{
         DEFAULT_MAX_SLOT_DISTANCE, WindowSlotMap, align_lines_2d_with_cap,
         merged_runs_for_texts_with_profile, owned_runs_for_texts_with_profile, token_is_ws,
         token_product_cap, tokenize_line,
     },
-    merge::{Run, RunKind},
+    merge::RunKind,
     parse::{GroupId, PeerGroup, Row, RowKind, Spans},
 };
 
 /// One styled run of a slot's text: a kind plus its exact source text.
 type Runs = Vec<(RunKind, String)>;
 
-/// A slot's runs split across several lines, one entry per line.
-#[allow(dead_code)]
-type LineRuns = Vec<Runs>;
+/// One aligned slot in a segmented window: `(old_row, new_row)`.
+type SlotPair<'a> = (Option<&'a Row>, Option<&'a Row>);
 
 /// An aligned slot within a peer reflow group.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,53 +136,44 @@ pub fn type_window(
     old_rows: &[Row],
     new_rows: &[Row],
     pairs: &[(usize, usize)],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
-    let formation = Formation {
-        id: group_id,
-        old_range: 0..old_rows.len(),
-        new_range: 0..new_rows.len(),
-    };
     let mut aligned_pairs: Vec<SlotPair<'_>> = Vec::with_capacity(old_rows.len() + new_rows.len());
     let (mut o, mut n) = (0usize, 0usize);
     let mut pi = 0usize;
     while o < old_rows.len() || n < new_rows.len() {
         if let Some(&(po, pn)) = pairs.get(pi) {
             if (o, n) == (po, pn) {
-                aligned_pairs.push((Some(&old_rows[o]), Some(&new_rows[n]), None));
+                aligned_pairs.push((Some(&old_rows[o]), Some(&new_rows[n])));
                 o += 1;
                 n += 1;
                 pi += 1;
                 continue;
             }
             if o < po {
-                aligned_pairs.push((Some(&old_rows[o]), None, None));
+                aligned_pairs.push((Some(&old_rows[o]), None));
                 o += 1;
                 continue;
             }
             if n < pn {
-                aligned_pairs.push((None, Some(&new_rows[n]), None));
+                aligned_pairs.push((None, Some(&new_rows[n])));
                 n += 1;
                 continue;
             }
         }
         if o < old_rows.len() {
-            aligned_pairs.push((Some(&old_rows[o]), None, None));
+            aligned_pairs.push((Some(&old_rows[o]), None));
             o += 1;
         } else {
-            aligned_pairs.push((None, Some(&new_rows[n]), None));
+            aligned_pairs.push((None, Some(&new_rows[n])));
             n += 1;
         }
     }
     type_slot_pairs(
         aligned_pairs,
-        &formation,
-        old_rows,
-        new_rows,
-        old_content,
-        new_content,
+        group_id,
+        old_rows.len(),
+        new_rows.len(),
         profile,
     )
 }
@@ -200,26 +184,18 @@ pub fn type_window(
 /// Slot alignment, not membership, is this function's subject: the caller has
 /// already decided which rows belong together, which is what lets a segmented
 /// window be typed without a second alignment pass over the cluster.
-#[allow(clippy::too_many_arguments)]
 fn type_slot_pairs(
     aligned_pairs: Vec<SlotPair<'_>>,
-    group: &Formation,
-    old_rows: &[Row],
-    new_rows: &[Row],
-    _old_content: Option<&[&str]>,
-    _new_content: Option<&[&str]>,
+    group_id: GroupId,
+    n: usize,
+    m: usize,
     profile: Option<&LangProfile>,
 ) -> PeerGroupRows {
-    let group_old = &old_rows[group.old_range.clone()];
-    let group_new = &new_rows[group.new_range.clone()];
-    let n = group_old.len();
-    let m = group_new.len();
-
     let total_slots = aligned_pairs.len();
 
     let is_moved_slot: Vec<bool> = aligned_pairs
         .iter()
-        .map(|(old_opt, new_opt, _)| {
+        .map(|(old_opt, new_opt)| {
             old_opt.is_some_and(|r| matches!(r, Row::MovSrc { .. }))
                 || new_opt.is_some_and(|r| matches!(r, Row::MovTgt { .. }))
         })
@@ -234,11 +210,7 @@ fn type_slot_pairs(
         runs_2d
     } else {
         let mut fallback = Vec::with_capacity(total_slots);
-        for (old_opt, new_opt, pre_runs) in &aligned_pairs {
-            if let Some(runs) = pre_runs {
-                fallback.push(runs.clone());
-                continue;
-            }
+        for (old_opt, new_opt) in &aligned_pairs {
             match (old_opt, new_opt) {
                 (Some(u), Some(v)) => {
                     if u.text() == v.text() {
@@ -276,16 +248,15 @@ fn type_slot_pairs(
     if total_slots > 1 {
         let is_pure_add: Vec<bool> = aligned_pairs
             .iter()
-            .map(|(old_opt, new_opt, _)| old_opt.is_none() && new_opt.is_some())
+            .map(|(old_opt, new_opt)| old_opt.is_none() && new_opt.is_some())
             .collect();
         relocate_cross_slot_tokens(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
         relocate_leftover_frames(&mut slot_runs, &is_moved_slot, &is_pure_add, profile);
     }
 
-    // 4. Construct final AlignedSlotRow list
+    // 3. Construct final AlignedSlotRow list
     let mut slots = Vec::with_capacity(total_slots);
-    for (idx, ((old_opt, new_opt, _), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate()
-    {
+    for (idx, ((old_opt, new_opt), runs)) in aligned_pairs.into_iter().zip(slot_runs).enumerate() {
         let spans = if let Some(Row::MovSrc { spans, .. }) = old_opt {
             spans.clone()
         } else if let Some(Row::MovTgt { spans, .. }) = new_opt {
@@ -330,7 +301,7 @@ fn type_slot_pairs(
             runs,
             spans,
             group: PeerGroup {
-                id: group.id,
+                id: group_id,
                 slot: idx,
                 n,
                 m,
@@ -338,10 +309,7 @@ fn type_slot_pairs(
         });
     }
 
-    PeerGroupRows {
-        group_id: group.id,
-        slots,
-    }
+    PeerGroupRows { group_id, slots }
 }
 
 /// One classified token on an old or new line during 2D slot projection.
@@ -381,7 +349,7 @@ pub(crate) fn align_window_2d_tape(
     let mut old_line_of_slot: Vec<Option<usize>> = vec![None; total_slots];
     let mut new_line_of_slot: Vec<Option<usize>> = vec![None; total_slots];
 
-    for (slot_idx, (old_opt, new_opt, _)) in aligned_pairs.iter().enumerate() {
+    for (slot_idx, (old_opt, new_opt)) in aligned_pairs.iter().enumerate() {
         if let Some(u) = old_opt
             && !matches!(u, Row::MovSrc { .. })
         {
@@ -722,7 +690,7 @@ pub(crate) fn align_window_2d_tape(
     };
 
     let mut slot_runs: Vec<Runs> = Vec::with_capacity(total_slots);
-    for (slot_idx, (old_opt, new_opt, _)) in aligned_pairs.iter().enumerate() {
+    for (slot_idx, (old_opt, new_opt)) in aligned_pairs.iter().enumerate() {
         match (old_line_of_slot[slot_idx], new_line_of_slot[slot_idx]) {
             (Some(ol), Some(nl)) => {
                 let old_pieces = build_old_pieces(ol);
@@ -909,127 +877,6 @@ fn merge_2d_mod_slot(old_pieces: &[ProjectedPiece<'_>], new_pieces: &[ProjectedP
     out
 }
 
-#[allow(dead_code)]
-fn combine_mod_runs_expansion(
-    u_runs: &[(RunKind, String)],
-    v0_runs: &[(RunKind, String)],
-) -> Vec<(RunKind, String)> {
-    let mut out = Vec::new();
-    let mut v_idx = 0;
-
-    let push = |out: &mut Vec<(RunKind, String)>, kind: RunKind, text: &str| {
-        if text.is_empty() {
-            return;
-        }
-        if let Some((last_k, last_t)) = out.last_mut()
-            && *last_k == kind
-        {
-            last_t.push_str(text);
-            return;
-        }
-        out.push((kind, text.to_string()));
-    };
-
-    for (u_kind, u_text) in u_runs {
-        match u_kind {
-            RunKind::Ctx => {
-                while v_idx < v0_runs.len() && v0_runs[v_idx].0 == RunKind::Add {
-                    push(&mut out, RunKind::Add, &v0_runs[v_idx].1);
-                    v_idx += 1;
-                }
-                if v_idx < v0_runs.len() && v0_runs[v_idx].0 == RunKind::Ctx {
-                    v_idx += 1;
-                }
-                push(&mut out, RunKind::Ctx, u_text);
-            }
-            RunKind::Del => {
-                push(&mut out, RunKind::Del, u_text);
-            }
-            RunKind::MovedSrc => {
-                out.push((RunKind::MovedSrc, u_text.clone()));
-            }
-            _ => {}
-        }
-    }
-    while v_idx < v0_runs.len() {
-        if v0_runs[v_idx].0 == RunKind::Add {
-            push(&mut out, RunKind::Add, &v0_runs[v_idx].1);
-        }
-        v_idx += 1;
-    }
-    out
-}
-
-/// Splits `\n`-joined expansion runs back across the `m` constituent new
-/// lines. Line-0 overlap stays `Ctx` on both sides; later-line overlap
-/// becomes `MovedSrc` (Mod) / `MovedTgt` (continuation Add) pairs, which
-/// keeps the closed economy balanced by construction and hides the shared
-/// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
-#[allow(dead_code)]
-fn distribute_expansion_runs(full_runs: &[(RunKind, String)], m: usize) -> (Runs, LineRuns) {
-    let mut u_runs: Vec<(RunKind, String)> = Vec::new();
-    let mut v_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); m];
-    let mut current_line = 0usize;
-    let mut line_0_had_add = false;
-
-    let push = |runs: &mut Vec<(RunKind, String)>, kind: RunKind, text: &str| {
-        if text.is_empty() {
-            return;
-        }
-        if let Some((last_k, last_t)) = runs.last_mut()
-            && *last_k == kind
-        {
-            last_t.push_str(text);
-            return;
-        }
-        runs.push((kind, text.to_string()));
-    };
-
-    for (kind, text) in full_runs {
-        match kind {
-            RunKind::Del => {
-                push(&mut u_runs, RunKind::Del, text.as_str());
-            }
-            RunKind::Add => {
-                if current_line == 0 {
-                    line_0_had_add = true;
-                }
-                let mut lines = text.split('\n');
-                if let Some(first) = lines.next()
-                    && current_line < m
-                {
-                    push(&mut v_runs[current_line], RunKind::Add, first);
-                }
-                for next_part in lines {
-                    current_line += 1;
-                    if current_line < m {
-                        push(&mut v_runs[current_line], RunKind::Add, next_part);
-                    }
-                }
-            }
-            RunKind::Ctx => {
-                if current_line == 0 {
-                    if line_0_had_add {
-                        u_runs.push((RunKind::Ctx, text.clone()));
-                        line_0_had_add = false;
-                    } else {
-                        push(&mut u_runs, RunKind::Ctx, text.as_str());
-                    }
-                    push(&mut v_runs[0], RunKind::Ctx, text.as_str());
-                } else {
-                    u_runs.push((RunKind::MovedSrc, text.clone()));
-                    if current_line < m {
-                        v_runs[current_line].push((RunKind::MovedTgt, text.clone()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    (u_runs, v_runs)
-}
-
 /// Returns `true` when `runs` would turn a `Mod` slot into a wholesale
 /// replacement (zero non-whitespace `Ctx` runs despite non-empty text).
 #[inline]
@@ -1038,265 +885,6 @@ fn slot_runs_are_wholesale(runs: &[(RunKind, String)], old_text: &str, new_text:
         .iter()
         .any(|(kind, text)| *kind == RunKind::Ctx && !text.trim().is_empty());
     !has_non_ws_ctx && (!old_text.trim().is_empty() || !new_text.trim().is_empty())
-}
-
-#[allow(dead_code)]
-fn align_expansion_1_to_m(
-    group: &Formation,
-    old_row: &Row,
-    new_rows: &[Row],
-    profile: Option<&LangProfile>,
-) -> Option<PeerGroupRows> {
-    let m = new_rows.len();
-    let u = old_row.text();
-    let v_texts: Vec<&str> = new_rows.iter().map(Row::text).collect();
-    let joined = v_texts.join("\n");
-    let full_runs = owned_runs_for_texts_with_profile(u, &joined, profile);
-
-    let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, m);
-
-    let slot_0_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
-    if slot_runs_are_wholesale(&slot_0_runs, old_row.text(), new_rows[0].text()) {
-        return None;
-    }
-    let mut slots = Vec::with_capacity(m);
-
-    slots.push(AlignedSlotRow {
-        slot_index: 0,
-        old_line: old_row.old_line(),
-        new_line: new_rows[0].new_line(),
-        old_text: Some(old_row.text().to_string()),
-        new_text: Some(new_rows[0].text().to_string()),
-        kind: RowKind::Mod,
-        is_moved_src: false,
-        is_moved_tgt: false,
-        spans: compute_slot_spans(&slot_0_runs),
-        runs: slot_0_runs,
-        group: PeerGroup {
-            id: group.id,
-            slot: 0,
-            n: 1,
-            m,
-        },
-    });
-
-    for k in 1..m {
-        let runs = std::mem::take(&mut v_runs[k]);
-        let spans = compute_slot_spans(&runs);
-        slots.push(AlignedSlotRow {
-            slot_index: k,
-            old_line: None,
-            new_line: new_rows[k].new_line(),
-            old_text: None,
-            new_text: Some(new_rows[k].text().to_string()),
-            kind: RowKind::Add,
-            is_moved_src: false,
-            is_moved_tgt: false,
-            spans,
-            runs,
-            group: PeerGroup {
-                id: group.id,
-                slot: k,
-                n: 1,
-                m,
-            },
-        });
-    }
-
-    Some(PeerGroupRows {
-        group_id: group.id,
-        slots,
-    })
-}
-
-#[allow(dead_code)]
-fn combine_mod_runs_collapse(
-    u0_runs: &[(RunKind, String)],
-    v_runs: &[(RunKind, String)],
-) -> Vec<(RunKind, String)> {
-    let mut out = Vec::new();
-    let mut u_idx = 0;
-
-    let push = |out: &mut Vec<(RunKind, String)>, kind: RunKind, text: &str| {
-        if text.is_empty() {
-            return;
-        }
-        if let Some((last_k, last_t)) = out.last_mut()
-            && *last_k == kind
-        {
-            last_t.push_str(text);
-            return;
-        }
-        out.push((kind, text.to_string()));
-    };
-
-    for (v_kind, v_text) in v_runs {
-        match v_kind {
-            RunKind::Ctx => {
-                while u_idx < u0_runs.len() && u0_runs[u_idx].0 == RunKind::Del {
-                    push(&mut out, RunKind::Del, &u0_runs[u_idx].1);
-                    u_idx += 1;
-                }
-                if u_idx < u0_runs.len() && u0_runs[u_idx].0 == RunKind::Ctx {
-                    u_idx += 1;
-                }
-                push(&mut out, RunKind::Ctx, v_text);
-            }
-            RunKind::Add => {
-                push(&mut out, RunKind::Add, v_text);
-            }
-            RunKind::MovedTgt => {
-                out.push((RunKind::MovedTgt, v_text.clone()));
-            }
-            _ => {}
-        }
-    }
-    while u_idx < u0_runs.len() {
-        if u0_runs[u_idx].0 == RunKind::Del {
-            push(&mut out, RunKind::Del, &u0_runs[u_idx].1);
-        }
-        u_idx += 1;
-    }
-    out
-}
-
-/// Splits `\n`-joined collapse runs back across the `n` constituent old
-/// lines. Line-0 overlap stays `Ctx` on both sides; later-line overlap
-/// becomes `MovedSrc` (continuation Del) / `MovedTgt` (Mod) pairs, which
-/// keeps the closed economy balanced by construction and hides the shared
-/// runs from cross-slot relocation gathering (it only collects `Del`/`Add`).
-#[allow(dead_code)]
-fn distribute_collapse_runs(full_runs: &[(RunKind, String)], n: usize) -> (LineRuns, Runs) {
-    let mut u_runs: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); n];
-    let mut v_runs: Vec<(RunKind, String)> = Vec::new();
-    let mut current_line = 0usize;
-    let mut line_0_had_del = false;
-
-    let push = |runs: &mut Vec<(RunKind, String)>, kind: RunKind, text: &str| {
-        if text.is_empty() {
-            return;
-        }
-        if let Some((last_k, last_t)) = runs.last_mut()
-            && *last_k == kind
-        {
-            last_t.push_str(text);
-            return;
-        }
-        runs.push((kind, text.to_string()));
-    };
-
-    for (kind, text) in full_runs {
-        match kind {
-            RunKind::Add => {
-                push(&mut v_runs, RunKind::Add, text.as_str());
-            }
-            RunKind::Del => {
-                if current_line == 0 {
-                    line_0_had_del = true;
-                }
-                let mut lines = text.split('\n');
-                if let Some(first) = lines.next()
-                    && current_line < n
-                {
-                    push(&mut u_runs[current_line], RunKind::Del, first);
-                }
-                for next_part in lines {
-                    current_line += 1;
-                    if current_line < n {
-                        push(&mut u_runs[current_line], RunKind::Del, next_part);
-                    }
-                }
-            }
-            RunKind::Ctx => {
-                if current_line == 0 {
-                    push(&mut u_runs[0], RunKind::Ctx, text.as_str());
-                    if line_0_had_del {
-                        v_runs.push((RunKind::Ctx, text.clone()));
-                        line_0_had_del = false;
-                    } else {
-                        push(&mut v_runs, RunKind::Ctx, text.as_str());
-                    }
-                } else {
-                    if current_line < n {
-                        u_runs[current_line].push((RunKind::MovedSrc, text.clone()));
-                    }
-                    v_runs.push((RunKind::MovedTgt, text.clone()));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    (u_runs, v_runs)
-}
-
-#[allow(dead_code)]
-fn align_collapse_n_to_1(
-    group: &Formation,
-    old_rows: &[Row],
-    new_row: &Row,
-    profile: Option<&LangProfile>,
-) -> Option<PeerGroupRows> {
-    let n = old_rows.len();
-    let v = new_row.text();
-    let u_texts: Vec<&str> = old_rows.iter().map(Row::text).collect();
-    let joined = u_texts.join("\n");
-    let full_runs = owned_runs_for_texts_with_profile(&joined, v, profile);
-
-    let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, n);
-
-    let slot_0_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
-    if slot_runs_are_wholesale(&slot_0_runs, old_rows[0].text(), new_row.text()) {
-        return None;
-    }
-    let mut slots = Vec::with_capacity(n);
-
-    slots.push(AlignedSlotRow {
-        slot_index: 0,
-        old_line: old_rows[0].old_line(),
-        new_line: new_row.new_line(),
-        old_text: Some(old_rows[0].text().to_string()),
-        new_text: Some(new_row.text().to_string()),
-        kind: RowKind::Mod,
-        is_moved_src: false,
-        is_moved_tgt: false,
-        spans: compute_slot_spans(&slot_0_runs),
-        runs: slot_0_runs,
-        group: PeerGroup {
-            id: group.id,
-            slot: 0,
-            n,
-            m: 1,
-        },
-    });
-
-    for k in 1..n {
-        let runs = std::mem::take(&mut u_runs[k]);
-        let spans = compute_slot_spans(&runs);
-        slots.push(AlignedSlotRow {
-            slot_index: k,
-            old_line: old_rows[k].old_line(),
-            new_line: None,
-            old_text: Some(old_rows[k].text().to_string()),
-            new_text: None,
-            kind: RowKind::Del,
-            is_moved_src: false,
-            is_moved_tgt: false,
-            spans,
-            runs,
-            group: PeerGroup {
-                id: group.id,
-                slot: k,
-                n,
-                m: 1,
-            },
-        });
-    }
-
-    Some(PeerGroupRows {
-        group_id: group.id,
-        slots,
-    })
 }
 
 fn text_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
@@ -1316,387 +904,6 @@ pub(crate) fn has_salient_moved_link(
     group_rows.slots.iter().flat_map(|s| &s.runs).any(|(k, t)| {
         matches!(k, RunKind::MovedSrc | RunKind::MovedTgt) && text_has_salient_token(t, profile)
     })
-}
-
-/// Determines if a pair of old and new texts is admissible for a post-DP
-/// multi-line fold, reusing one already-built borrowed alignment tape.
-#[allow(dead_code)]
-fn is_admissible_fold_pair(
-    u_text: &str,
-    v_text: &str,
-    runs: &[Run<'_>],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> bool {
-    let u_trim = u_text.trim();
-    let v_trim = v_text.trim();
-
-    let u_decl_role = declaration_role(u_trim);
-    let v_decl_role = declaration_role(v_trim);
-
-    // For declaration-type lines, a verbatim twin elsewhere in the
-    // file content signals relocation; block pairing independently of
-    // admissibility so that e.g. `pub enum Foo {` is not paired with
-    // `pub struct Bar {` when `pub enum Foo {` still exists in the
-    // new snapshot.
-    let decl_has_rival = u_decl_role.is_some()
-        && v_decl_role.is_some()
-        && (has_verbatim_rival(u_trim, new_content) || has_verbatim_rival(v_trim, old_content));
-
-    let is_decl_compat = !decl_has_rival
-        && matches!((u_decl_role, v_decl_role), (Some(d_role), Some(a_role))
-            if are_roles_compatible(d_role, a_role)
-                && u_trim.ends_with('{') == v_trim.ends_with('{'));
-
-    let has_non_ws_ctx = runs
-        .iter()
-        .any(|r| r.kind == RunKind::Ctx && !r.text.trim().is_empty());
-    let is_wholesale = !has_non_ws_ctx && (!u_trim.is_empty() || !v_trim.is_empty());
-    if decl_has_rival || is_wholesale {
-        return false;
-    }
-    admissible_from_runs(u_text, v_text, runs, profile) || is_decl_compat
-}
-
-/// Evidence that `head` opens a multi-line construct continued on a later
-/// line: unclosed delimiters or an open operator ending (mirrors the
-/// cluster-factoring continuation guard). Block openers (`{`) count too:
-/// a flattened `fn f() { body(); }` is a genuine 2-to-1 collapse, and the
-/// coverage gate — not this pre-filter — rejects merged independents.
-#[allow(dead_code)]
-fn is_expression_head_open(trim: &str, delim: i32) -> bool {
-    delim > 0
-        || is_open_continuation_line(trim)
-        || trim.ends_with(',')
-        || trim.ends_with("&&")
-        || trim.ends_with("||")
-}
-
-/// Evidence that a line is the tail of a multi-line expression, using the
-/// Invariant-2 continuation vocabulary: `&&`, `||`, or a chaining `.`
-/// (which can never start a standalone statement).
-#[allow(dead_code)]
-fn is_expression_tail(trim: &str) -> bool {
-    trim.starts_with("&&")
-        || trim.starts_with("||")
-        || (trim.starts_with('.') && !trim.starts_with(".."))
-}
-
-/// Strong expression-head evidence: an unclosed `(`/`[` (block `{`
-/// openers start a new unit — see below) or an open operator ending.
-/// A structurally open head proves continuation on its own; weaker
-/// evidence (trailing `{`/`,`/`&&`/`||` on balanced lines) needs the
-/// bilateral crutch: the other side must be substantially explained too,
-/// otherwise a sibling line (next struct field, next arg) gets absorbed.
-#[allow(dead_code)]
-fn is_strong_expression_head(trim: &str, delim: i32) -> bool {
-    (delim > 0 && !trim.ends_with('{')) || is_open_continuation_line(trim)
-}
-
-/// Gates a `\n`-joined multi-line side against a single-line side for
-/// post-DP absorption using a single profiled alignment tape. Mirrors the
-/// diag scorer's gates (token-overlap floor, admissibility, salient minimum)
-/// plus the Phase-4 coverage gate: the joined side must be substantially
-/// explained, otherwise two independent statements would merge into a
-/// Frankenstein Mod. Returns the matched chars, other-side chars, and the
-/// owned runs from the same tape so callers distribute them directly.
-#[allow(dead_code)]
-fn joined_alignment(
-    joined: &str,
-    other: &str,
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> Option<(usize, usize, Runs)> {
-    let joined_trim = joined.trim();
-    let other_trim = other.trim();
-    if joined_trim.is_empty() || other_trim.is_empty() {
-        return None;
-    }
-    let joined_tokens: Vec<&str> = tokenize_line(joined).collect();
-    let other_tokens: Vec<&str> = tokenize_line(other).collect();
-    let shared_bound: usize = joined_tokens
-        .iter()
-        .filter(|t| !t.trim().is_empty() && other_tokens.contains(t))
-        .map(|t| t.chars().count())
-        .sum();
-    if shared_bound < 3 {
-        return None;
-    }
-    let runs = merged_runs_for_texts_with_profile(joined, other, profile);
-    if !is_admissible_fold_pair(joined, other, &runs, old_content, new_content, profile) {
-        return None;
-    }
-    let matched_chars: usize = runs
-        .iter()
-        .filter(|r| r.kind == RunKind::Ctx && !r.text.trim().is_empty())
-        .map(|r| r.text.chars().count())
-        .sum();
-    if matched_chars < 3 {
-        return None;
-    }
-    let joined_chars = joined_trim.chars().count();
-    let other_chars = other_trim.chars().count();
-    let coverage = matched_chars as f64 / joined_chars.max(1) as f64;
-    // Strict bar: a wrongly-folded orphan is worse than the honest orphan
-    // it replaced (its text would be double-attributed and then scavenged).
-    // Only near-complete reflows may fold; partial overlaps stay 1-to-1
-    // for the evidence-gated relocation stages to handle. The bar sits
-    // below 1.0 to tolerate single-char tokenizer noise on delimiters.
-    if coverage < 0.85 {
-        return None;
-    }
-    let owned_runs = runs
-        .into_iter()
-        .map(|r| (r.kind, r.text.to_string()))
-        .collect();
-    Some((matched_chars, other_chars, owned_runs))
-}
-
-/// A micro-DP aligned pair plus optional precomputed runs for Phase-4
-/// post-DP folds: absorbed 2-to-1 collapse and 1-to-2 expansion slots carry
-/// their `\n`-split runs (shared text as `MovedSrc`/`MovedTgt`, never bare
-/// `Del`/`Add` bait), while 1-to-1 slots carry `None` and compute runs from
-/// their paired texts in the slot-typing pass.
-///
-/// Fold runs must never contain the `\n` join artifact: per-line runs feed
-/// `slots_project_to_text`, and a stray newline breaks the projection and
-/// dissolves the whole group into raw rows. The join side's unmatched text
-/// can straddle the boundary inside an `Add` (expansion) or `Del`
-/// (collapse) run, so the folds strip it after distributing.
-type SlotPair<'a> = (
-    Option<&'a Row>,
-    Option<&'a Row>,
-    Option<Vec<(RunKind, String)>>,
-);
-
-/// Removes the `\n` join artifact from distributed fold runs (see
-/// `SlotPair`): unmatched join-side text can straddle the line boundary
-/// inside one run, and the newline is not part of any real line. Runs left
-/// empty are dropped and same-kind neighbors re-coalesced.
-#[allow(dead_code)]
-fn strip_join_newlines(runs: &mut [Runs]) {
-    for line_runs in runs.iter_mut() {
-        let mut clean = Vec::with_capacity(line_runs.len());
-        for (kind, text) in line_runs.drain(..) {
-            let stripped: String = text.chars().filter(|c| *c != '\n').collect();
-            if !stripped.is_empty() {
-                clean.push((kind, stripped));
-            }
-        }
-        coalesce_runs(&mut clean);
-        *line_runs = clean;
-    }
-}
-
-/// Verifies folded runs project back to their slot texts, mirroring the
-/// group DBC `slots_project_to_text`: the distribute+combine machinery
-/// assumes a clean split at the join boundary, and cross-boundary shared
-/// text can scramble the Mod's run order (see the `len,` expansion case).
-/// A garbled fold abstains instead of tripping the group check, which
-/// would dissolve the whole group into raw rows.
-#[allow(dead_code)]
-fn folded_runs_project(
-    runs: &[(RunKind, String)],
-    old_text: Option<&str>,
-    new_text: Option<&str>,
-) -> bool {
-    let old_proj: String = runs
-        .iter()
-        .filter(|(k, _)| !k.is_add_like())
-        .map(|(_, t)| t.as_str())
-        .collect();
-    let new_proj: String = runs
-        .iter()
-        .filter(|(k, _)| !k.is_del_like())
-        .map(|(_, t)| t.as_str())
-        .collect();
-    match (old_text, new_text) {
-        (Some(o), Some(n)) => old_proj == o && new_proj == n,
-        (Some(o), None) => old_proj == o,
-        (None, Some(n)) => new_proj == n,
-        (None, None) => true,
-    }
-}
-
-/// Phase-4 post-DP absorption: folds a stranded continuation orphan into
-/// an adjacent Mod slot without re-routing the DP alignment.
-///
-/// In-DP multi-line transitions were tried and abandoned: letting a joined
-/// pair compete in the argmax perturbs the global path, stranding lines
-/// whose rightful partners were absorbed elsewhere (and tripping DBC
-/// invariants downstream). Repairing the already-chosen alignment instead
-/// — only ever converting (Mod + honest orphan) into (Mod + grouped
-/// continuation) — cannot steal partners, and keeps the closed economy
-/// balanced by construction (shared text becomes `MovedSrc`/`MovedTgt`).
-#[allow(dead_code)]
-fn fold_tail_orphans(
-    pairs: &mut [SlotPair<'_>],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) {
-    let mut idx = 0;
-    while idx + 1 < pairs.len() {
-        // Each fold consumes its two slots; advance past them either way so
-        // a continuation line folds into exactly one Mod.
-        idx += if fold_window(&mut pairs[idx..idx + 2], old_content, new_content, profile) {
-            2
-        } else {
-            1
-        };
-    }
-}
-
-/// Attempts the collapse and expansion folds on one adjacent slot pair.
-#[allow(dead_code)]
-fn fold_window(
-    window: &mut [SlotPair<'_>],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> bool {
-    fold_collapse_window(window, old_content, new_content, profile)
-        || fold_expansion_window(window, old_content, new_content, profile)
-}
-
-/// Folds `(Mod(u, v), Del(u'))` into a joined Mod when `u'` directly
-/// continues `u`'s expression and `v` covers the joined text.
-#[allow(dead_code)]
-fn fold_collapse_window(
-    window: &mut [SlotPair<'_>],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> bool {
-    if window.len() != 2 || window[0].2.is_some() || window[1].2.is_some() {
-        return false;
-    }
-    let (Some(u), Some(v)) = (window[0].0, window[0].1) else {
-        return false;
-    };
-    let (Some(up), None) = (window[1].0, window[1].1) else {
-        return false;
-    };
-    if u.is_moved() || up.is_moved() || v.is_moved() {
-        return false;
-    }
-    // The orphan must continue the Mod's old line directly.
-    if up.old_line() != u.old_line().map(|n| n + 1) {
-        return false;
-    }
-    let u_text = u.text();
-    let up_text = up.text();
-    let v_text = v.text();
-    let u_trim = u_text.trim();
-    let up_trim = up_text.trim();
-    // Delimiter-soup orphans (`,`, `;`, `}],`) always "cover" trivially
-    // and their shared glyphs double-attribute (struck in the Mod and
-    // moved into it). Only lexical continuations may fold.
-    if up_trim.chars().count() < 3 || !up_trim.chars().any(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    let u_delim = robust_delim_delta(u_trim);
-    if !(is_expression_head_open(u_trim, u_delim) || is_expression_tail(up_trim)) {
-        return false;
-    }
-    let joined = format!("{u_text}\n{up_text}");
-    let Some((matched, other_chars, full_runs)) =
-        joined_alignment(&joined, v_text, old_content, new_content, profile)
-    else {
-        return false;
-    };
-    // Weak head evidence (a balanced line ending in `{`/`,`/`&&`/`||`)
-    // may merely separate siblings: demand the other side be
-    // substantially explained too.
-    if !is_strong_expression_head(u_trim, u_delim)
-        && (matched as f64 / other_chars.max(1) as f64) < 0.60
-    {
-        return false;
-    }
-    let (mut u_runs, v_runs) = distribute_collapse_runs(&full_runs, 2);
-    strip_join_newlines(&mut u_runs);
-    let mod_runs = combine_mod_runs_collapse(&u_runs[0], &v_runs);
-    if slot_runs_are_wholesale(&mod_runs, u_text, v_text)
-        || !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
-        || !folded_runs_project(&u_runs[1], Some(up_text), None)
-    {
-        return false;
-    }
-    let cont_runs = u_runs[1].clone();
-    window[0].2 = Some(mod_runs);
-    window[1].2 = Some(cont_runs);
-    true
-}
-
-/// Folds `(Mod(u, v), Add(v'))` into a joined Mod when `v'` directly
-/// continues `v`'s expression and the joined text covers `u`.
-#[allow(dead_code)]
-fn fold_expansion_window(
-    window: &mut [SlotPair<'_>],
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
-    profile: Option<&LangProfile>,
-) -> bool {
-    if window.len() != 2 || window[0].2.is_some() || window[1].2.is_some() {
-        return false;
-    }
-    let (Some(u), Some(v)) = (window[0].0, window[0].1) else {
-        return false;
-    };
-    let (None, Some(vp)) = (window[1].0, window[1].1) else {
-        return false;
-    };
-    if u.is_moved() || v.is_moved() || vp.is_moved() {
-        return false;
-    }
-    // The orphan must continue the Mod's new line directly.
-    if vp.new_line() != v.new_line().map(|n| n + 1) {
-        return false;
-    }
-    let u_text = u.text();
-    let v_text = v.text();
-    let vp_text = vp.text();
-    let v_trim = v_text.trim();
-    let vp_trim = vp_text.trim();
-    // Delimiter-soup orphans (`,`, `;`, `}],`) always "cover" trivially
-    // and their shared glyphs double-attribute (struck in the Mod and
-    // moved into it). Only lexical continuations may fold.
-    if vp_trim.chars().count() < 3 || !vp_trim.chars().any(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    let v_delim = robust_delim_delta(v_trim);
-    if !(is_expression_head_open(v_trim, v_delim) || is_expression_tail(vp_trim)) {
-        return false;
-    }
-    let joined_new = format!("{v_text}\n{vp_text}");
-    let Some((matched, other_chars, full_runs)) =
-        joined_alignment(u_text, &joined_new, old_content, new_content, profile)
-    else {
-        return false;
-    };
-    // Weak head evidence (a balanced line ending in `{`/`,`/`&&`/`||`)
-    // may merely separate siblings: demand the other side be
-    // substantially explained too.
-    if !is_strong_expression_head(v_trim, v_delim)
-        && (matched as f64 / other_chars.max(1) as f64) < 0.60
-    {
-        return false;
-    }
-    let (u_runs, mut v_runs) = distribute_expansion_runs(&full_runs, 2);
-    strip_join_newlines(&mut v_runs);
-    let mod_runs = combine_mod_runs_expansion(&u_runs, &v_runs[0]);
-    if slot_runs_are_wholesale(&mod_runs, u_text, v_text)
-        || !folded_runs_project(&mod_runs, Some(u_text), Some(v_text))
-        || !folded_runs_project(&v_runs[1], None, Some(vp_text))
-    {
-        return false;
-    }
-    let cont_runs = v_runs[1].clone();
-    window[0].2 = Some(mod_runs);
-    window[1].2 = Some(cont_runs);
-    true
 }
 
 /// Maximum slot distance a relocated token may travel. The candidate
@@ -2840,7 +2047,7 @@ mod tests {
         let dels = vec![make_del(10, "let alpha = 100;")];
         let adds = vec![make_add(10, "let alpha = 101;")];
 
-        let result = type_window(GroupId(1), &dels, &adds, &[(0, 0)], None, None, None);
+        let result = type_window(GroupId(1), &dels, &adds, &[(0, 0)], None);
         assert_eq!(result.slots.len(), 1);
         let s0 = &result.slots[0];
         assert_eq!(s0.kind, RowKind::Mod);
@@ -2858,7 +2065,7 @@ mod tests {
             make_add(22, "}"),
         ];
 
-        let result = type_window(GroupId(2), &dels, &adds, &[(0, 0)], None, None, None);
+        let result = type_window(GroupId(2), &dels, &adds, &[(0, 0)], None);
         assert_eq!(result.slots.len(), 3);
         assert_eq!(result.slots[0].kind, RowKind::Mod);
         assert_eq!(result.slots[1].kind, RowKind::Add);
@@ -2884,15 +2091,7 @@ mod tests {
             make_add(290, "};"),
         ];
 
-        let result = type_window(
-            GroupId(3),
-            &dels,
-            &adds,
-            &[(0, 0), (1, 1)],
-            None,
-            None,
-            None,
-        );
+        let result = type_window(GroupId(3), &dels, &adds, &[(0, 0), (1, 1)], None);
         assert_eq!(result.slots.len(), 3);
         assert_eq!(result.slots[0].kind, RowKind::Mod);
         assert_eq!(result.slots[1].kind, RowKind::Mod);
@@ -2903,14 +2102,14 @@ mod tests {
     #[test]
     fn test_align_pure_add_and_del_groups() {
         let adds = vec![make_add(10, "line 1"), make_add(11, "line 2")];
-        let add_res = type_window(GroupId(4), &[], &adds, &[], None, None, None);
+        let add_res = type_window(GroupId(4), &[], &adds, &[], None);
         assert_eq!(add_res.slots.len(), 2);
         assert_eq!(add_res.slots[0].kind, RowKind::Add);
         assert_eq!(add_res.slots[1].kind, RowKind::Add);
         add_res.assert_token_conservation();
 
         let dels = vec![make_del(10, "del 1"), make_del(11, "del 2")];
-        let del_res = type_window(GroupId(5), &dels, &[], &[], None, None, None);
+        let del_res = type_window(GroupId(5), &dels, &[], &[], None);
         assert_eq!(del_res.slots.len(), 2);
         assert_eq!(del_res.slots[0].kind, RowKind::Del);
         assert_eq!(del_res.slots[1].kind, RowKind::Del);
@@ -3491,7 +2690,7 @@ mod tests {
             make_add(10, "let shared = alpha_v2();"),
             make_add(11, "let added_tail = gamma();"),
         ];
-        let res = type_window(GroupId(9), &dels, &adds, &[(0, 0)], None, None, None);
+        let res = type_window(GroupId(9), &dels, &adds, &[(0, 0)], None);
         assert_eq!(res.slots.len(), 3);
         assert_eq!(res.slots[0].kind, RowKind::Mod);
         assert_eq!(
@@ -3517,7 +2716,7 @@ mod tests {
             ),
             make_add(383, "        frame.contains(color),"),
         ];
-        let res = type_window(GroupId(1), &dels, &adds, &[(0, 0)], None, None, rs);
+        let res = type_window(GroupId(1), &dels, &adds, &[(0, 0)], rs);
         assert!(
             !slot_runs_are_wholesale(&res.slots[0].runs, dels[0].text(), adds[0].text()),
             "slot 0 must never degrade into a wholesale Mod row: {:?}",
@@ -3525,13 +2724,36 @@ mod tests {
         );
     }
 
+    fn runs_project_to_text(
+        runs: &[(RunKind, String)],
+        old_text: Option<&str>,
+        new_text: Option<&str>,
+    ) -> bool {
+        let old_proj: String = runs
+            .iter()
+            .filter(|(k, _)| !k.is_add_like())
+            .map(|(_, t)| t.as_str())
+            .collect();
+        let new_proj: String = runs
+            .iter()
+            .filter(|(k, _)| !k.is_del_like())
+            .map(|(_, t)| t.as_str())
+            .collect();
+        match (old_text, new_text) {
+            (Some(o), Some(n)) => old_proj == o && new_proj == n,
+            (Some(o), None) => old_proj == o,
+            (None, Some(n)) => new_proj == n,
+            (None, None) => true,
+        }
+    }
+
     fn assert_2d_conservation_and_projection(pairs: &[SlotPair<'_>], slot_runs: &[Runs]) {
         assert_eq!(pairs.len(), slot_runs.len());
         let mut src: Vec<&str> = Vec::new();
         let mut tgt: Vec<&str> = Vec::new();
-        for ((old_opt, new_opt, _), runs) in pairs.iter().zip(slot_runs) {
+        for ((old_opt, new_opt), runs) in pairs.iter().zip(slot_runs) {
             assert!(
-                folded_runs_project(runs, old_opt.map(Row::text), new_opt.map(Row::text)),
+                runs_project_to_text(runs, old_opt.map(Row::text), new_opt.map(Row::text)),
                 "slot projection mismatch: old={:?}, new={:?}, runs={:?}",
                 old_opt.map(Row::text),
                 new_opt.map(Row::text),
@@ -3562,10 +2784,10 @@ mod tests {
         let new2 = make_add(136, "        DiffuseTheme::dark()");
         let new3 = make_add(137, "    );");
         let pairs: Vec<SlotPair<'_>> = vec![
-            (None, Some(&new0), None),
-            (Some(&old), Some(&new1), None),
-            (None, Some(&new2), None),
-            (None, Some(&new3), None),
+            (None, Some(&new0)),
+            (Some(&old), Some(&new1)),
+            (None, Some(&new2)),
+            (None, Some(&new3)),
         ];
 
         let runs = align_window_2d_tape(&pairs, rs).expect("2D tape succeeds");
@@ -3614,10 +2836,10 @@ mod tests {
         let o3 = make_del(45, ")]");
         let n0 = make_add(97, "#[serde(tag = \"kind\", rename_all = \"camelCase\")]");
         let pairs: Vec<SlotPair<'_>> = vec![
-            (Some(&o0), None, None),
-            (Some(&o1), None, None),
-            (Some(&o2), Some(&n0), None),
-            (Some(&o3), None, None),
+            (Some(&o0), None),
+            (Some(&o1), None),
+            (Some(&o2), Some(&n0)),
+            (Some(&o3), None),
         ];
 
         let runs = align_window_2d_tape(&pairs, rs).expect("2D collapse succeeds");
@@ -3659,10 +2881,10 @@ mod tests {
         let n2 = make_add(12, "    );");
         let n3 = make_add(13, "    let beta = finish(alpha);");
         let pairs: Vec<SlotPair<'_>> = vec![
-            (Some(&o0), Some(&n0), None),
-            (None, Some(&n1), None),
-            (None, Some(&n2), None),
-            (Some(&o1), Some(&n3), None),
+            (Some(&o0), Some(&n0)),
+            (None, Some(&n1)),
+            (None, Some(&n2)),
+            (Some(&o1), Some(&n3)),
         ];
         let runs = align_window_2d_tape(&pairs, rs).expect("2x4 2D alignment succeeds");
         assert_2d_conservation_and_projection(&pairs, &runs);
@@ -3683,13 +2905,13 @@ mod tests {
         );
 
         // Single-sided window returns None.
-        let del_only: Vec<SlotPair<'_>> = vec![(Some(&o0), None, None)];
+        let del_only: Vec<SlotPair<'_>> = vec![(Some(&o0), None)];
         assert!(align_window_2d_tape(&del_only, rs).is_none());
 
         // Wholesale Mod slot triggers clean None fallback.
         let w_old = make_del(1, "    alpha_one");
         let w_new = make_add(1, "    beta_two");
-        let wholesale_pairs: Vec<SlotPair<'_>> = vec![(Some(&w_old), Some(&w_new), None)];
+        let wholesale_pairs: Vec<SlotPair<'_>> = vec![(Some(&w_old), Some(&w_new))];
         assert!(align_window_2d_tape(&wholesale_pairs, rs).is_none());
 
         // Pre-moved slot retains cached_runs untouched alongside normal slots.
@@ -3699,8 +2921,7 @@ mod tests {
             cached_runs: vec![(RunKind::Ctx, "    moved_line();".to_string())],
             group: None,
         };
-        let with_moved: Vec<SlotPair<'_>> =
-            vec![(Some(&o0), Some(&n0), None), (Some(&mov_src), None, None)];
+        let with_moved: Vec<SlotPair<'_>> = vec![(Some(&o0), Some(&n0)), (Some(&mov_src), None)];
         let moved_runs = align_window_2d_tape(&with_moved, rs).expect("preserves MovSrc slot");
         assert_eq!(
             moved_runs[1],
@@ -3736,7 +2957,7 @@ mod tests {
             make_add(244, "        Some(prop_thumb.clamp(min_thumb, max_thumb))"),
         ];
 
-        let mut res = type_window(GroupId(1), &dels, &adds, &[(1, 0), (3, 1)], None, None, rs);
+        let mut res = type_window(GroupId(1), &dels, &adds, &[(1, 0), (3, 1)], rs);
         res.repair_unmatched_moves();
         res.assert_token_conservation();
 

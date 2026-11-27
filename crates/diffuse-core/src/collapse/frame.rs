@@ -1,5 +1,4 @@
-//! Syntactic frame predicates for delimiter balance and open continuation
-//! lines.
+//! Syntactic frame predicates for delimiter balance.
 
 use diffuse_algo::{DelimiterCategory, UniversalDelimiterClassifier};
 
@@ -69,24 +68,6 @@ pub(crate) fn robust_delim_delta(text: &str) -> i32 {
     delta
 }
 
-/// Reports whether `line` ends with an open assignment or arrow operator (`=`,
-/// `=>`, `->`) rather than a comparison operator (`==`, `!=`, `<=`, `>=`).
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn is_open_continuation_line(line: &str) -> bool {
-    let t = line.trim();
-    if t.is_empty() {
-        return false;
-    }
-    (t.ends_with('=')
-        && !t.ends_with("==")
-        && !t.ends_with("!=")
-        && !t.ends_with("<=")
-        && !t.ends_with(">="))
-        || t.ends_with("=>")
-        || t.ends_with("->")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,18 +83,5 @@ mod tests {
         assert_eq!(robust_delim_delta("\x1b[31mfn f(\x1b[0m"), 1);
         assert_eq!(robust_delim_delta("let s = \"\\\")\";"), 0);
         assert_eq!(robust_delim_delta("\x1b[31"), 0);
-    }
-
-    #[test]
-    fn open_continuation_line_distinguishes_assignments_and_comparisons() {
-        assert!(!is_open_continuation_line("   "));
-        assert!(is_open_continuation_line("let x ="));
-        assert!(is_open_continuation_line("Pattern =>"));
-        assert!(is_open_continuation_line("fn f() ->"));
-        assert!(!is_open_continuation_line("a == b"));
-        assert!(!is_open_continuation_line("a =="));
-        assert!(!is_open_continuation_line("a !="));
-        assert!(!is_open_continuation_line("a <="));
-        assert!(!is_open_continuation_line("a >="));
     }
 }
