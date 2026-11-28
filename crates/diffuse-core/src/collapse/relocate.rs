@@ -9,6 +9,7 @@ use std::cmp::{Ordering, Reverse};
 
 use diffuse_algo::dyck::{DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier};
 use diffuse_syntax::profile::LangProfile;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     collapse::{
@@ -131,6 +132,7 @@ pub(crate) fn relocate_cross_slot_tokens(
     let mut donors_for_tgt = vec![Vec::<usize>::new(); num_slots];
     let mut exchanges = Vec::<(usize, usize, String)>::new();
     let prose_win = is_prose_slot_runs(slot_runs, profile);
+    let (old_word_freq, new_word_freq) = count_slot_window_words(slot_runs);
 
     for token in &salient {
         apply_relocation_candidate(
@@ -143,6 +145,7 @@ pub(crate) fn relocate_cross_slot_tokens(
             None,
             false,
             prose_win,
+            (&old_word_freq, &new_word_freq),
             &mut linked,
             profile,
         );
@@ -159,6 +162,7 @@ pub(crate) fn relocate_cross_slot_tokens(
                 Some(&linked),
                 true,
                 false,
+                (&old_word_freq, &new_word_freq),
                 &mut Vec::new(),
                 profile,
             );
@@ -828,6 +832,92 @@ fn coalesce_runs(runs: &mut Runs) {
     *runs = coalesced;
 }
 
+/// Counts full alphanumeric/underscore words across all old-side and new-side
+/// text in the window, mirroring Stage 1's window-local multiplicity table.
+fn count_slot_window_words(
+    slot_runs: &[Runs],
+) -> (FxHashMap<String, usize>, FxHashMap<String, usize>) {
+    let mut old_freq: FxHashMap<String, usize> = FxHashMap::default();
+    let mut new_freq: FxHashMap<String, usize> = FxHashMap::default();
+    for runs in slot_runs {
+        for word in slot_old_text(runs)
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| !w.is_empty())
+        {
+            *old_freq.entry(word.to_string()).or_default() += 1;
+        }
+        for word in slot_new_text(runs)
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| !w.is_empty())
+        {
+            *new_freq.entry(word.to_string()).or_default() += 1;
+        }
+    }
+    (old_freq, new_freq)
+}
+
+/// Returns `true` when `matched_text` would scavenge onto a pure-`Add` row
+/// that has no existing move link and introduces unmatched salient identifiers
+/// of its own, supported by at most one distinct repeated/ambiguous salient
+/// word (e.g. a user-defined repeated type `: ScrollPx,`).
+fn is_ambiguous_pure_add_scavenge(
+    matched_text: &str,
+    tgt_runs: &Runs,
+    span: (usize, usize, usize),
+    has_mod_slot: bool,
+    word_freqs: (&FxHashMap<String, usize>, &FxHashMap<String, usize>),
+    profile: Option<&LangProfile>,
+) -> bool {
+    let (a_run_idx, start_a, end_a) = span;
+    let (old_word_freq, new_word_freq) = word_freqs;
+    // If the target row already carries moved content, don't block extensions.
+    if tgt_runs.iter().any(|(k, _)| *k == RunKind::MovedTgt) {
+        return false;
+    }
+    let mut matched_salient: FxHashSet<&str> = FxHashSet::default();
+    let mut has_unique = false;
+    let mut has_unbalanced = false;
+    for w in matched_text
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+    {
+        let is_sal = !COMMON_KEYWORDS.contains(&w) && token_is_salient(w, profile);
+        let of = old_word_freq.get(w).copied().unwrap_or(0);
+        let nf = new_word_freq.get(w).copied().unwrap_or(0);
+        let is_uniq = of == 1 && nf == 1;
+        if is_sal {
+            matched_salient.insert(w);
+            if is_uniq {
+                has_unique = true;
+            }
+            if of != nf {
+                has_unbalanced = true;
+            }
+        }
+    }
+    if has_unique || matched_salient.len() > 1 || (!has_mod_slot && !has_unbalanced) {
+        return false;
+    }
+    // Check whether the target pure-Add row introduces an unmatched salient
+    // identifier outside `matched_text`.
+    for (idx, (kind, text)) in tgt_runs.iter().enumerate() {
+        if *kind != RunKind::Add {
+            continue;
+        }
+        let slices: [&str; 2] = if idx == a_run_idx {
+            [&text[..start_a], &text[end_a..]]
+        } else {
+            [text.as_str(), ""]
+        };
+        for slice in slices {
+            if line_has_salient_token(slice, profile) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Relocates one candidate token from Del runs to Add runs across slot
 /// pairs within [`DEFAULT_MAX_SLOT_DISTANCE`]. When `gate` is `Some`, only
 /// pairs in it may exchange the token — unless `allow_bare_lines` and one
@@ -844,11 +934,18 @@ fn apply_relocation_candidate(
     gate: Option<&[(usize, usize)]>,
     allow_bare_lines: bool,
     prose_win: bool,
+    word_freqs: (&FxHashMap<String, usize>, &FxHashMap<String, usize>),
     linked: &mut Vec<(usize, usize)>,
     profile: Option<&LangProfile>,
 ) {
     let num_slots = slot_runs.len();
     let is_weak = is_generic_subtoken(token, profile);
+    let has_mod_slot = slot_runs.iter().enumerate().any(|(i, runs)| {
+        !is_moved_slot.get(i).copied().unwrap_or(false)
+            && !is_pure_add.get(i).copied().unwrap_or(false)
+            && !slot_old_text(runs).trim().is_empty()
+            && !slot_new_text(runs).trim().is_empty()
+    });
 
     for src in 0..num_slots {
         if is_moved_slot.get(src).copied().unwrap_or(false) {
@@ -946,6 +1043,20 @@ fn apply_relocation_candidate(
                 );
 
                 let matched_text = slot_runs[src][d_run_idx].1[start_d..end_d].to_string();
+                if !prose_win
+                    && gate.is_none()
+                    && is_pure_add.get(tgt).copied().unwrap_or(false)
+                    && is_ambiguous_pure_add_scavenge(
+                        &matched_text,
+                        &slot_runs[tgt],
+                        (a_run_idx, start_a, end_a),
+                        has_mod_slot,
+                        word_freqs,
+                        profile,
+                    )
+                {
+                    break;
+                }
                 if prose_win
                     && !prose_stage2_match_allowed(
                         &matched_text,

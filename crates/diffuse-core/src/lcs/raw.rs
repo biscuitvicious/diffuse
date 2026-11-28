@@ -45,10 +45,36 @@ impl<'a> SlotAffinity<'a> {
         (self.old.slot_of_line[la], self.new.slot_of_line[lb])
     }
 
+    /// Whether `(i, j)` is a strictly interior whitespace token sandwiched
+    /// between identical non-whitespace tokens on both its left and right
+    /// within the same `(old_line, new_line)` pair, with at least one
+    /// alphanumeric neighbor (so bare punctuation clusters such as `- [ ]` or
+    /// `) => {` do not gain cross-slot bridging power).
+    #[inline]
+    fn is_interior_ws_bridge(&self, i: usize, j: usize) -> bool {
+        let gi = self.offset_a + i;
+        let gj = self.offset_b + j;
+        let ra = &self.old.line_ranges[self.old.lines[gi]];
+        let rb = &self.new.line_ranges[self.new.lines[gj]];
+        if !(gi > ra.start && gi + 1 < ra.end && gj > rb.start && gj + 1 < rb.end) {
+            return false;
+        }
+        let prev_a = self.old.tokens[gi - 1];
+        let next_a = self.old.tokens[gi + 1];
+        !token_is_ws(prev_a)
+            && !token_is_ws(next_a)
+            && (token_is_alnum(prev_a) || token_is_alnum(next_a))
+            && prev_a == self.new.tokens[gj - 1]
+            && next_a == self.new.tokens[gj + 1]
+    }
+
     #[inline]
     fn pair_permitted(&self, i: usize, j: usize, is_ws: bool) -> bool {
         let (sa, sb) = self.slot_pair(i, j);
-        sa.abs_diff(sb) <= self.max_slot_distance && (sa == sb || !is_ws)
+        if sa.abs_diff(sb) > self.max_slot_distance {
+            return false;
+        }
+        sa == sb || !is_ws || self.is_interior_ws_bridge(i, j)
     }
 
     #[inline]

@@ -4042,3 +4042,137 @@ fn scrollbar_mouse_scroll_down_call_stays_ungrouped_mod() {
         out[0].cached_runs()
     );
 }
+
+#[test]
+fn param_expansion_keeps_coupled_types_and_blocks_repeated_type_scavenging() {
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+
+    for ty in ["usize", "ScrollPx"] {
+        let h = hunk(vec![
+            row(
+                RowKind::Del,
+                &format!(
+                    "    pub(crate) fn scrollbar_scroll_for_row(track_h: {ty}, max_scroll: {ty}, row: {ty}) -> {ty} {{"
+                ),
+                None,
+                Some(295),
+            ),
+            row(
+                RowKind::Add,
+                "    pub(crate) fn scrollbar_scroll_for_row(",
+                Some(362),
+                None,
+            ),
+            row(
+                RowKind::Add,
+                &format!("        track_h: {ty},"),
+                Some(363),
+                None,
+            ),
+            row(RowKind::Add, &format!("        vh: {ty},"), Some(364), None),
+            row(
+                RowKind::Add,
+                &format!("        total_vis_lines: {ty},"),
+                Some(365),
+                None,
+            ),
+            row(
+                RowKind::Add,
+                &format!("        header_vis: {ty},"),
+                Some(366),
+                None,
+            ),
+            row(
+                RowKind::Add,
+                &format!("        row: {ty},"),
+                Some(367),
+                None,
+            ),
+            row(RowKind::Add, &format!("    ) -> {ty} {{"), Some(368), None),
+        ]);
+        let out = collapse_hunk_rows(&h, None, None, rs);
+        assert_eq!(out.len(), 7, "type={ty}");
+
+        // Head row keeps `max_scroll: <ty>, ` deleted (not scavenged).
+        let del_text: String = out[0]
+            .cached_runs()
+            .iter()
+            .filter(|(k, _)| *k == crate::merge::RunKind::Del)
+            .map(|(_, t)| t.as_str())
+            .collect();
+        assert_eq!(
+            del_text,
+            format!(" max_scroll: {ty}, "),
+            "deleted param must keep its coupled type deleted (type={ty}): {:?}",
+            out[0].cached_runs()
+        );
+
+        // `track_h: <ty>,` moves intact (no filled `<ty>,`).
+        let moved_363: String = out[1]
+            .cached_runs()
+            .iter()
+            .filter(|(k, _)| *k == crate::merge::RunKind::MovedTgt)
+            .map(|(_, t)| t.as_str())
+            .collect();
+        assert_eq!(
+            moved_363,
+            format!("track_h: {ty},"),
+            "track_h and its type must move together (type={ty}): {:?}",
+            out[1].cached_runs()
+        );
+
+        // Brand-new params (`vh`, `total_vis_lines`, `header_vis`) stay 100%
+        // pure Add.
+        for idx in [2, 3, 4] {
+            assert!(
+                out[idx]
+                    .cached_runs()
+                    .iter()
+                    .all(|(k, _)| *k == crate::merge::RunKind::Add),
+                "added param slot {idx} must not scavenge `{ty}`: {:?}",
+                out[idx].cached_runs()
+            );
+        }
+
+        // `row: <ty>` and `) -> <ty> {` move intact.
+        let moved_367: String = out[5]
+            .cached_runs()
+            .iter()
+            .filter(|(k, _)| *k == crate::merge::RunKind::MovedTgt)
+            .map(|(_, t)| t.as_str())
+            .collect();
+        assert_eq!(moved_367, format!("row: {ty}"), "type={ty}");
+
+        let moved_368: String = out[6]
+            .cached_runs()
+            .iter()
+            .filter(|(k, _)| *k == crate::merge::RunKind::MovedTgt)
+            .map(|(_, t)| t.as_str())
+            .collect();
+        assert_eq!(moved_368, format!(") -> {ty} {{"), "type={ty}");
+        assert_peer_group_invariants(&out);
+    }
+
+    // Unique 1-to-1 user-defined type still moves when a parameter is renamed.
+    let unique_h = hunk(vec![
+        row(
+            RowKind::Del,
+            "fn f(old_name: MyUniqueWidget, keep: usize) {",
+            None,
+            Some(1),
+        ),
+        row(RowKind::Add, "fn f(", Some(1), None),
+        row(RowKind::Add, "    new_name: MyUniqueWidget,", Some(2), None),
+        row(RowKind::Add, "    keep: usize,", Some(3), None),
+        row(RowKind::Add, ") {", Some(4), None),
+    ]);
+    let unique_out = collapse_hunk_rows(&unique_h, None, None, rs);
+    assert!(
+        unique_out[1]
+            .cached_runs()
+            .iter()
+            .any(|(k, t)| *k == crate::merge::RunKind::MovedTgt && t.contains("MyUniqueWidget")),
+        "unique 1-to-1 user type must still move: {:?}",
+        unique_out[1].cached_runs()
+    );
+}

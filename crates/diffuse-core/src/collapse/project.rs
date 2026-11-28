@@ -231,10 +231,81 @@ fn extract_window_lines<'a>(window_slots: &[WindowSlot<'a>]) -> Option<WindowLin
     })
 }
 
-/// Demotes coincidental bare-punctuation cross-slot matches between unrelated
-/// full lines back to `Del`/`Add`, preserving matches inside the same slot,
-/// single-construct windows, salient-linked slot pairs, or bare-punctuation
-/// lines.
+/// Reconstructs the contiguous alphanumeric/underscore full word containing
+/// `tokens[idx]` (matching `is_token_salient_in_context`'s subword grouping).
+fn full_subword_at<'a>(tokens: &[&'a str], idx: usize) -> Option<&'a str> {
+    let t = *tokens.get(idx)?;
+    if !crate::lcs::token_is_alnum(t) {
+        return None;
+    }
+    let mut start = idx;
+    while start > 0
+        && crate::lcs::tokenizer::are_contiguous_subwords(tokens[start - 1], tokens[start])
+    {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < tokens.len()
+        && crate::lcs::tokenizer::are_contiguous_subwords(tokens[end - 1], tokens[end])
+    {
+        end += 1;
+    }
+    let full_start = tokens[start].as_ptr();
+    let full_len =
+        (tokens[end - 1].as_ptr() as usize + tokens[end - 1].len()) - full_start as usize;
+    // SAFETY: contiguous subwords come from the same source `&str` line slice.
+    Some(unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(full_start, full_len)) })
+}
+
+/// Counts occurrences of each distinct full alphanumeric word across all lines
+/// in `side`, counting each contiguous multi-subword identifier once per
+/// occurrence.
+fn count_window_words<'a>(
+    side: &crate::lcs::MultiLineTokens<'a>,
+    texts: &[&'a str],
+) -> FxHashMap<&'a str, usize> {
+    let mut freq: FxHashMap<&'a str, usize> = FxHashMap::default();
+    for range in &side.line_ranges {
+        let line_toks = &texts[range.clone()];
+        let mut i = 0;
+        while i < line_toks.len() {
+            if !crate::lcs::token_is_alnum(line_toks[i]) {
+                i += 1;
+                continue;
+            }
+            let mut end = i + 1;
+            while end < line_toks.len()
+                && crate::lcs::tokenizer::are_contiguous_subwords(
+                    line_toks[end - 1],
+                    line_toks[end],
+                )
+            {
+                end += 1;
+            }
+            if let Some(word) = full_subword_at(line_toks, i) {
+                *freq.entry(word).or_default() += 1;
+            }
+            i = end;
+        }
+    }
+    freq
+}
+
+/// Demotes coincidental bare-punctuation, non-salient, and ambiguous-only
+/// cross-slot matches between unrelated full lines back to `Del`/`Add`.
+///
+/// Preserves matches that:
+/// - stay within the same slot (`so == sn`),
+/// - belong to a slot pair linked by a genuine content anchor (a salient
+///   identifier or unique multi-character literal, excluding single repeated
+///   ambiguous words scavenging onto a pure-`Add`/`Del` line with its own
+///   unmatched salient identifiers),
+/// - land on a line with no salient identifiers of its own (e.g. `) -> usize {`
+///   or `);`), or
+/// - carry the construct-closing trailing suffix on the final line pair of a
+///   single-construct (`1 × m` or `n × 1`) window that already carries a
+///   salient cross-slot link (e.g. `=> {` on the last arm of a `1 × 3` match
+///   arm expansion).
 fn filter_cross_slot_punctuation(
     aln: &MultiLineAlignment<'_>,
     window: &WindowLines<'_>,
@@ -252,14 +323,138 @@ fn filter_cross_slot_punctuation(
         .map(|line| line_has_salient_token(line, profile))
         .collect();
 
-    let mut salient_linked: FxHashSet<(usize, usize)> = FxHashSet::default();
+    let old_texts: Vec<&str> = aln.old.tokens.iter().map(|t| t.text).collect();
+    let new_texts: Vec<&str> = aln.new.tokens.iter().map(|t| t.text).collect();
+    let old_word_freq = count_window_words(&aln.old, &old_texts);
+    let new_word_freq = count_window_words(&aln.new, &new_texts);
+
+    let mut matched_old = vec![false; aln.old.tokens.len()];
+    let mut matched_new = vec![false; aln.new.tokens.len()];
+    for &(oi, ni) in &aln.pairs {
+        matched_old[oi] = true;
+        matched_new[ni] = true;
+    }
+
+    let line_has_unmatched_salient = |side: &crate::lcs::MultiLineTokens<'_>,
+                                      texts: &[&str],
+                                      matched: &[bool],
+                                      line_idx: usize| {
+        let range = &side.line_ranges[line_idx];
+        let line_toks = &texts[range.clone()];
+        (range.start..range.end).any(|gi| {
+            !matched[gi]
+                && crate::lcs::is_token_salient_in_context(line_toks, gi - range.start, profile)
+        })
+    };
+
+    // Track per cross-slot `(so, sn)` pair: distinct matched content words and
+    // whether at least one matched content word is unambiguous (1-to-1 in the
+    // window).
+    let mut pair_words: FxHashMap<(usize, usize), FxHashSet<&str>> = FxHashMap::default();
+    let mut pair_has_unique: FxHashSet<(usize, usize)> = FxHashSet::default();
+    let mut pair_lines: FxHashMap<(usize, usize), (usize, usize)> = FxHashMap::default();
+
     for &(oi, ni) in &aln.pairs {
         let ol = aln.old.tokens[oi].line;
         let nl = aln.new.tokens[ni].line;
         let so = window.slot_of_old[ol];
         let sn = window.slot_of_new[nl];
-        if so != sn && line_has_salient_token(aln.old.tokens[oi].text, profile) {
+        if so == sn {
+            continue;
+        }
+        let o_range = &aln.old.line_ranges[ol];
+        let o_line_toks = &old_texts[o_range.clone()];
+        let local_oi = oi - o_range.start;
+        let Some(word) = full_subword_at(o_line_toks, local_oi) else {
+            continue;
+        };
+        let is_salient = crate::lcs::is_token_salient_in_context(o_line_toks, local_oi, profile);
+        let is_unique = old_word_freq.get(word).copied().unwrap_or(0) == 1
+            && new_word_freq.get(word).copied().unwrap_or(0) == 1;
+        let is_unique_literal = is_unique
+            && crate::lcs::char_len(word) >= 2
+            && !crate::lcs::tokenizer::COMMON_KEYWORDS.contains(&word)
+            && !profile.is_some_and(|p| p.is_non_salient(word));
+        if is_salient || is_unique_literal {
+            pair_words.entry((so, sn)).or_default().insert(word);
+            pair_lines.insert((so, sn), (ol, nl));
+            if is_unique {
+                pair_has_unique.insert((so, sn));
+            }
+        }
+    }
+
+    let mut salient_linked: FxHashSet<(usize, usize)> = FxHashSet::default();
+    for (&(so, sn), words) in &pair_words {
+        let (ol, nl) = pair_lines[&(so, sn)];
+        let has_unique = pair_has_unique.contains(&(so, sn));
+        // Anti-scavenging guard: if a pure-Add (or pure-Del) line introduces
+        // unmatched salient identifiers of its own, a single repeated/ambiguous
+        // word (e.g. a user-defined repeated type `ScrollPx`) is insufficient
+        // evidence of a cross-slot move.
+        let single_ambiguous_word = !has_unique && words.len() <= 1;
+        let pure_add_scavenge = single_ambiguous_word
+            && window.old_line_of_slot[sn].is_none()
+            && line_has_unmatched_salient(&aln.new, &new_texts, &matched_new, nl);
+        let pure_del_scavenge = single_ambiguous_word
+            && window.new_line_of_slot[so].is_none()
+            && line_has_unmatched_salient(&aln.old, &old_texts, &matched_old, ol);
+        if !pure_add_scavenge && !pure_del_scavenge {
             salient_linked.insert((so, sn));
+        }
+    }
+
+    // In a single-construct expansion/collapse (`1 × m` or `n × 1`), preserve
+    // the contiguous trailing construct-closing suffix on the final `(ol, nl)`
+    // line pair when either the window already carries a salient cross-slot
+    // move (e.g. `=> {` on a `1 × 3` match arm expansion) or the suffix has at
+    // least two non-whitespace tokens ending in a statement/block delimiter
+    // (e.g. `);` when the opening call frame relocates non-monotonically in
+    // Stage 2).
+    let mut terminal_suffix_pairs: FxHashSet<(usize, usize)> = FxHashSet::default();
+    if is_single_construct && !aln.pairs.is_empty() {
+        let last_ol = window.old_lines.len() - 1;
+        let last_nl = window.new_lines.len() - 1;
+        let last_non_ws = |side: &crate::lcs::MultiLineTokens<'_>, line: usize| {
+            let r = &side.line_ranges[line];
+            (r.start..r.end)
+                .rev()
+                .find(|&idx| !token_is_ws(side.tokens[idx].text))
+        };
+        if let (Some(end_o), Some(end_n)) = (
+            last_non_ws(&aln.old, last_ol),
+            last_non_ws(&aln.new, last_nl),
+        ) && aln.pairs.last() == Some(&(end_o, end_n))
+        {
+            let mut suffix = Vec::new();
+            let mut k = aln.pairs.len();
+            let (mut exp_o, mut exp_n) = (end_o, end_n);
+            while k > 0 {
+                let (oi, ni) = aln.pairs[k - 1];
+                if aln.old.tokens[oi].line != last_ol || aln.new.tokens[ni].line != last_nl {
+                    break;
+                }
+                if oi == exp_o && ni == exp_n {
+                    suffix.push((oi, ni));
+                    k -= 1;
+                    if exp_o == 0 || exp_n == 0 {
+                        break;
+                    }
+                    exp_o -= 1;
+                    exp_n -= 1;
+                } else {
+                    break;
+                }
+            }
+            let non_ws_count = suffix
+                .iter()
+                .filter(|&&(oi, _)| !token_is_ws(aln.old.tokens[oi].text))
+                .count();
+            let ends_with_frame_delim =
+                matches!(aln.old.tokens[end_o].text, ")" | "]" | "}" | ";" | "{");
+            if !salient_linked.is_empty() || (non_ws_count >= 2 && ends_with_frame_delim) {
+                terminal_suffix_pairs.extend(suffix);
+            }
         }
     }
 
@@ -272,10 +467,10 @@ fn filter_cross_slot_punctuation(
             let so = window.slot_of_old[ol];
             let sn = window.slot_of_new[nl];
             so == sn
-                || is_single_construct
                 || salient_linked.contains(&(so, sn))
                 || !old_line_has_salient[ol]
                 || !new_line_has_salient[nl]
+                || terminal_suffix_pairs.contains(&(oi, ni))
         })
         .collect()
 }
