@@ -95,10 +95,20 @@ fg = "#24292f"
 num = "#aa5a00"
 icon = "#aa5a00"
 
-[rest.mov]              # shared relocation channel for both sides
-bg = "#f4f0ff"
-fg = "#5a2da0"
-num = "#6e2882"
+[rest.movsrc]           # pre-image relocation source (cascades from del, 50/50 del + mov purple)
+bg = "#faeef6"
+fill = "#ecbcdc"
+fg = "#932252"
+num = { color = "#932252", italic = true }
+icon = "#6e2882"
+
+[rest.movsrc.syntax]
+text = "#24292f"
+string = "#872664"
+char_literal = "#992f70"
+code = "#872664"
+
+[rest.movtgt]           # post-image relocation target (inherits ctx; overridable)
 icon = "#6e2882"
 
 [file.file_header]      # current-file state
@@ -141,6 +151,7 @@ bg = "#e6e8ec"
 fill = "#91d2a2"
 fg = "#24292f"
 
-[row.mov]               # legacy `mov_cursor_bg`
-bg = "#e6defc"
-fg = "#5a2da0"
+[row.movsrc]            # cursor row on MovSrc (mirrors row.del, 50/50 del + mov purple)
+bg = "#f3d9ea"
+fill = "none"
+fg = "#932252"

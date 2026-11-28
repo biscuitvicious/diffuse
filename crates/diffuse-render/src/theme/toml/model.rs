@@ -164,8 +164,8 @@ pub struct DiffModel {
     pub syntax: Option<BTreeMap<String, ColorValue>>,
 }
 
-/// Per-cursor-tier override tables, keyed by diff kind (the `mov` channel
-/// covers both relocation sides). `band` carries the visual-selection band
+/// Per-cursor-tier override tables, keyed by diff kind (`movsrc` and `movtgt`
+/// are distinct relocation channels). `band` carries the visual-selection band
 /// surface for rows at this tier.
 #[derive(Clone, Default, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,7 +178,8 @@ pub struct CursorModel {
     pub del: Option<DiffModel>,
     #[serde(rename = "mod")]
     pub r#mod: Option<DiffModel>,
-    pub mov: Option<DiffModel>,
+    pub movsrc: Option<DiffModel>,
+    pub movtgt: Option<DiffModel>,
 }
 
 impl CursorModel {
@@ -191,7 +192,8 @@ impl CursorModel {
             DiffKind::Add => &self.add,
             DiffKind::Del => &self.del,
             DiffKind::Mod => &self.r#mod,
-            DiffKind::Mov => &self.mov,
+            DiffKind::MovSrc => &self.movsrc,
+            DiffKind::MovTgt => &self.movtgt,
         }
         .as_ref()
     }
@@ -389,7 +391,7 @@ mod tests {
     #[test]
     fn test_cursor_model_slot_access() {
         let cursor: CursorModel = toml::from_str(
-            "ctx = { bg = 10 }\nadd = { bg = 11 }\ndel = { bg = 12 }\nmod = { bg = 13 }\nmov = { bg = 14 }\nfile_header = { fill = 25 }\n",
+            "ctx = { bg = 10 }\nadd = { bg = 11 }\ndel = { bg = 12 }\nmod = { bg = 13 }\nmovsrc = { bg = 14 }\nmovtgt = { bg = 15 }\nfile_header = { fill = 25 }\n",
         )
         .unwrap();
         let slot_bg = |kind: DiffKind| cursor.slot(kind).and_then(|diff| diff.bg.clone());
@@ -397,15 +399,16 @@ mod tests {
         assert_eq!(slot_bg(DiffKind::Add), Some(ColorValue::Indexed(11)));
         assert_eq!(slot_bg(DiffKind::Del), Some(ColorValue::Indexed(12)));
         assert_eq!(slot_bg(DiffKind::Mod), Some(ColorValue::Indexed(13)));
-        assert_eq!(slot_bg(DiffKind::Mov), Some(ColorValue::Indexed(14)));
+        assert_eq!(slot_bg(DiffKind::MovSrc), Some(ColorValue::Indexed(14)));
+        assert_eq!(slot_bg(DiffKind::MovTgt), Some(ColorValue::Indexed(15)));
         assert_eq!(
             cursor.file_header.as_ref().unwrap().fill,
             Some(ColorValue::Indexed(25))
         );
 
-        // Side-split keys were collapsed into the single `mov` channel;
-        // deny-unknown-fields rejects them so typos and stale themes
-        // surface at load time.
+        // Legacy `mov` and underscore spellings are rejected by
+        // deny-unknown-fields so stale themes surface at load time.
+        assert!(toml::from_str::<CursorModel>("mov = { bg = 14 }").is_err());
         assert!(toml::from_str::<CursorModel>("mov_src = { bg = 15 }").is_err());
         assert!(toml::from_str::<CursorModel>("mov_tgt = { bg = 16 }").is_err());
     }

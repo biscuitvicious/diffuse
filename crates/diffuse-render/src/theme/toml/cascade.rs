@@ -62,7 +62,8 @@ const DIFF_KINDS: [DiffKind; DiffKind::COUNT] = [
     DiffKind::Add,
     DiffKind::Del,
     DiffKind::Mod,
-    DiffKind::Mov,
+    DiffKind::MovSrc,
+    DiffKind::MovTgt,
 ];
 
 /// Per-tier surface slot of a cursor-tier palette.
@@ -166,15 +167,21 @@ fn resolve_styled(
 }
 
 /// Channel tiers for a diff kind, in resolution priority: the explicit kind
-/// channel, then the `ctx` channel. `None` entries are skipped.
+/// channel, an optional semantic parent (`del` for `movsrc`), then the `ctx`
+/// channel. `None` entries are skipped.
 #[inline]
-fn diff_tiers(kind: DiffKind) -> [Option<DiffKind>; 2] {
+fn diff_tiers(kind: DiffKind) -> [Option<DiffKind>; 3] {
     match kind {
-        DiffKind::Ctx => [Some(DiffKind::Ctx), None],
-        DiffKind::Add => [Some(DiffKind::Add), Some(DiffKind::Ctx)],
-        DiffKind::Del => [Some(DiffKind::Del), Some(DiffKind::Ctx)],
-        DiffKind::Mod => [Some(DiffKind::Mod), Some(DiffKind::Ctx)],
-        DiffKind::Mov => [Some(DiffKind::Mov), Some(DiffKind::Ctx)],
+        DiffKind::Ctx => [Some(DiffKind::Ctx), None, None],
+        DiffKind::Add => [Some(DiffKind::Add), Some(DiffKind::Ctx), None],
+        DiffKind::Del => [Some(DiffKind::Del), Some(DiffKind::Ctx), None],
+        DiffKind::Mod => [Some(DiffKind::Mod), Some(DiffKind::Ctx), None],
+        DiffKind::MovSrc => [
+            Some(DiffKind::MovSrc),
+            Some(DiffKind::Del),
+            Some(DiffKind::Ctx),
+        ],
+        DiffKind::MovTgt => [Some(DiffKind::MovTgt), Some(DiffKind::Ctx), None],
     }
 }
 
@@ -551,22 +558,30 @@ mod tests {
 
     #[test]
     fn test_diff_tiers_all_kinds() {
-        assert_eq!(diff_tiers(DiffKind::Ctx), [Some(DiffKind::Ctx), None]);
+        assert_eq!(diff_tiers(DiffKind::Ctx), [Some(DiffKind::Ctx), None, None]);
         assert_eq!(
             diff_tiers(DiffKind::Add),
-            [Some(DiffKind::Add), Some(DiffKind::Ctx)]
+            [Some(DiffKind::Add), Some(DiffKind::Ctx), None]
         );
         assert_eq!(
             diff_tiers(DiffKind::Del),
-            [Some(DiffKind::Del), Some(DiffKind::Ctx)]
+            [Some(DiffKind::Del), Some(DiffKind::Ctx), None]
         );
         assert_eq!(
             diff_tiers(DiffKind::Mod),
-            [Some(DiffKind::Mod), Some(DiffKind::Ctx)]
+            [Some(DiffKind::Mod), Some(DiffKind::Ctx), None]
         );
         assert_eq!(
-            diff_tiers(DiffKind::Mov),
-            [Some(DiffKind::Mov), Some(DiffKind::Ctx)]
+            diff_tiers(DiffKind::MovSrc),
+            [
+                Some(DiffKind::MovSrc),
+                Some(DiffKind::Del),
+                Some(DiffKind::Ctx),
+            ]
+        );
+        assert_eq!(
+            diff_tiers(DiffKind::MovTgt),
+            [Some(DiffKind::MovTgt), Some(DiffKind::Ctx), None]
         );
     }
 
@@ -672,36 +687,87 @@ mod tests {
     }
 
     #[test]
-    fn test_mov_alias_channel() {
+    fn test_movsrc_cascades_from_del_and_movtgt_cascades_from_ctx() {
         let palette = compile_model(
             r#"
-            [rest.mov]
+            [rest.ctx]
+            bg = 233
+            fg = 231
+            [row.ctx]
+            bg = 237
+            [rest.del]
+            bg = 52
+            fill = 88
+            fg = 203
+            num = { color = 203, italic = true }
+            syntax = { keyword = 183 }
+            [row.del]
+            bg = 53
+            [rest.movsrc]
             bg = 30
-            fg = 32
-            num = 40
+            fill = 31
+            icon = 117
+            [rest.movtgt]
+            icon = 117
             "#,
         )
         .unwrap();
 
-        let mov = palette[Cursor::Rest][DiffKind::Mov];
+        let movsrc = palette[Cursor::Rest][DiffKind::MovSrc];
         assert_eq!(
-            mov.surface.bg,
+            movsrc.surface.bg,
             Color::Fixed(30),
-            "mov resolves its explicit channel"
+            "movsrc resolves its explicit bg"
         );
-        assert_eq!(mov.surface.fg, Color::Fixed(32));
-        assert_eq!(mov.gutter.num.color, Color::Fixed(40), "mov explicit slot");
+        assert_eq!(movsrc.surface.fill, Some(Color::Fixed(31)));
         assert_eq!(
-            mov.gutter.icon,
-            StyledColor::new(Color::Fixed(231)),
-            "unset slots fall back to the explicit dark base foreground"
+            movsrc.surface.fg,
+            Color::Fixed(203),
+            "unset movsrc fg cascades from del"
+        );
+        assert_eq!(
+            movsrc.gutter.num.color,
+            Color::Fixed(203),
+            "unset movsrc num cascades from del"
+        );
+        assert!(movsrc.gutter.num.italic, "movsrc inherits del italic num");
+        assert_eq!(movsrc.gutter.icon.color, Color::Fixed(117));
+        assert_eq!(
+            movsrc.syntax.keyword,
+            Color::Fixed(183),
+            "unset movsrc syntax cascades from del"
+        );
+        assert_eq!(
+            palette[Cursor::Row][DiffKind::MovSrc].surface.bg,
+            Color::Fixed(30),
+            "rest.movsrc takes precedence over row.del along channel-first walk"
+        );
+
+        let movtgt_rest = palette[Cursor::Rest][DiffKind::MovTgt];
+        assert_eq!(
+            movtgt_rest.surface.bg,
+            Color::Fixed(233),
+            "movtgt inherits rest.ctx bg"
+        );
+        assert_eq!(
+            movtgt_rest.surface.fg,
+            Color::Fixed(231),
+            "movtgt inherits rest.ctx fg"
+        );
+        assert_eq!(movtgt_rest.gutter.icon.color, Color::Fixed(117));
+
+        let movtgt_row = palette[Cursor::Row][DiffKind::MovTgt];
+        assert_eq!(
+            movtgt_row.surface.bg,
+            Color::Fixed(237),
+            "movtgt inherits row.ctx cursor bg"
         );
 
         let add = palette[Cursor::Rest][DiffKind::Add];
         assert_eq!(
             add.surface.bg,
             Color::Fixed(233),
-            "non-relocation kinds never touch the mov channel"
+            "non-relocation kinds never touch movsrc/movtgt channels"
         );
     }
 

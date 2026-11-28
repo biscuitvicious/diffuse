@@ -247,35 +247,53 @@ mod equivalence {
                     legacy.mod_gutter_icon,
                 ),
                 (
-                    DiffKind::Mov,
+                    DiffKind::MovSrc,
                     RowKind::Mov,
-                    legacy.mov_tint_bg,
+                    legacy.movsrc_tint_bg,
+                    Some(legacy.movsrc_fill_bg),
+                    legacy.movsrc_fg,
+                    legacy.movsrc_gutter_num,
+                    legacy.movsrc_gutter_icon,
+                ),
+                (
+                    DiffKind::MovTgt,
+                    RowKind::Mov,
+                    legacy.ctx_tint_bg,
                     None,
-                    legacy.mov_fg,
-                    legacy.mov_gutter_num,
-                    legacy.mov_gutter_icon,
+                    legacy.ctx_fg,
+                    legacy.ctx_gutter_out_hunk,
+                    legacy.movtgt_gutter_icon,
                 ),
             ] {
                 let palette = theme.palette[cursor][kind];
                 // Context gutters switch in-hunk: Hunk and Row tiers
                 // resolve the in-hunk color, rest fall to out-of-hunk.
+                // MovTgt inherits ctx gutters for `num` while preserving
+                // its explicit `icon`.
                 let (num, icon) = match (kind, cursor) {
                     (DiffKind::Ctx, Cursor::Hunk) | (DiffKind::Ctx, Cursor::Row) => {
                         (legacy.ctx_gutter_in_hunk, legacy.ctx_gutter_in_hunk)
                     }
                     (DiffKind::Ctx, _) => (legacy.ctx_gutter_out_hunk, legacy.ctx_gutter_out_hunk),
+                    (DiffKind::MovTgt, Cursor::Hunk) | (DiffKind::MovTgt, Cursor::Row) => {
+                        (legacy.ctx_gutter_in_hunk, legacy.movtgt_gutter_icon)
+                    }
+                    (DiffKind::MovTgt, _) => {
+                        (legacy.ctx_gutter_out_hunk, legacy.movtgt_gutter_icon)
+                    }
                     _ => (num, icon),
                 };
                 // The cursor tier carries the interactive cursor/fill
                 // backgrounds (legacy `*_cursor_bg` / `*_fill_cursor_bg`);
-                // del and mov carry no fill-cursor (dead legacy fields).
+                // del and movsrc carry no fill-cursor, and movtgt inherits ctx.
                 let (bg, fill) = if cursor == Cursor::Row {
                     match kind {
                         DiffKind::Ctx => (legacy.ctx_cursor_bg, None),
                         DiffKind::Add => (legacy.add_cursor_bg, Some(legacy.add_fill_cursor_bg)),
                         DiffKind::Del => (legacy.del_cursor_bg, None),
                         DiffKind::Mod => (legacy.mod_cursor_bg, Some(legacy.mod_fill_cursor_bg)),
-                        DiffKind::Mov => (legacy.mov_cursor_bg, None),
+                        DiffKind::MovSrc => (legacy.movsrc_cursor_bg, None),
+                        DiffKind::MovTgt => (legacy.ctx_cursor_bg, None),
                     }
                 } else {
                     (bg, fill)
@@ -314,15 +332,15 @@ mod equivalence {
         assert!(del_num.italic, "{mode:?} del gutter num carries italic");
         assert_eq!(del_num.color, legacy.del_gutter_num);
 
-        // Syntax tokens per row kind: Mod/Mov rows resolve the ctx arm,
-        // matching legacy `token_color` semantics.
+        // Syntax tokens per row kind: Mod and MovTgt resolve the ctx arm;
+        // MovSrc cascades from Del with purple text/string/char_literal/code.
         for (key, token) in TOKEN_KEYS {
             for (kind, row_kind) in [
                 (DiffKind::Ctx, RowKind::Ctx),
                 (DiffKind::Add, RowKind::Add),
                 (DiffKind::Del, RowKind::Del),
                 (DiffKind::Mod, RowKind::Mod),
-                (DiffKind::Mov, RowKind::Mov),
+                (DiffKind::MovTgt, RowKind::Mov),
             ] {
                 assert_eq!(
                     theme.palette[Cursor::Rest][kind].syntax.token_color(token),
@@ -330,6 +348,22 @@ mod equivalence {
                     "{mode:?} syntax '{key}' on {kind:?}"
                 );
             }
+            let expected_movsrc = match (mode, key) {
+                (Mode::Dark, "text") => Some(crate::ansi::Color::Fixed(231)),
+                (Mode::Dark, "string" | "code") => Some(crate::ansi::Color::Rgb(215, 135, 175)),
+                (Mode::Dark, "char_literal") => Some(crate::ansi::Color::Rgb(235, 155, 195)),
+                (Mode::Light, "text") => Some(crate::ansi::Color::Rgb(36, 41, 47)),
+                (Mode::Light, "string" | "code") => Some(crate::ansi::Color::Rgb(135, 38, 100)),
+                (Mode::Light, "char_literal") => Some(crate::ansi::Color::Rgb(153, 47, 112)),
+                _ => legacy.token_color(token, RowKind::Del),
+            };
+            assert_eq!(
+                theme.palette[Cursor::Rest][DiffKind::MovSrc]
+                    .syntax
+                    .token_color(token),
+                expected_movsrc,
+                "{mode:?} syntax '{key}' on MovSrc"
+            );
         }
 
         // Banner states: REST at Rest, CURRENT at File, SELECTED at Row.

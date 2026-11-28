@@ -196,12 +196,19 @@ fn test_row_style_palette_parity() {
         assert_eq!(r#mod.fill_cursor_bg, Some(legacy.mod_fill_cursor_bg));
         assert_eq!(r#mod.fg, legacy.mod_fg);
 
-        let mov = theme.row_style(diffuse_core::parse::RowKind::Mov);
-        assert_eq!(mov.tint_bg, legacy.mov_tint_bg);
-        assert_eq!(mov.cursor_bg, legacy.mov_cursor_bg);
-        assert_eq!(mov.fill_bg, None);
-        assert_eq!(mov.fill_cursor_bg, None);
-        assert_eq!(mov.fg, legacy.mov_fg);
+        let movsrc = theme.row_style_for_diff(DiffKind::MovSrc);
+        assert_eq!(movsrc.tint_bg, legacy.movsrc_tint_bg);
+        assert_eq!(movsrc.cursor_bg, legacy.movsrc_cursor_bg);
+        assert_eq!(movsrc.fill_bg, Some(legacy.movsrc_fill_bg));
+        assert_eq!(movsrc.fill_cursor_bg, None);
+        assert_eq!(movsrc.fg, legacy.movsrc_fg);
+
+        let movtgt = theme.row_style_for_diff(DiffKind::MovTgt);
+        assert_eq!(movtgt.tint_bg, legacy.ctx_tint_bg);
+        assert_eq!(movtgt.cursor_bg, legacy.ctx_cursor_bg);
+        assert_eq!(movtgt.fill_bg, None);
+        assert_eq!(movtgt.fill_cursor_bg, None);
+        assert_eq!(movtgt.fg, legacy.ctx_fg);
     }
 }
 #[test]
@@ -503,7 +510,8 @@ fn test_dark_plain_text_uses_theme_foreground() {
         DiffKind::Add,
         DiffKind::Del,
         DiffKind::Mod,
-        DiffKind::Mov,
+        DiffKind::MovSrc,
+        DiffKind::MovTgt,
     ] {
         let syntax = theme.palette[Cursor::Rest][kind].syntax;
         assert!(
@@ -562,8 +570,12 @@ fn test_light_theme_palette_and_resolution() {
         dp[Cursor::Rest][DiffKind::Mod].surface.bg
     );
     assert_ne!(
-        lp[Cursor::Rest][DiffKind::Mov].surface.bg,
-        dp[Cursor::Rest][DiffKind::Mov].surface.bg
+        lp[Cursor::Rest][DiffKind::MovSrc].surface.bg,
+        dp[Cursor::Rest][DiffKind::MovSrc].surface.bg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::MovTgt].surface.bg,
+        dp[Cursor::Rest][DiffKind::MovTgt].surface.bg
     );
 
     assert_eq!(light.name, "light");
@@ -733,6 +745,36 @@ fn test_light_palette_contrast_ratios() {
     assert!(
         contrast_ratio(del.text, del_tint) >= 4.5,
         "del text must have >= 4.5 contrast against the del tint"
+    );
+    let movsrc_rest = t.palette[Cursor::Rest][DiffKind::MovSrc].surface;
+    let movsrc_row = t.palette[Cursor::Row][DiffKind::MovSrc].surface;
+    assert!(
+        contrast_ratio(movsrc_rest.fg, movsrc_rest.bg) >= 4.5,
+        "light movsrc fg must have >= 4.5 contrast against movsrc tint"
+    );
+    assert!(
+        contrast_ratio(movsrc_rest.fg, movsrc_rest.fill.unwrap()) >= 4.5,
+        "light movsrc fg must have >= 4.5 contrast against movsrc fill"
+    );
+    assert!(
+        contrast_ratio(movsrc_row.fg, movsrc_row.bg) >= 4.5,
+        "light movsrc fg must have >= 4.5 contrast against movsrc cursor bg"
+    );
+
+    let d = DiffuseTheme::dark();
+    let d_movsrc_rest = d.palette[Cursor::Rest][DiffKind::MovSrc].surface;
+    let d_movsrc_row = d.palette[Cursor::Row][DiffKind::MovSrc].surface;
+    assert!(
+        contrast_ratio(d_movsrc_rest.fg, d_movsrc_rest.bg) >= 4.5,
+        "dark movsrc fg must have >= 4.5 contrast against movsrc tint"
+    );
+    assert!(
+        contrast_ratio(d_movsrc_rest.fg, d_movsrc_rest.fill.unwrap()) >= 4.5,
+        "dark movsrc fg must have >= 4.5 contrast against movsrc fill"
+    );
+    assert!(
+        contrast_ratio(d_movsrc_row.fg, d_movsrc_row.bg) >= 4.5,
+        "dark movsrc fg must have >= 4.5 contrast against movsrc cursor bg"
     );
 }
 #[test]

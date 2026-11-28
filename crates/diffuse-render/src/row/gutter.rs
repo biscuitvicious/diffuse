@@ -64,6 +64,7 @@ pub const fn mov_glyph(group: Option<PeerGroup>) -> &'static str {
 /// is ungrouped) followed by the move glyph span.
 fn mov_glyph_spans(
     group: Option<PeerGroup>,
+    mov_side: Option<MovSide>,
     theme: &DiffuseTheme,
     bg: Option<Color>,
 ) -> Vec<StyledSpan> {
@@ -75,7 +76,11 @@ fn mov_glyph_spans(
     } else {
         StyledSpan::styled(" ", None, bg)
     };
-    let glyph = theme.palette[Cursor::Rest][DiffKind::Mov]
+    let diff_kind = match mov_side {
+        Some(MovSide::Tgt) => DiffKind::MovTgt,
+        Some(MovSide::Src) | None => DiffKind::MovSrc,
+    };
+    let glyph = theme.palette[Cursor::Rest][diff_kind]
         .gutter
         .icon
         .span("≈", bg);
@@ -767,7 +772,7 @@ pub fn styled_prefix_spans_with_widths(
                     vec![add.num.span(pad, bg)]
                 }
             };
-            spans.extend(mov_glyph_spans(group, theme, bg));
+            spans.extend(mov_glyph_spans(group, mov_side, theme, bg));
             return spans;
         }
         if kind == RowKind::Ctx && group.is_some() {
@@ -918,7 +923,7 @@ pub fn styled_prefix_spans_with_widths(
                 add.num.span(new_pad, bg),
             ]
         };
-        spans.extend(mov_glyph_spans(group, theme, bg));
+        spans.extend(mov_glyph_spans(group, mov_side, theme, bg));
         return spans;
     }
 
@@ -1070,7 +1075,7 @@ pub fn styled_split_left_prefix_spans(
             }
             RowKind::Mov if mov_side == Some(MovSide::Src) => {
                 let mut spans = vec![del.num.span(pad, bg)];
-                spans.extend(mov_glyph_spans(group, theme, bg));
+                spans.extend(mov_glyph_spans(group, mov_side, theme, bg));
                 spans
             }
             _ => {
@@ -1136,7 +1141,7 @@ pub fn styled_split_right_prefix_spans(
             }
             RowKind::Mov if mov_side == Some(MovSide::Tgt) => {
                 let mut spans = vec![add.num.span(pad, bg)];
-                spans.extend(mov_glyph_spans(group, theme, bg));
+                spans.extend(mov_glyph_spans(group, mov_side, theme, bg));
                 spans
             }
             _ => {

@@ -256,7 +256,14 @@ mod tests {
             palette[Cursor::Hunk][DiffKind::Del].gutter.icon.color,
             Color::Fixed(88)
         );
-        assert_eq!(palette[Cursor::Rest][DiffKind::Mov], DiffPalette::default());
+        assert_eq!(
+            palette[Cursor::Rest][DiffKind::MovSrc],
+            DiffPalette::default()
+        );
+        assert_eq!(
+            palette[Cursor::Rest][DiffKind::MovTgt],
+            DiffPalette::default()
+        );
         assert_eq!(palette[Cursor::File][DiffKind::Mod], DiffPalette::default());
     }
 

@@ -673,9 +673,10 @@ fn test_render_moved_source_del_row() {
 }
 
 #[test]
-fn test_mov_src_renders_like_del_row_without_strikethrough() {
+fn test_mov_src_renders_like_del_row_in_movsrc_purple_without_strikethrough() {
     let theme = DiffuseTheme::dark();
     let s_del = theme.row_style(RowKind::Del);
+    let s_movsrc = theme.row_style_for_diff(DiffKind::MovSrc);
     let runs = vec![OutputRun {
         kind: RunKind::Del,
         color: TokenColor::Default,
@@ -702,17 +703,83 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
     );
     assert!(rendered.contains("  15 ≈ "));
     assert!(
-        rendered.contains(&s_del.fg.fg_code()),
-        "mov src must have deletion foreground color"
+        rendered.contains(&s_movsrc.fg.fg_code()),
+        "mov src must use movsrc purple foreground color: {rendered:?}"
     );
     assert!(
-        rendered.contains(&s_del.tint_bg()),
-        "mov src must have deletion tint background"
+        rendered.contains(&s_movsrc.tint_bg()),
+        "mov src must use dark purple movsrc tint background: {rendered:?}"
+    );
+    assert_ne!(
+        s_movsrc.tint_bg, s_del.tint_bg,
+        "movsrc tint background must be distinct from del red tint"
     );
     assert!(
         !rendered.contains("\x1b[9m"),
-        "mov src must NOT have strikethrough styling"
+        "plain mov src must NOT have strikethrough styling"
     );
+}
+
+#[test]
+fn test_moved_src_inline_spans_use_movsrc_purple_fill_and_fg() {
+    let theme = DiffuseTheme::dark();
+    let s_movsrc = theme.row_style_for_diff(DiffKind::MovSrc);
+    let s_del = theme.row_style(RowKind::Del);
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "fn f(".into(),
+        },
+        OutputRun {
+            kind: RunKind::MovedSrc,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "track_h: usize,".into(),
+        },
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: " max_scroll: usize,".into(),
+        },
+    ];
+    let seg = row_segment_spans(
+        "fn f(track_h: usize, max_scroll: usize,",
+        true,
+        RowKind::Mod,
+        None,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        vec![StyledSpan::plain("  10~ ")],
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    let mov_span = seg
+        .spans
+        .iter()
+        .find(|s| s.text == "track_h: usize,")
+        .expect("MovedSrc span must be rendered");
+    assert_eq!(mov_span.bg, s_movsrc.fill_bg);
+    assert_eq!(mov_span.fg, Some(s_movsrc.fg));
+    assert!(mov_span.strikethrough);
+    assert_ne!(mov_span.bg, s_del.fill_bg);
+
+    let del_span = seg
+        .spans
+        .iter()
+        .find(|s| s.text == " max_scroll: usize,")
+        .expect("Del span must be rendered");
+    assert_eq!(del_span.bg, s_del.fill_bg);
+    assert_eq!(del_span.fg, Some(s_del.fg));
+    assert!(del_span.strikethrough);
 }
 
 #[test]
@@ -1332,9 +1399,10 @@ fn test_peer_del_row_strikes_moved_src_only() {
 }
 
 #[test]
-fn test_render_mov_tgt_with_add_row_bg() {
+fn test_render_mov_tgt_inherits_ctx_row_bg_and_is_overridable() {
     let theme = DiffuseTheme::dark();
-    let s_add = theme.row_style(RowKind::Add);
+    let ctx_rest_bg = theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg;
+    let ctx_cursor_bg = theme.palette[Cursor::Row][DiffKind::Ctx].surface.bg;
     let runs = vec![OutputRun {
         kind: RunKind::MovedTgt,
         color: TokenColor::Function,
@@ -1349,7 +1417,7 @@ fn test_render_mov_tgt_with_add_row_bg() {
         &runs,
         0,
         usize::MAX,
-        &[StyledSpan::plain(" 135~+ ")],
+        &[StyledSpan::plain(" 135 ≈ ")],
         false,
         false,
         false,
@@ -1358,11 +1426,10 @@ fn test_render_mov_tgt_with_add_row_bg() {
         true,
         &theme,
     );
-    // MovTgt row background must use the addition tint background like
-    // RowKind::Add.
+    // MovTgt row background defaults to ctx tint background via cascade.
     assert!(
-        rendered_mov.contains(&s_add.tint_bg()),
-        "MovTgt must render with addition tint background: {rendered_mov:?}"
+        rendered_mov.contains(&ctx_rest_bg.bg_code()),
+        "MovTgt must render with ctx tint background by default: {rendered_mov:?}"
     );
     // RunKind::MovedTgt tokens remain context-colored, not novelty-colored.
     let ctx_color = theme.palette[Cursor::Rest][DiffKind::Ctx]
@@ -1374,7 +1441,7 @@ fn test_render_mov_tgt_with_add_row_bg() {
         "MovedTgt tokens must keep context token color: {rendered_mov:?}"
     );
 
-    // Selected MovTgt row background must use add_cursor_bg.
+    // Selected MovTgt row background defaults to ctx_cursor_bg via cascade.
     let rendered_sel = render_row_segment(
         "resolve_theme",
         false,
@@ -1383,7 +1450,7 @@ fn test_render_mov_tgt_with_add_row_bg() {
         &runs,
         0,
         usize::MAX,
-        &[StyledSpan::plain(" 135~+ ")],
+        &[StyledSpan::plain(" 135 ≈ ")],
         false,
         true,
         false,
@@ -1393,9 +1460,128 @@ fn test_render_mov_tgt_with_add_row_bg() {
         &theme,
     );
     assert!(
-        rendered_sel.contains(&s_add.cursor_bg()),
-        "Selected MovTgt must render with addition cursor background: {rendered_sel:?}"
+        rendered_sel.contains(&ctx_cursor_bg.bg_code()),
+        "Selected MovTgt must render with ctx cursor background by default: {rendered_sel:?}"
     );
+
+    // Explicit `[rest.movtgt]` override in a user theme takes precedence over
+    // ctx.
+    let parsed =
+        crate::theme::parse_theme_str("inherits = \"dark\"\n[rest.movtgt]\nbg = \"#112233\"\n")
+            .unwrap();
+    let custom_palette: &'static crate::theme::ThemePalette = Box::leak(Box::new(parsed.palette));
+    let custom_theme = DiffuseTheme {
+        name: "custom",
+        mode: parsed.mode,
+        palette: custom_palette,
+    };
+    let custom_seg = row_segment_spans(
+        "resolve_theme",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        vec![StyledSpan::plain(" 135 ≈ ")],
+        false,
+        false,
+        0,
+        true,
+        true,
+        &custom_theme,
+    );
+    assert_eq!(
+        custom_seg.line_bg,
+        Some(crate::ansi::Color::Rgb(0x11, 0x22, 0x33))
+    );
+}
+
+#[test]
+fn test_edited_mov_src_and_mov_tgt_keep_inline_del_red_and_add_green() {
+    let theme = DiffuseTheme::dark();
+    let s_del = theme.row_style(RowKind::Del);
+    let s_mod = theme.row_style(RowKind::Mod);
+    let s_movsrc = theme.row_style_for_diff(DiffKind::MovSrc);
+    let ctx_bg = theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg;
+
+    let src_runs = vec![
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "old_".into(),
+        },
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let src_seg = row_segment_spans(
+        "old_foo()",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Src),
+        None,
+        &src_runs,
+        0,
+        usize::MAX,
+        vec![StyledSpan::plain("  15 ≈ ")],
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert_eq!(src_seg.line_bg, Some(s_movsrc.tint_bg));
+    let del_span = src_seg.spans.iter().find(|s| s.text == "old_").unwrap();
+    assert_eq!(del_span.bg, s_del.fill_bg);
+    assert_eq!(del_span.fg, Some(s_del.fg));
+    assert!(del_span.strikethrough);
+    let ctx_span = src_seg.spans.iter().find(|s| s.text == "foo()").unwrap();
+    assert_eq!(ctx_span.bg, Some(s_movsrc.tint_bg));
+    assert!(!ctx_span.strikethrough);
+
+    let tgt_runs = vec![
+        OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "new_".into(),
+        },
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let tgt_seg = row_segment_spans(
+        "new_foo()",
+        false,
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        None,
+        &tgt_runs,
+        0,
+        usize::MAX,
+        vec![StyledSpan::plain("  42 ≈ ")],
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert_eq!(tgt_seg.line_bg, Some(ctx_bg));
+    let add_span = tgt_seg.spans.iter().find(|s| s.text == "new_").unwrap();
+    assert_eq!(add_span.bg, s_mod.fill_bg);
+    let tgt_ctx = tgt_seg.spans.iter().find(|s| s.text == "foo()").unwrap();
+    assert_eq!(tgt_ctx.bg, Some(ctx_bg));
 }
 
 #[test]
@@ -1515,7 +1701,7 @@ fn test_mov_row_prefix_line_number_colors() {
     let theme = DiffuseTheme::dark();
     let add_gutter = &theme.palette[Cursor::Rest][DiffKind::Add].gutter;
     let del_gutter = &theme.palette[Cursor::Rest][DiffKind::Del].gutter;
-    let mov_gutter = &theme.palette[Cursor::Rest][DiffKind::Mov].gutter;
+    let mov_gutter = &theme.palette[Cursor::Rest][DiffKind::MovSrc].gutter;
     let r#mod_gutter = &theme.palette[Cursor::Rest][DiffKind::Mod].gutter;
 
     // MovSrc: line number carries Del rendering (red + italic), icons stay

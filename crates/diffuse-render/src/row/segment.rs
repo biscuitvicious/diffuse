@@ -273,7 +273,8 @@ pub fn row_segment_spans(
 ) -> RowSegmentLine {
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_mov_src = mov_side == Some(MovSide::Src);
-    let is_del_row = kind == RowKind::Del || is_mov_src || mod_side == Some(ModSide::Del);
+    let is_mov_tgt = mov_side == Some(MovSide::Tgt);
+    let is_del_row = kind == RowKind::Del || mod_side == Some(ModSide::Del);
     let is_mod_row = kind == RowKind::Mod && mod_side.is_none();
 
     let band_bg = theme.palette[Cursor::Row].band.bg;
@@ -283,6 +284,8 @@ pub fn row_segment_spans(
     let s_mod = theme.row_style(RowKind::Mod);
     let s_del = theme.row_style(RowKind::Del);
     let s_add = theme.row_style(RowKind::Add);
+    let s_movsrc = theme.row_style_for_diff(DiffKind::MovSrc);
+    let s_movtgt = theme.row_style_for_diff(DiffKind::MovTgt);
 
     let line_bg = if is_ctx {
         if selected {
@@ -299,6 +302,22 @@ pub fn row_segment_spans(
             Some(band_bg)
         } else {
             Some(s_mod.tint_bg)
+        }
+    } else if is_mov_src {
+        if selected {
+            Some(s_movsrc.cursor_bg)
+        } else if band {
+            Some(band_bg)
+        } else {
+            Some(s_movsrc.tint_bg)
+        }
+    } else if is_mov_tgt {
+        if selected {
+            Some(s_movtgt.cursor_bg)
+        } else if band {
+            Some(band_bg)
+        } else {
+            Some(s_movtgt.tint_bg)
         }
     } else if is_del_row {
         if selected {
@@ -323,6 +342,8 @@ pub fn row_segment_spans(
     };
     let del_bg = s_del.fill_bg;
     let del_fg = s_del.fg;
+    let movsrc_bg = s_movsrc.fill_bg;
+    let movsrc_fg = s_movsrc.fg;
 
     let mut spans: Vec<StyledSpan> = prefix;
     for span in &mut spans {
@@ -365,7 +386,7 @@ pub fn row_segment_spans(
                 del_bg
             }
         } else if tok_kind == RunKind::MovedSrc {
-            del_bg
+            if is_mov_src { line_bg } else { movsrc_bg }
         } else if tok_kind == RunKind::Add
             && (is_mod_row || has_subwords || is_expansion_add || mod_side == Some(ModSide::Add))
         {
@@ -378,8 +399,20 @@ pub fn row_segment_spans(
     let is_struck_tok = |tok_kind: RunKind| -> bool {
         if kind == RowKind::Del {
             tok_kind == RunKind::MovedSrc
+        } else if is_mov_src {
+            tok_kind == RunKind::Del
         } else {
             tok_kind == RunKind::Del || tok_kind == RunKind::MovedSrc
+        }
+    };
+
+    let token_span_for = |tok: &OutputRun, piece: &str| -> StyledSpan {
+        if is_mov_tgt && (!has_subwords || tok.kind != RunKind::Add) {
+            theme.token_span_for_diff(tok.color, piece, DiffKind::MovTgt, tok.sgr)
+        } else if is_mov_src && tok.kind != RunKind::Del {
+            theme.token_span_for_diff(tok.color, piece, DiffKind::MovSrc, tok.sgr)
+        } else {
+            theme.token_span(tok.color, piece, kind, tok.kind, tok.sgr)
         }
     };
 
@@ -413,11 +446,13 @@ pub fn row_segment_spans(
             let disp = display_text(text, is_peer_row, kind, runs, col_offset, word_diff);
             slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start))
         };
-        // Deletion rows render as plain filled text: no strikethrough (the
-        // strike is reserved for deletion *spans* inside mod rows).
+        // Deletion and plain MovSrc rows render as plain filled text: no
+        // strikethrough (the strike is reserved for inline deletion/moved-out
+        // spans inside mod/edited rows).
+        let plain_fg = if is_mov_src { movsrc_fg } else { del_fg };
         spans.push(StyledSpan {
             text: body,
-            fg: Some(del_fg),
+            fg: Some(plain_fg),
             bg: line_bg,
             bold: false,
             dim: false,
@@ -447,9 +482,14 @@ pub fn row_segment_spans(
             }
             let bg = base_bg(tok.kind);
             if is_struck_tok(tok.kind) {
+                let struck_fg = if tok.kind == RunKind::MovedSrc {
+                    movsrc_fg
+                } else {
+                    del_fg
+                };
                 spans.push(StyledSpan {
                     text: tok.text.to_string(),
-                    fg: Some(del_fg),
+                    fg: Some(struck_fg),
                     bg,
                     bold: false,
                     dim: false,
@@ -461,7 +501,7 @@ pub fn row_segment_spans(
             } else if !syntax_on {
                 spans.push(StyledSpan::styled(tok.text.to_string(), None, bg));
             } else {
-                let mut span = theme.token_span(tok.color, &tok.text, kind, tok.kind, tok.sgr);
+                let mut span = token_span_for(tok, &tok.text);
                 span.bg = bg;
                 spans.push(span);
             }
@@ -504,9 +544,14 @@ pub fn row_segment_spans(
 
         let bg = base_bg(tok.kind);
         if is_struck_tok(tok.kind) {
+            let struck_fg = if tok.kind == RunKind::MovedSrc {
+                movsrc_fg
+            } else {
+                del_fg
+            };
             spans.push(StyledSpan {
                 text: sub_piece,
-                fg: Some(del_fg),
+                fg: Some(struck_fg),
                 bg,
                 bold: false,
                 dim: false,
@@ -518,7 +563,7 @@ pub fn row_segment_spans(
         } else if !syntax_on {
             spans.push(StyledSpan::styled(sub_piece, None, bg));
         } else {
-            let mut span = theme.token_span(tok.color, &sub_piece, kind, tok.kind, tok.sgr);
+            let mut span = token_span_for(tok, &sub_piece);
             span.bg = bg;
             spans.push(span);
         }

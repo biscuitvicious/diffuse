@@ -184,12 +184,26 @@ impl DiffuseTheme {
     /// tier, the cursor and fill-cursor backgrounds at the row tier.
     #[must_use]
     pub fn row_style(&self, kind: diffuse_core::parse::RowKind) -> RowStyle {
-        use diffuse_core::parse::RowKind;
+        self.row_style_for_diff(DiffKind::from_row(kind))
+    }
+
+    /// Get the row background and icon style for a specific [`DiffKind`]
+    /// channel (distinguishing `MovSrc` and `MovTgt`).
+    #[must_use]
+    pub fn row_style_for_diff(&self, diff_kind: DiffKind) -> RowStyle {
         let palette = self.palette;
         let rest = &palette[Cursor::Rest];
         let row = &palette[Cursor::Row];
-        match kind {
-            RowKind::Add => RowStyle {
+        match diff_kind {
+            DiffKind::Ctx => RowStyle {
+                icon: " ",
+                tint_bg: rest[DiffKind::Ctx].surface.bg,
+                cursor_bg: row[DiffKind::Ctx].surface.bg,
+                fill_bg: rest[DiffKind::Ctx].surface.fill,
+                fill_cursor_bg: row[DiffKind::Ctx].surface.fill,
+                fg: rest[DiffKind::Ctx].surface.fg,
+            },
+            DiffKind::Add => RowStyle {
                 icon: "+",
                 tint_bg: rest[DiffKind::Add].surface.bg,
                 cursor_bg: row[DiffKind::Add].surface.bg,
@@ -197,7 +211,7 @@ impl DiffuseTheme {
                 fill_cursor_bg: row[DiffKind::Add].surface.fill,
                 fg: rest[DiffKind::Add].surface.fg,
             },
-            RowKind::Del => RowStyle {
+            DiffKind::Del => RowStyle {
                 icon: "-",
                 tint_bg: rest[DiffKind::Del].surface.bg,
                 cursor_bg: row[DiffKind::Del].surface.bg,
@@ -208,7 +222,7 @@ impl DiffuseTheme {
                 fill_cursor_bg: None,
                 fg: rest[DiffKind::Del].surface.fg,
             },
-            RowKind::Mod => RowStyle {
+            DiffKind::Mod => RowStyle {
                 icon: "~",
                 tint_bg: rest[DiffKind::Mod].surface.bg,
                 cursor_bg: row[DiffKind::Mod].surface.bg,
@@ -216,13 +230,21 @@ impl DiffuseTheme {
                 fill_cursor_bg: row[DiffKind::Mod].surface.fill,
                 fg: rest[DiffKind::Mod].surface.fg,
             },
-            _ => RowStyle {
+            DiffKind::MovSrc => RowStyle {
                 icon: "≈",
-                tint_bg: rest[DiffKind::Mov].surface.bg,
-                cursor_bg: row[DiffKind::Mov].surface.bg,
-                fill_bg: None,
+                tint_bg: rest[DiffKind::MovSrc].surface.bg,
+                cursor_bg: row[DiffKind::MovSrc].surface.bg,
+                fill_bg: rest[DiffKind::MovSrc].surface.fill,
                 fill_cursor_bg: None,
-                fg: rest[DiffKind::Mov].surface.fg,
+                fg: rest[DiffKind::MovSrc].surface.fg,
+            },
+            DiffKind::MovTgt => RowStyle {
+                icon: "≈",
+                tint_bg: rest[DiffKind::MovTgt].surface.bg,
+                cursor_bg: row[DiffKind::MovTgt].surface.bg,
+                fill_bg: rest[DiffKind::MovTgt].surface.fill,
+                fill_cursor_bg: row[DiffKind::MovTgt].surface.fill,
+                fg: rest[DiffKind::MovTgt].surface.fg,
             },
         }
     }
@@ -306,6 +328,29 @@ impl DiffuseTheme {
         let mut span = StyledSpan::styled(
             text,
             self.token_color(color, token_channel(kind, tok_kind)),
+            None,
+        );
+        if let Some(sgr) = sgr {
+            span = span.with_sgr(sgr);
+        }
+        span
+    }
+
+    /// Render a syntax/markdown token using an explicit [`DiffKind`] channel
+    /// (allowing `MovSrc` and `MovTgt` to resolve their own syntax channels).
+    #[must_use]
+    pub fn token_span_for_diff(
+        &self,
+        color: TokenColor,
+        text: &str,
+        diff_kind: DiffKind,
+        sgr: Option<u32>,
+    ) -> StyledSpan {
+        let mut span = StyledSpan::styled(
+            text,
+            self.palette[Cursor::Rest][diff_kind]
+                .syntax
+                .token_color(color),
             None,
         );
         if let Some(sgr) = sgr {
